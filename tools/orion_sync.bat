@@ -1,66 +1,95 @@
 @echo off
 setlocal
 
-cd /d "C:\Users\badee\Desktop\ORION_NEXT\ORION-Project-Management"
+cd /d "C:\Users\badee\Desktop\ORION_NEXT"
 
 if errorlevel 1 (
-    echo ERROR: ORION repository not found.
+    echo.
+    echo ========================================
+    echo ORION SYNC ERROR
+    echo ========================================
+    echo.
+    echo ERROR: ORION_NEXT root directory not found.
+    echo.
     exit /b 1
 )
 
+echo.
 echo ========================================
-echo ORION RAPID SYNC
+echo ORION ONE-STEP SYNC
 echo ========================================
 echo.
+echo Repository:
+echo C:\Users\badee\Desktop\ORION_NEXT
+echo.
 
-echo [1/5] Git status
-git status
+echo [1] Checking repository status...
+git status --short
 
 echo.
-echo [2/5] Git add
-git add .
+echo [2] Staging all project changes...
+git add -A
+
+if errorlevel 1 (
+    echo.
+    echo ERROR: Git add failed.
+    echo.
+    exit /b 1
+)
 
 echo.
-echo [3/5] Checking staged changes
+echo [3] Checking staged changes...
 git diff --cached --quiet
 
 if %errorlevel%==0 (
-    echo No changes detected.
     echo.
-    echo Repository already synchronized.
+    echo No changes detected.
+    echo Repository is already synchronized.
     echo.
     git status
+    echo.
+    echo ========================================
+    echo ORION SYNC COMPLETED - NO CHANGES
+    echo ========================================
+    echo.
     exit /b 0
 )
 
+echo.
 echo Changes detected.
-
 echo.
-echo [4/5] Git commit
-git commit -m "update: ORION changes"
+
+echo [4] Creating commit...
+git commit -m "sync: update ORION project"
 
 if errorlevel 1 (
+    echo.
     echo ERROR: Commit failed.
+    echo.
     exit /b 1
 )
 
 echo.
-echo Git push
-git push
+echo [5] Pushing to GitHub...
+git push -u origin main
 
 if errorlevel 1 (
+    echo.
     echo ERROR: Push failed.
+    echo.
     exit /b 1
 )
 
 echo.
-echo [5/5] Final Git status
+echo [6] Final repository status...
 git status
 
 echo.
 echo ========================================
-echo ORION RAPID SYNC COMPLETED
+echo ORION ONE-STEP SYNC COMPLETED
 echo ========================================
+echo.
+echo Local -> Git -> GitHub
 echo.
 
 endlocal
