@@ -1,14 +1,28 @@
+"""
+===============================================================================
+Badee Binance Scanner
+Architecture : ORION
+Module       : models.analysis
+Version      : 2.0.0
+===============================================================================
+
+Canonical Analysis Result contract.
+
+===============================================================================
+"""
+
+from __future__ import annotations
+
 from dataclasses import dataclass, field
 
 
 @dataclass(slots=True)
 class AnalysisResult:
-    """A data model holding technical market analysis results.
+    """
+    Canonical output of AnalysisEngine.
 
-    This class contains no business logic, calculations, or heavy dependencies
-    like pandas or numpy. It is used by the Analysis Engine and downstream layers
-    (such as Score or Decision Engines) to evaluate market state, trend strength,
-    signals, and warnings.
+    This model contains analysis results only.
+    It must not contain execution or reporting state.
     """
 
     market_state: str = "NEUTRAL"
