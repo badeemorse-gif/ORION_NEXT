@@ -3,131 +3,343 @@
 Badee Binance Scanner
 Architecture : ORION
 Module       : providers.binance_mapper
-Version      : 2.0.0
-Status       : ORION Production Mapper Component
+Version      : 3.0.0
+Status       : ORION Canonical Market Contract
 ===============================================================================
 
-Handles JSON klines conversion to strictly typed, UTC-indexed, and validated
-pandas DataFrames, along with MarketDataset container creation.
+Responsible for converting Binance raw kline payloads into canonical pandas
+DataFrames and constructing the canonical MarketDataset domain model.
+
+This module must not contain analytical logic.
+
 ===============================================================================
 """
 
 from __future__ import annotations
 
-import numpy as np
-import pandas as pd
+from datetime import datetime, timezone
 from typing import Any
 
-from models.market import MarketDataset
+import numpy as np
+import pandas as pd
+
+from enums import DataHealth, Timeframe
+from models.market import MarketDataset, MarketMetadata, TimeframeData
 
 
 # =============================================================================
-# Custom Exceptions
+# Exceptions
 # =============================================================================
+
 
 class BinanceMapperError(Exception):
     """Base exception for mapper errors."""
-    pass
 
 
 class InvalidKlinesData(BinanceMapperError):
-    """Raised when klines data is invalid or empty."""
-    pass
+    """Raised when Binance kline data is invalid or empty."""
 
 
 # =============================================================================
-# Binance Mapper Component
+# Mapper
 # =============================================================================
+
 
 class BinanceMapper:
     """
-    Responsible for JSON klines conversion, OHLCV column mapping, timestamp
-    conversion, data cleaning, validation, and MarketDataset container creation.
+    Canonical Binance-to-domain mapper.
+
+    Responsibilities:
+        1. Convert raw Binance klines to validated DataFrames.
+        2. Construct canonical TimeframeData.
+        3. Construct canonical MarketDataset.
+
+    Responsibilities explicitly excluded:
+        - indicators
+        - analysis
+        - profile
+        - score
+        - decision
+        - execution
+        - reporting
     """
 
-    def __init__(self) -> None:
-        pass
+    REQUIRED_COLUMNS = (
+        "open",
+        "high",
+        "low",
+        "close",
+        "volume",
+    )
 
-    def convert_klines_to_dataframe(self, raw_klines: list[list[Any]]) -> pd.DataFrame:
+    RAW_COLUMNS = (
+        "open_time",
+        "open",
+        "high",
+        "low",
+        "close",
+        "volume",
+        "close_time",
+        "quote_asset_volume",
+        "number_of_trades",
+        "taker_buy_base_asset_volume",
+        "taker_buy_quote_asset_volume",
+        "ignore",
+    )
+
+    def convert_klines_to_dataframe(
+        self,
+        raw_klines: list[list[Any]],
+    ) -> pd.DataFrame:
         """
-        Convert raw Binance klines list into a strictly typed, UTC indexed, sorted pandas DataFrame,
-        using correct open_time column mapping and rigorous OHLC validation.
+        Convert raw Binance klines into a validated OHLCV DataFrame.
         """
+
         if not raw_klines:
-            raise InvalidKlinesData("Received empty klines data from Binance API.")
+            raise InvalidKlinesData(
+                "Received empty klines data from Binance API."
+            )
 
-        columns = [
-            "open_time",
-            "open",
-            "high",
-            "low",
-            "close",
-            "volume",
-            "close_time",
-            "quote_asset_volume",
-            "number_of_trades",
-            "taker_buy_base_asset_volume",
-            "taker_buy_quote_asset_volume",
-            "ignore",
+        try:
+            dataframe = pd.DataFrame(
+                raw_klines,
+                columns=self.RAW_COLUMNS,
+            )
+        except Exception as exc:
+            raise InvalidKlinesData(
+                f"Unable to construct kline DataFrame: {exc}"
+            ) from exc
+
+        for column in self.REQUIRED_COLUMNS:
+            dataframe[column] = pd.to_numeric(
+                dataframe[column],
+                errors="raise",
+            )
+
+        dataframe["open_time"] = pd.to_numeric(
+            dataframe["open_time"],
+            errors="raise",
+        )
+
+        dataframe = dataframe[
+            list(self.REQUIRED_COLUMNS) + ["open_time"]
         ]
 
-        df = pd.DataFrame(raw_klines, columns=columns)
-
-        required_cols = ["open", "high", "low", "close", "volume"]
-        for col in required_cols:
-            df[col] = pd.to_numeric(df[col], errors="raise")
-
-        df = df[required_cols + ["open_time"]]
-
-        df.index = pd.to_datetime(
-            df["open_time"],
+        dataframe.index = pd.to_datetime(
+            dataframe["open_time"],
             unit="ms",
             utc=True,
         )
-        df.index.name = "timestamp"
-        
-        df.drop(columns=["open_time"], inplace=True)
-        df = df.sort_index()
+        dataframe.index.name = "timestamp"
 
-        if df.empty:
-            raise InvalidKlinesData("Converted DataFrame is empty.")
+        dataframe.drop(
+            columns=["open_time"],
+            inplace=True,
+        )
 
-        if not isinstance(df.index, pd.DatetimeIndex) or df.index.tz is None:
-            raise InvalidKlinesData("DataFrame index must be a timezone-aware DatetimeIndex.")
+        dataframe = dataframe.sort_index()
 
-        if df.index.duplicated().any():
-            raise InvalidKlinesData("DataFrame contains duplicate index timestamps.")
+        self._validate_dataframe(dataframe)
 
-        if not df.index.is_monotonic_increasing:
-            raise InvalidKlinesData("DataFrame index must be chronologically sorted.")
+        return dataframe
 
-        sub_df = df[required_cols]
-        if sub_df.isna().any().any():
-            raise InvalidKlinesData("DataFrame contains NaN values.")
+    def create_market_dataset(
+        self,
+        symbol: str,
+        timeframe_data: dict[Any, pd.DataFrame],
+        exchange: str = "BINANCE",
+        source: str = "BINANCE_API",
+        cache_version: str = "1.0.0",
+    ) -> MarketDataset:
+        """
+        Construct the canonical MarketDataset from timeframe DataFrames.
+        """
 
-        if np.isinf(sub_df.to_numpy()).any():
-            raise InvalidKlinesData("DataFrame contains INF values.")
+        if not symbol or not isinstance(symbol, str):
+            raise BinanceMapperError(
+                "symbol must be a non-empty string."
+            )
 
-        if (df["volume"] < 0).any():
-            raise InvalidKlinesData("DataFrame contains negative volume values.")
+        if not timeframe_data:
+            raise BinanceMapperError(
+                f"No timeframe data supplied for symbol '{symbol}'."
+            )
+
+        now = datetime.now(timezone.utc)
+
+        metadata = MarketMetadata(
+            symbol=symbol,
+            exchange=exchange,
+            source=source,
+            cache_version=cache_version,
+            downloaded_at=now,
+            last_updated_at=now,
+            is_valid=True,
+            validation_message=None,
+        )
+
+        dataset = MarketDataset(
+            metadata=metadata,
+        )
+
+        for raw_timeframe, dataframe in timeframe_data.items():
+            timeframe = self._normalize_timeframe(raw_timeframe)
+
+            self._validate_dataframe(dataframe)
+
+            data_health = self._classify_data_health(
+                dataframe
+            )
+
+            first_timestamp = (
+                dataframe.index[0].to_pydatetime()
+                if not dataframe.empty
+                else None
+            )
+
+            last_timestamp = (
+                dataframe.index[-1].to_pydatetime()
+                if not dataframe.empty
+                else None
+            )
+
+            timeframe_data_model = TimeframeData(
+                timeframe=timeframe,
+                dataframe=dataframe,
+                data_health=data_health,
+                candles_count=len(dataframe),
+                first_timestamp=first_timestamp,
+                last_timestamp=last_timestamp,
+            )
+
+            dataset.add_timeframe(
+                timeframe_data_model
+            )
+
+        return dataset
+
+    # =========================================================================
+    # Internal Helpers
+    # =========================================================================
+
+    def _normalize_timeframe(
+        self,
+        timeframe: Any,
+    ) -> Timeframe:
+        """Normalize a timeframe value into the canonical Timeframe enum."""
+
+        if isinstance(timeframe, Timeframe):
+            return timeframe
+
+        try:
+            return Timeframe(str(timeframe))
+        except ValueError as exc:
+            raise BinanceMapperError(
+                f"Unsupported timeframe: {timeframe!r}"
+            ) from exc
+
+    def _validate_dataframe(
+        self,
+        dataframe: pd.DataFrame,
+    ) -> None:
+        """Validate the canonical OHLCV DataFrame."""
+
+        if not isinstance(dataframe, pd.DataFrame):
+            raise InvalidKlinesData(
+                "Expected pandas.DataFrame."
+            )
+
+        if dataframe.empty:
+            raise InvalidKlinesData(
+                "DataFrame is empty."
+            )
+
+        missing_columns = [
+            column
+            for column in self.REQUIRED_COLUMNS
+            if column not in dataframe.columns
+        ]
+
+        if missing_columns:
+            raise InvalidKlinesData(
+                f"Missing required columns: {missing_columns}"
+            )
+
+        if not isinstance(
+            dataframe.index,
+            pd.DatetimeIndex,
+        ):
+            raise InvalidKlinesData(
+                "DataFrame index must be a DatetimeIndex."
+            )
+
+        if dataframe.index.tz is None:
+            raise InvalidKlinesData(
+                "DataFrame index must be timezone-aware."
+            )
+
+        if dataframe.index.duplicated().any():
+            raise InvalidKlinesData(
+                "DataFrame contains duplicate timestamps."
+            )
+
+        if not dataframe.index.is_monotonic_increasing:
+            raise InvalidKlinesData(
+                "DataFrame index must be chronologically sorted."
+            )
+
+        required_data = dataframe[
+            list(self.REQUIRED_COLUMNS)
+        ]
+
+        if required_data.isna().any().any():
+            raise InvalidKlinesData(
+                "DataFrame contains NaN values."
+            )
+
+        if np.isinf(
+            required_data.to_numpy()
+        ).any():
+            raise InvalidKlinesData(
+                "DataFrame contains infinite values."
+            )
+
+        if (dataframe["volume"] < 0).any():
+            raise InvalidKlinesData(
+                "DataFrame contains negative volume values."
+            )
 
         invalid_ohlc = (
-            (df["high"] < df["low"]) |
-            (df["high"] < df["open"]) |
-            (df["high"] < df["close"]) |
-            (df["low"] > df["open"]) |
-            (df["low"] > df["close"])
+            (dataframe["high"] < dataframe["low"])
+            | (dataframe["high"] < dataframe["open"])
+            | (dataframe["high"] < dataframe["close"])
+            | (dataframe["low"] > dataframe["open"])
+            | (dataframe["low"] > dataframe["close"])
         )
+
         if invalid_ohlc.any():
-            raise InvalidKlinesData("DataFrame contains invalid OHLC relationships.")
+            raise InvalidKlinesData(
+                "DataFrame contains invalid OHLC relationships."
+            )
 
-        return df
+    def _classify_data_health(
+        self,
+        dataframe: pd.DataFrame,
+    ) -> DataHealth:
+        """Classify basic market-data quality."""
 
-    def create_market_dataset(self, symbol: str, timeframe_data: dict[Any, pd.DataFrame], exchange: str = "binance") -> MarketDataset:
-        """
-        Create and populate a MarketDataset container from mapped timeframe dataframes.
-        """
-        dataset = MarketDataset(symbol=symbol, exchange=exchange)
-        for tf, df in timeframe_data.items():
-            dataset.set_dataframe(tf, df)
-        return dataset
+        candles_count = len(dataframe)
+
+        if candles_count <= 0:
+            return DataHealth.INVALID
+
+        if candles_count >= 1000:
+            return DataHealth.EXCELLENT
+
+        if candles_count >= 500:
+            return DataHealth.GOOD
+
+        if candles_count >= 100:
+            return DataHealth.ACCEPTABLE
+
+        return DataHealth.POOR

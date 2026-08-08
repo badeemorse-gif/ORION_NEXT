@@ -3,187 +3,221 @@
 Badee Binance Scanner
 Architecture : ORION
 Module       : providers.market_data_provider
-Version      : 1.1.0
-Status       : ORION Production V1.1 REFACTORED
+Version      : 2.0.0
+Status       : ORION Canonical Provider Boundary
 ===============================================================================
 
-Market Data Provider responsible solely for fetching market datasets from an
-injected data source and mapping them into standard MarketDataset models without
-performing any technical analysis, calculations, or evaluations.
+Canonical application-facing market data provider boundary.
+
+This component converts the external provider implementation into the
+canonical MarketDataset contract.
+
 ===============================================================================
 """
 
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
 from typing import Any, Optional, Protocol
 
-from models.market import MarketDataset, TimeframeData
+from enums import Timeframe
+from models.market import MarketDataset
+
 
 base_logger = logging.getLogger(__name__)
 
 
 # =============================================================================
-# Protocols / Interfaces for Data Source Injection
+# Protocol
 # =============================================================================
 
-class DataSourceProtocol(Protocol):
-    """Protocol defining the required interface for injected underlying data sources."""
 
-    def fetch_ohlcv(self, symbol: str, timeframe: str) -> Any:
+class MarketSourceProtocol(Protocol):
+    """
+    Protocol implemented by concrete market providers.
+
+    The concrete BinanceProvider already exposes download_timeframe().
+    """
+
+    def download_timeframe(
+        self,
+        symbol: str,
+        timeframe: Timeframe,
+        limit: int = 1000,
+    ) -> Any:
         ...
 
 
 # =============================================================================
-# Custom Exceptions
+# Exceptions
 # =============================================================================
 
+
 class ProviderError(Exception):
-    """Base exception class for all market data provider related errors."""
-    pass
+    """Base exception for market provider failures."""
 
 
 class InvalidSymbolError(ProviderError):
-    """Raised when a symbol format or value is invalid."""
-    pass
+    """Raised when a symbol is invalid."""
 
 
 class InvalidTimeframeError(ProviderError):
-    """Raised when a timeframe format or value is invalid."""
-    pass
+    """Raised when timeframe input is invalid."""
 
 
 # =============================================================================
-# Logger Adapter
+# Provider Boundary
 # =============================================================================
 
-class LoggerAdapter(logging.LoggerAdapter):
-    """Custom LoggerAdapter injecting provider operation context attributes into log entries."""
-
-    def process(self, msg: str, kwargs: Any) -> tuple[str, dict[str, Any]]:
-        context = self.extra or {}
-        context_str = " | ".join(f"{k}={v}" for k, v in context.items() if v is not None)
-        formatted_msg = f"[{context_str}] {msg}" if context_str else msg
-        return formatted_msg, kwargs
-
-
-# =============================================================================
-# Market Data Provider
-# =============================================================================
 
 class MarketDataProvider:
     """
-    Stateless market data provider utilizing pure dependency injection to fetch
-    and construct MarketDataset instances from an underlying data source.
+    Canonical market-data application boundary.
+
+    Responsibilities:
+        - validate request inputs;
+        - request market data from injected source;
+        - construct MarketDataset through the canonical mapper path.
+
+    It does not perform analysis.
     """
 
     def __init__(
         self,
-        data_source: DataSourceProtocol,
+        source: MarketSourceProtocol,
         logger: Optional[logging.Logger] = None,
     ) -> None:
-        self._data_source = data_source
-        self._logger_instance = logger if logger is not None else base_logger
+        if source is None:
+            raise ProviderError(
+                "Market source dependency is required."
+            )
 
-        self._logger = LoggerAdapter(
-            self._logger_instance,
-            {
-                "component": "MarketDataProvider",
-                "operation": "init",
-            },
+        self._source = source
+        self._logger = (
+            logger
+            if logger is not None
+            else base_logger
         )
-        self._logger.info("MarketDataProvider initialized successfully.")
 
-    def _get_logger(
+    def fetch_symbol(
         self,
-        symbol: Optional[str] = None,
-        operation: Optional[str] = None,
-    ) -> LoggerAdapter:
-        return LoggerAdapter(
-            self._logger_instance,
-            {
-                "component": "MarketDataProvider",
-                "symbol": symbol,
-                "operation": operation,
-            },
-        )
-
-    # -------------------------------------------------------------------------
-    # Public Methods
-    # -------------------------------------------------------------------------
-
-    def fetch_symbol(self, symbol: str, timeframes: list[str]) -> MarketDataset:
+        symbol: str,
+        timeframes: list[str | Timeframe],
+        limit: int = 1000,
+    ) -> MarketDataset:
         """
-        Fetches market data for a single symbol across specified timeframes
-        and returns a fully constructed MarketDataset without analysis.
+        Fetch one canonical MarketDataset.
         """
+
         self._validate_symbol(symbol)
-        self._validate_timeframes(timeframes)
 
-        logger = self._get_logger(symbol=symbol, operation="fetch_symbol")
-        logger.info(f"Fetching market data for symbol '{symbol}' across timeframes: {timeframes}")
+        normalized_timeframes = [
+            self._normalize_timeframe(timeframe)
+            for timeframe in timeframes
+        ]
 
-        timeframe_dict: dict[str, TimeframeData] = {}
+        if not normalized_timeframes:
+            raise InvalidTimeframeError(
+                "At least one timeframe is required."
+            )
 
-        for tf in timeframes:
+        dataframe_map: dict[
+            Timeframe,
+            Any,
+        ] = {}
+
+        for timeframe in normalized_timeframes:
             try:
-                raw_df = self._data_source.fetch_ohlcv(symbol, tf)
-                timeframe_dict[tf] = TimeframeData(
-                    timeframe=tf,
-                    df=raw_df,
+                dataframe = self._source.download_timeframe(
+                    symbol=symbol,
+                    timeframe=timeframe,
+                    limit=limit,
                 )
-            except Exception as e:
-                logger.error(f"Failed to fetch data for symbol {symbol} on timeframe {tf}: {e}")
-                raise ProviderError(f"Failed to fetch {symbol} {tf}") from e
+            except Exception as exc:
+                raise ProviderError(
+                    f"Failed to fetch {symbol} "
+                    f"{timeframe.value}: {exc}"
+                ) from exc
 
-        dataset = MarketDataset(
-            symbol=symbol,
-            timeframes=timeframe_dict,
+            dataframe_map[timeframe] = dataframe
+
+        mapper = getattr(
+            self._source,
+            "_mapper",
+            None,
         )
 
-        logger.info(f"Successfully constructed MarketDataset for symbol '{symbol}'.")
-        return dataset
+        if mapper is None:
+            raise ProviderError(
+                "Concrete market source must expose its canonical mapper."
+            )
 
-    def fetch_symbols(self, symbols: list[str], timeframes: list[str]) -> list[MarketDataset]:
+        return mapper.create_market_dataset(
+            symbol=symbol,
+            timeframe_data=dataframe_map,
+            exchange="BINANCE",
+            source="BINANCE_API",
+        )
+
+    def fetch_symbols(
+        self,
+        symbols: list[str],
+        timeframes: list[str | Timeframe],
+        limit: int = 1000,
+    ) -> list[MarketDataset]:
         """
-        Fetches market data for a list of symbols independently, returning a list of MarketDatasets.
+        Fetch independent datasets for multiple symbols.
         """
+
         if not symbols:
-            self._logger.warning("fetch_symbols called with empty symbols list.")
             return []
 
-        logger = self._get_logger(operation="fetch_symbols")
-        logger.info(f"Batch fetching market data for {len(symbols)} symbols.")
-
         datasets: list[MarketDataset] = []
+
         for symbol in symbols:
             try:
-                dataset = self.fetch_symbol(symbol, timeframes)
-                datasets.append(dataset)
-            except Exception as e:
-                logger.error(f"Skipping symbol '{symbol}' due to fetch error: {e}")
+                datasets.append(
+                    self.fetch_symbol(
+                        symbol=symbol,
+                        timeframes=timeframes,
+                        limit=limit,
+                    )
+                )
+            except Exception as exc:
+                self._logger.error(
+                    "Skipping symbol '%s': %s",
+                    symbol,
+                    exc,
+                )
 
         return datasets
 
-    # -------------------------------------------------------------------------
-    # Internal Validation Methods
-    # -------------------------------------------------------------------------
+    # =========================================================================
+    # Validation
+    # =========================================================================
 
-    def _validate_symbol(self, symbol: str) -> None:
-        """Validates that the provided symbol is a non-empty string."""
-        if not symbol or not isinstance(symbol, str) or not symbol.strip():
-            raise InvalidSymbolError(f"Invalid symbol provided: '{symbol}'. Must be a non-empty string.")
+    def _validate_symbol(
+        self,
+        symbol: str,
+    ) -> None:
+        if (
+            not isinstance(symbol, str)
+            or not symbol.strip()
+        ):
+            raise InvalidSymbolError(
+                f"Invalid symbol: {symbol!r}"
+            )
 
-    def _validate_timeframes(self, timeframes: list[str]) -> None:
-        """Validates that the provided timeframes list is non-empty and contains valid strings."""
-        if not timeframes or not isinstance(timeframes, list):
-            raise InvalidTimeframeError(f"Invalid timeframes provided: '{timeframes}'. Must be a non-empty list.")
-        for tf in timeframes:
-            if not tf or not isinstance(tf, str) or not tf.strip():
-                raise InvalidTimeframeError(f"Invalid timeframe element found: '{tf}'.")
+    def _normalize_timeframe(
+        self,
+        timeframe: str | Timeframe,
+    ) -> Timeframe:
+        if isinstance(timeframe, Timeframe):
+            return timeframe
 
-
-# =============================================================================
-# End Of File
-# =============================================================================
+        try:
+            return Timeframe(timeframe)
+        except ValueError as exc:
+            raise InvalidTimeframeError(
+                f"Unsupported timeframe: {timeframe!r}"
+            ) from exc
