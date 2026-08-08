@@ -3,7 +3,7 @@
 Badee Binance Scanner
 Architecture : ORION
 Module       : tests.test_analysis_contract
-Version      : 1.0.0
+Version      : 1.0.1
 ===============================================================================
 
 Canonical Analysis Contract tests.
@@ -75,9 +75,11 @@ class TestAnalysisContract(unittest.TestCase):
             dataframe["ema_20"] = close + 2.0
             dataframe["ema_50"] = close + 1.0
         else:
-            dataframe["ema_9"] = close - 1.0
+            # Canonical bearish EMA alignment:
+            # ema_9 < ema_20 < ema_50
+            dataframe["ema_9"] = close - 3.0
             dataframe["ema_20"] = close - 2.0
-            dataframe["ema_50"] = close - 3.0
+            dataframe["ema_50"] = close - 1.0
 
         dataframe["rsi_14"] = 60.0
         dataframe["adx_14"] = 30.0
