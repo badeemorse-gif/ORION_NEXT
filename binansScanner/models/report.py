@@ -1,153 +1,159 @@
 """
 ===============================================================================
-Badee Binance Scanner
-Architecture : ORION
-Module       : models.report
-Version      : 1.0.0
-===============================================================================
+ORION
+Module : models.report
+Version: 2.0.0
 
-Report domain models.
+Canonical Report domain contract.
 
-These models represent the final report generated after all analysis
-engines complete their work.
+Architectural boundary:
+    AnalysisResult
+        +
+    ProfileResult
+        +
+    ScoreResult
+        +
+    DecisionResult
+        +
+    ExecutionResult
+        ↓
+    ReportResult
+
+ReportResult is a domain result contract.
+
+It must not:
+    - contain MarketDataset as pipeline state;
+    - execute analysis logic;
+    - depend on API / GUI / Scheduler;
+    - depend on report renderers;
+    - depend on export formats;
+    - depend on engine-local result classes.
 ===============================================================================
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from datetime import datetime
-from typing import Optional
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
+from typing import Any, Optional
 
-from enums import (
-    DecisionPriority,
-    DecisionType,
-)
+from models.analysis import AnalysisResult
+from models.decision import DecisionResult
+from models.execution import ExecutionResult
+from models.profile import ProfileResult
+from models.score import ScoreResult
 
 
-# =============================================================================
-# Report Statistics
-# =============================================================================
-
-@dataclass(slots=True)
-class ReportStatistics:
+@dataclass(slots=True, frozen=True)
+class ReportMetadata:
     """
-    Summary statistics for the generated report.
-    """
+    Metadata describing report generation context.
 
-    total_score: float
-
-    confidence: float
-
-    health_score: float
-
-    risk_reward_ratio: float
-
-    generated_at: datetime
-
-
-# =============================================================================
-# Trade Levels
-# =============================================================================
-
-@dataclass(slots=True)
-class TradeLevels:
-    """
-    Trading price levels.
+    Metadata is descriptive only and must not contain pipeline state.
     """
 
-    entry_price: float
+    project_version: str = ""
+    report_name: str = "ORION Report"
+    execution_time_ms: float = 0.0
 
-    stop_loss: float
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "execution_time_ms",
+            max(float(self.execution_time_ms), 0.0),
+        )
 
-    take_profit_1: float
 
-    take_profit_2: float
-
-    take_profit_3: float
-
-
-# =============================================================================
-# Report Summary
-# =============================================================================
-
-@dataclass(slots=True)
-class ReportSummary:
+@dataclass(slots=True, frozen=True)
+class ReportResult:
     """
-    High-level report summary.
+    Canonical output of ReportBuilder / ReportEngine.
+
+    ReportResult aggregates canonical results from the preceding pipeline
+    stages without converting them into engine-local or export-specific
+    representations.
+
+    The contained result contracts remain the authoritative source of their
+    respective domain information.
     """
 
     symbol: str
 
-    decision: DecisionType
+    generated_at: datetime = field(
+        default_factory=lambda: datetime.now(timezone.utc)
+    )
 
-    priority: DecisionPriority
+    analysis: Optional[AnalysisResult] = None
 
-    score: float
+    profile: Optional[ProfileResult] = None
 
-    confidence: float
+    score: Optional[ScoreResult] = None
 
-    generated_at: datetime
+    decision: Optional[DecisionResult] = None
 
+    execution: Optional[ExecutionResult] = None
 
-# =============================================================================
-# Report Result
-# =============================================================================
+    summary: tuple[str, ...] = ()
 
-@dataclass(slots=True)
-class ReportResult:
-    """
-    Final report produced by Report Engine.
-    """
+    highlights: tuple[str, ...] = ()
 
-    summary: ReportSummary
+    warnings: tuple[str, ...] = ()
 
-    statistics: ReportStatistics
-
-    trade_levels: Optional[TradeLevels]
-
-    highlights: list[str]
-
-    warnings: list[str]
-
-    generated_at: datetime
-
-    @property
-    def symbol(self) -> str:
-        """
-        Returns report symbol.
-        """
-        return self.summary.symbol
-
-    @property
-    def decision(self) -> DecisionType:
-        """
-        Returns final decision.
-        """
-        return self.summary.decision
-
-    @property
-    def priority(self) -> DecisionPriority:
-        """
-        Returns decision priority.
-        """
-        return self.summary.priority
+    metadata: ReportMetadata = field(
+        default_factory=ReportMetadata
+    )
 
     @property
     def has_warnings(self) -> bool:
-        """
-        Returns True if warnings exist.
-        """
-        return len(self.warnings) > 0
+        """Return True when report warnings are present."""
+        return bool(self.warnings)
 
     @property
-    def is_entry_candidate(self) -> bool:
+    def has_analysis(self) -> bool:
+        """Return True when an AnalysisResult is attached."""
+        return self.analysis is not None
+
+    @property
+    def has_profile(self) -> bool:
+        """Return True when a ProfileResult is attached."""
+        return self.profile is not None
+
+    @property
+    def has_score(self) -> bool:
+        """Return True when a ScoreResult is attached."""
+        return self.score is not None
+
+    @property
+    def has_decision(self) -> bool:
+        """Return True when a DecisionResult is attached."""
+        return self.decision is not None
+
+    @property
+    def has_execution(self) -> bool:
+        """Return True when an ExecutionResult is attached."""
+        return self.execution is not None
+
+    @property
+    def is_complete(self) -> bool:
         """
-        Returns True if the report recommends immediate entry.
+        Return True when all canonical upstream result contracts exist.
+
+        This property describes structural completeness only.
+        It does not perform business validation.
         """
-        return self.summary.decision == DecisionType.ENTRY_NOW
+
+        return all(
+            (
+                self.analysis is not None,
+                self.profile is not None,
+                self.score is not None,
+                self.decision is not None,
+                self.execution is not None,
+            )
+        )
 
 
-# =============================================================================
-# End Of File
-# =============================================================================
+__all__ = [
+    "ReportMetadata",
+    "ReportResult",
+]
