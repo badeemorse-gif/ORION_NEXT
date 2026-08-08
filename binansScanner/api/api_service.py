@@ -3,7 +3,7 @@
 Badee Binance Scanner
 Architecture : ORION
 Module       : api.api_service
-Version      : 1.0.1
+Version      : 1.0.2
 Status       : ORION Production V1.0 APPROVED
 ===============================================================================
 
@@ -26,6 +26,8 @@ from api.api_models import (
 
 from scheduler.scheduler_service import SchedulerService
 from reports.report_exporter import ReportExporter
+from reports.html_report import HtmlReportRenderer
+from reports.json_report import JsonReportRenderer
 
 base_logger = logging.getLogger(__name__)
 
@@ -48,7 +50,9 @@ class LoggerAdapter(logging.LoggerAdapter):
 
     def process(self, msg: str, kwargs: Any) -> tuple[str, dict[str, Any]]:
         context = self.extra or {}
-        context_str = " | ".join(f"{k}={v}" for k, v in context.items() if v is not None)
+        context_str = " | ".join(
+            f"{k}={v}" for k, v in context.items() if v is not None
+        )
         formatted_msg = f"[{context_str}] {msg}" if context_str else msg
         return formatted_msg, kwargs
 
@@ -67,9 +71,12 @@ class ApiService:
         self,
         scheduler: Optional[SchedulerService] = None,
         report_exporter: Optional[ReportExporter] = None,
+        html_renderer: Optional[HtmlReportRenderer] = None,
+        json_renderer: Optional[JsonReportRenderer] = None,
         logger: Optional[logging.Logger] = None,
     ) -> None:
         self._logger_instance = logger if logger is not None else base_logger
+
         self._logger = LoggerAdapter(
             self._logger_instance,
             {
@@ -78,8 +85,32 @@ class ApiService:
             },
         )
 
-        self._scheduler = scheduler if scheduler is not None else SchedulerService(logger=self._logger_instance)
-        self._report_exporter = report_exporter if report_exporter is not None else ReportExporter(logger=self._logger_instance)
+        self._scheduler = (
+            scheduler
+            if scheduler is not None
+            else SchedulerService(logger=self._logger_instance)
+        )
+
+        if report_exporter is not None:
+            self._report_exporter = report_exporter
+        else:
+            resolved_html_renderer = (
+                html_renderer
+                if html_renderer is not None
+                else HtmlReportRenderer(logger=self._logger_instance)
+            )
+
+            resolved_json_renderer = (
+                json_renderer
+                if json_renderer is not None
+                else JsonReportRenderer(logger=self._logger_instance)
+            )
+
+            self._report_exporter = ReportExporter(
+                html_renderer=resolved_html_renderer,
+                json_renderer=resolved_json_renderer,
+                logger=self._logger_instance,
+            )
 
         self._logger.info("ApiService initialized successfully.")
 
@@ -102,6 +133,7 @@ class ApiService:
         """
         logger = self._get_logger(operation="health")
         logger.debug("Health check requested.")
+
         return ApiResponse(
             success=True,
             message="OK",
@@ -118,14 +150,18 @@ class ApiService:
         try:
             state_obj = self._scheduler.state()
             state_dict = asdict(state_obj)
+
             return ApiResponse(
                 success=True,
                 message="Scheduler state retrieved successfully.",
                 payload=state_dict,
             )
+
         except Exception as err:
             logger.error(f"Failed to retrieve scheduler state: {err}")
-            raise ApiServiceError(f"Failed to retrieve scheduler state: {err}") from err
+            raise ApiServiceError(
+                f"Failed to retrieve scheduler state: {err}"
+            ) from err
 
     def registered_jobs(self) -> ApiResponse:
         """
@@ -137,26 +173,38 @@ class ApiService:
         try:
             jobs_tuple = self._scheduler.registered_jobs()
             jobs_list = [asdict(job) for job in jobs_tuple]
+
             return ApiResponse(
                 success=True,
                 message="Registered jobs retrieved successfully.",
-                payload={"jobs": jobs_list, "count": len(jobs_list)},
+                payload={
+                    "jobs": jobs_list,
+                    "count": len(jobs_list),
+                },
             )
+
         except Exception as err:
             logger.error(f"Failed to retrieve registered jobs: {err}")
-            raise ApiServiceError(f"Failed to retrieve registered jobs: {err}") from err
+            raise ApiServiceError(
+                f"Failed to retrieve registered jobs: {err}"
+            ) from err
 
     def export_report(self, request: ApiRequest) -> ApiResponse:
         """
         Placeholder report export endpoint logic pending full pipeline integration.
         """
         logger = self._get_logger(operation="export_report")
-        logger.info(f"Export report requested with request_id: {request.request_id}")
-        
+        logger.info(
+            f"Export report requested with request_id: {request.request_id}"
+        )
+
         return ApiResponse(
             success=False,
             message="Not implemented yet.",
-            payload={"request_id": request.request_id, "endpoint": request.endpoint},
+            payload={
+                "request_id": request.request_id,
+                "endpoint": request.endpoint,
+            },
         )
 
 
