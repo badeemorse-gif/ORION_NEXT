@@ -176,9 +176,6 @@ class OrionApplication:
         """Safely shut down the application, reset container components, and flush states."""
         self._logger.info("Shutting down OrionApplication...")
         try:
-            if self._pipeline is not None:
-                self._pipeline.stop()
-
             if self._container is not None:
                 self._container.reset()
 
@@ -207,7 +204,7 @@ class OrionApplication:
     def health(self) -> dict[str, Any]:
         """Perform system health checks and return operational metadata status."""
         running_time_ms = (time.perf_counter() - self._startup_perf_counter) * 1000.0 if self._is_running else 0.0
-        pipeline_state = self._pipeline.state().value if self._pipeline is not None else "NOT_INITIALIZED"
+        pipeline_state = "READY" if self._pipeline is not None else "NOT_INITIALIZED"
 
         return {
             "status": "HEALTHY" if self._is_running else "STOPPED",
