@@ -178,6 +178,20 @@ class SQLiteMarketStorage(MarketStorage):
     # Public Storage Interface
     # -------------------------------------------------------------------------
 
+    def execute(self, dataset: MarketDataset) -> None:
+        """
+        Unified storage execution contract used by the Orchestrator.
+
+        Persistence remains the sole responsibility of the storage backend;
+        this method intentionally delegates to the canonical save_dataset()
+        implementation without introducing a second storage path.
+        """
+        if not isinstance(dataset, MarketDataset):
+            raise SQLiteStorageError(
+                "Storage execute() requires a MarketDataset instance."
+            )
+        self.save_dataset(dataset)
+
     def save_dataset(
         self,
         dataset: MarketDataset,
