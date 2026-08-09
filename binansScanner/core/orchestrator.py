@@ -41,12 +41,12 @@ class PipelineStage(str, Enum):
     INITIALIZE = "INITIALIZE"
     DOWNLOAD = "DOWNLOAD"
     STORE = "STORE"
+    VALIDATION = "VALIDATION"
     INDICATORS = "INDICATORS"
     ANALYSIS = "ANALYSIS"
     PROFILE = "PROFILE"
     SCORE = "SCORE"
     DECISION = "DECISION"
-    VALIDATION = "VALIDATION"
     FINISHED = "FINISHED"
 
 
@@ -170,6 +170,12 @@ class Orchestrator:
             self._storage.execute(dataset)
             completed += 1
 
+            # MarketDataset is the only contract available at this boundary.
+            # Validation must therefore happen before any downstream result exists.
+            self._change_stage(PipelineStage.VALIDATION)
+            validation = self._validation_engine.validate_dataset(dataset)
+            completed += 1
+
             self._change_stage(PipelineStage.INDICATORS)
             dataset = self._indicator_engine.calculate_dataset(dataset)
             completed += 1
@@ -188,10 +194,6 @@ class Orchestrator:
 
             self._change_stage(PipelineStage.DECISION)
             decision = self._decision_engine.decide(analysis, score)
-            completed += 1
-
-            self._change_stage(PipelineStage.VALIDATION)
-            validation = self._validation_engine.validate_dataset(dataset)
             completed += 1
 
             self._change_stage(PipelineStage.FINISHED)
