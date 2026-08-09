@@ -27,7 +27,6 @@ import shutil
 import threading
 import tkinter as tk
 from pathlib import Path
-from tkinter import messagebox
 
 
 # ============================================================
@@ -79,20 +78,21 @@ BUTTON_TEXT = "#07111F"
 # ============================================================
 
 def is_inside_project(path: Path) -> bool:
-    """
-    Returns True only when the path is inside ORION_NEXT.
-    """
+    """Return True only when the path is inside ORION_NEXT."""
+
     try:
-        path.resolve().relative_to(PROJECT_ROOT.resolve())
+        path.resolve().relative_to(
+            PROJECT_ROOT.resolve()
+        )
         return True
+
     except ValueError:
         return False
 
 
 def is_safe_cache_directory(path: Path) -> bool:
-    """
-    Only __pycache__ directories inside ORION_NEXT are allowed.
-    """
+    """Only __pycache__ directories inside ORION_NEXT are allowed."""
+
     if not path.is_dir():
         return False
 
@@ -109,9 +109,8 @@ def is_safe_cache_directory(path: Path) -> bool:
 
 
 def is_safe_bytecode_file(path: Path) -> bool:
-    """
-    Only .pyc and .pyo files inside ORION_NEXT are allowed.
-    """
+    """Only .pyc and .pyo files inside ORION_NEXT are allowed."""
+
     if not path.is_file():
         return False
 
@@ -124,6 +123,7 @@ def is_safe_bytecode_file(path: Path) -> bool:
     try:
         if path.stat().st_size > MAX_SINGLE_FILE_SIZE:
             return False
+
     except OSError:
         return False
 
@@ -131,7 +131,7 @@ def is_safe_bytecode_file(path: Path) -> bool:
 
 
 # ============================================================
-# SCAN
+# SCAN PROJECT
 # ============================================================
 
 def scan_project():
@@ -164,6 +164,7 @@ def scan_project():
         topdown=True,
         followlinks=False,
     ):
+
         root_path = Path(root)
 
         # Never follow symbolic-link directories.
@@ -173,18 +174,27 @@ def scan_project():
             if not (root_path / name).is_symlink()
         ]
 
-        # Detect __pycache__.
+        # ----------------------------------------------------
+        # Detect __pycache__ directories.
+        # ----------------------------------------------------
+
         for directory_name in list(dirs):
+
             candidate = root_path / directory_name
 
             if is_safe_cache_directory(candidate):
+
                 cache_dirs.append(candidate)
 
-                # Do not descend into a cache directory.
+                # Do not descend into __pycache__.
                 dirs.remove(directory_name)
 
+        # ----------------------------------------------------
         # Detect .pyc / .pyo files.
+        # ----------------------------------------------------
+
         for filename in files:
+
             candidate = root_path / filename
 
             if not is_safe_bytecode_file(candidate):
@@ -194,6 +204,7 @@ def scan_project():
 
             try:
                 total_bytes += candidate.stat().st_size
+
             except OSError:
                 pass
 
@@ -208,16 +219,22 @@ def scan_project():
     return {
         "cache_dirs": cache_dirs,
         "bytecode_files": bytecode_files,
-        "total": len(cache_dirs) + len(bytecode_files),
+        "total": (
+            len(cache_dirs)
+            + len(bytecode_files)
+        ),
         "bytes": total_bytes,
     }
 
 
 # ============================================================
-# DELETE
+# SAFE DELETE
 # ============================================================
 
-def delete_targets(scan_result, log_callback):
+def delete_targets(
+    scan_result,
+    log_callback,
+):
     """
     Delete ONLY targets produced by scan_project().
     """
@@ -227,15 +244,23 @@ def delete_targets(scan_result, log_callback):
     failed = []
 
     # --------------------------------------------------------
-    # __pycache__
+    # Delete __pycache__ directories.
     # --------------------------------------------------------
 
     for directory in scan_result["cache_dirs"]:
+
         try:
+
+            # Final safety check immediately before deletion.
             if not is_safe_cache_directory(directory):
+
                 failed.append(
-                    (directory, "Safety validation failed")
+                    (
+                        directory,
+                        "Safety validation failed",
+                    )
                 )
+
                 continue
 
             shutil.rmtree(directory)
@@ -247,8 +272,12 @@ def delete_targets(scan_result, log_callback):
             )
 
         except Exception as exc:
+
             failed.append(
-                (directory, str(exc))
+                (
+                    directory,
+                    str(exc),
+                )
             )
 
             log_callback(
@@ -256,18 +285,26 @@ def delete_targets(scan_result, log_callback):
             )
 
     # --------------------------------------------------------
-    # .pyc / .pyo
+    # Delete standalone .pyc / .pyo files.
     # --------------------------------------------------------
 
     for file_path in scan_result["bytecode_files"]:
+
         try:
+
             if not is_safe_bytecode_file(file_path):
+
                 failed.append(
-                    (file_path, "Safety validation failed")
+                    (
+                        file_path,
+                        "Safety validation failed",
+                    )
                 )
+
                 continue
 
-            # Parent __pycache__ may already have been removed.
+            # It may already have disappeared because
+            # its containing __pycache__ was deleted.
             if not file_path.exists():
                 continue
 
@@ -280,8 +317,12 @@ def delete_targets(scan_result, log_callback):
             )
 
         except Exception as exc:
+
             failed.append(
-                (file_path, str(exc))
+                (
+                    file_path,
+                    str(exc),
+                )
             )
 
             log_callback(
@@ -296,10 +337,11 @@ def delete_targets(scan_result, log_callback):
 
 
 # ============================================================
-# FORMATTING
+# SIZE FORMAT
 # ============================================================
 
 def format_size(size: int) -> str:
+
     units = (
         "B",
         "KB",
@@ -310,7 +352,9 @@ def format_size(size: int) -> str:
     value = float(size)
 
     for unit in units:
+
         if value < 1024 or unit == "GB":
+
             return f"{value:.1f} {unit}"
 
         value /= 1024
@@ -324,7 +368,10 @@ def format_size(size: int) -> str:
 
 class OrionCleanApp:
 
-    def __init__(self, root: tk.Tk):
+    def __init__(
+        self,
+        root: tk.Tk,
+    ):
 
         self.root = root
 
@@ -334,9 +381,13 @@ class OrionCleanApp:
         # Window
         # ----------------------------------------------------
 
-        self.root.title(APP_TITLE)
+        self.root.title(
+            APP_TITLE
+        )
 
-        self.root.geometry("900x650")
+        self.root.geometry(
+            "900x650"
+        )
 
         self.root.minsize(
             820,
@@ -399,18 +450,17 @@ class OrionCleanApp:
         )
 
         # ----------------------------------------------------
-        # Build
+        # Build UI
         # ----------------------------------------------------
 
         self.build_ui()
 
     # ========================================================
-    # UI
+    # BUILD UI
     # ========================================================
 
     def build_ui(self):
 
-        # Main background.
         outer = tk.Frame(
             self.root,
             bg=BG_DARK,
@@ -422,7 +472,7 @@ class OrionCleanApp:
         )
 
         # ----------------------------------------------------
-        # Header
+        # HEADER
         # ----------------------------------------------------
 
         header = tk.Frame(
@@ -439,7 +489,6 @@ class OrionCleanApp:
             False
         )
 
-        # Logo block.
         logo = tk.Frame(
             header,
             bg=ACCENT,
@@ -473,7 +522,6 @@ class OrionCleanApp:
             expand=True
         )
 
-        # Title.
         title_area = tk.Frame(
             header,
             bg=BG,
@@ -510,7 +558,7 @@ class OrionCleanApp:
         )
 
         # ----------------------------------------------------
-        # Main content
+        # MAIN CONTENT
         # ----------------------------------------------------
 
         content = tk.Frame(
@@ -526,7 +574,7 @@ class OrionCleanApp:
         )
 
         # ----------------------------------------------------
-        # Project panel
+        # PROJECT PANEL
         # ----------------------------------------------------
 
         project_panel = tk.Frame(
@@ -571,7 +619,7 @@ class OrionCleanApp:
         )
 
         # ----------------------------------------------------
-        # Statistics
+        # STATISTICS
         # ----------------------------------------------------
 
         stats = tk.Frame(
@@ -606,7 +654,7 @@ class OrionCleanApp:
         )
 
         # ----------------------------------------------------
-        # Status
+        # STATUS
         # ----------------------------------------------------
 
         status_panel = tk.Frame(
@@ -653,7 +701,7 @@ class OrionCleanApp:
         )
 
         # ----------------------------------------------------
-        # Clean button
+        # CLEAN BUTTON
         # ----------------------------------------------------
 
         self.clean_button = tk.Button(
@@ -691,7 +739,7 @@ class OrionCleanApp:
         )
 
         # ----------------------------------------------------
-        # Protection
+        # PROTECTION
         # ----------------------------------------------------
 
         protection = tk.Frame(
@@ -746,7 +794,7 @@ class OrionCleanApp:
         )
 
         # ----------------------------------------------------
-        # Output panel
+        # ACTIVITY / OUTPUT
         # ----------------------------------------------------
 
         output_panel = tk.Frame(
@@ -788,7 +836,6 @@ class OrionCleanApp:
             padx=14,
         )
 
-        # Text + scrollbar.
         text_container = tk.Frame(
             output_panel,
             bg=BG,
@@ -843,22 +890,54 @@ class OrionCleanApp:
             fill="y",
         )
 
-        # Initial log.
-        self.log("ORION CLEAN initialized.")
-        self.log(f"Project: {PROJECT_ROOT}")
+        # ----------------------------------------------------
+        # INITIAL ACTIVITY
+        # ----------------------------------------------------
+
+        self.log(
+            "ORION CLEAN initialized."
+        )
+
+        self.log(
+            f"Project: {PROJECT_ROOT}"
+        )
+
         self.log("")
-        self.log("SAFE TARGETS")
-        self.log("  __pycache__")
-        self.log("  *.pyc")
-        self.log("  *.pyo")
+
+        self.log(
+            "SAFE TARGETS"
+        )
+
+        self.log(
+            "  __pycache__"
+        )
+
+        self.log(
+            "  *.pyc"
+        )
+
+        self.log(
+            "  *.pyo"
+        )
+
         self.log("")
-        self.log("Git commands: DISABLED")
-        self.log("Source/data modification: DISABLED")
+
+        self.log(
+            "Git commands: DISABLED"
+        )
+
+        self.log(
+            "Source/data modification: DISABLED"
+        )
+
         self.log("")
-        self.log("Ready.")
+
+        self.log(
+            "Ready."
+        )
 
     # ========================================================
-    # Stat cards
+    # STAT CARD
     # ========================================================
 
     def create_stat_card(
@@ -916,28 +995,39 @@ class OrionCleanApp:
         )
 
     # ========================================================
-    # Button effects
+    # BUTTON HOVER
     # ========================================================
 
-    def button_enter(self, _event):
+    def button_enter(
+        self,
+        _event,
+    ):
 
         if not self.running:
+
             self.clean_button.configure(
                 bg=ACCENT_HOVER
             )
 
-    def button_leave(self, _event):
+    def button_leave(
+        self,
+        _event,
+    ):
 
         if not self.running:
+
             self.clean_button.configure(
                 bg=ACCENT
             )
 
     # ========================================================
-    # Logging
+    # LOG
     # ========================================================
 
-    def log(self, message: str):
+    def log(
+        self,
+        message: str,
+    ):
 
         self.root.after(
             0,
@@ -945,7 +1035,10 @@ class OrionCleanApp:
             message,
         )
 
-    def _append_log(self, message: str):
+    def _append_log(
+        self,
+        message: str,
+    ):
 
         self.output.configure(
             state="normal"
@@ -965,7 +1058,7 @@ class OrionCleanApp:
         )
 
     # ========================================================
-    # Status
+    # STATUS
     # ========================================================
 
     def set_status(
@@ -990,7 +1083,7 @@ class OrionCleanApp:
         )
 
     # ========================================================
-    # Cleanup
+    # START CLEANUP
     # ========================================================
 
     def start_cleanup(self):
@@ -1004,21 +1097,32 @@ class OrionCleanApp:
 
         if PROJECT_ROOT.name.lower() != "orion_next":
 
-            messagebox.showerror(
-                APP_TITLE,
-                "Safety check failed.\n\n"
-                "The detected project folder is not ORION_NEXT.\n\n"
-                "Cleanup cancelled.",
+            self.log("")
+            self.log(
+                "ERROR: Safety check failed."
+            )
+
+            self.log(
+                "Detected project is not ORION_NEXT."
+            )
+
+            self.set_status(
+                "STOPPED - SAFETY CHECK",
+                DANGER,
             )
 
             return
 
         if not PROJECT_ROOT.exists():
 
-            messagebox.showerror(
-                APP_TITLE,
-                "Project directory does not exist:\n\n"
-                + str(PROJECT_ROOT),
+            self.log("")
+            self.log(
+                "ERROR: Project directory does not exist."
+            )
+
+            self.set_status(
+                "STOPPED - PROJECT NOT FOUND",
+                DANGER,
             )
 
             return
@@ -1054,9 +1158,18 @@ class OrionCleanApp:
         )
 
         self.log("")
-        self.log("=" * 70)
-        self.log("STARTING SAFE CLEANUP")
-        self.log("=" * 70)
+
+        self.log(
+            "=" * 70
+        )
+
+        self.log(
+            "STARTING SAFE CLEANUP"
+        )
+
+        self.log(
+            "=" * 70
+        )
 
         worker = threading.Thread(
             target=self.cleanup_worker,
@@ -1066,14 +1179,17 @@ class OrionCleanApp:
         worker.start()
 
     # ========================================================
-    # Worker
+    # WORKER
     # ========================================================
 
     def cleanup_worker(self):
 
         try:
 
-            self.log("Scanning project...")
+            self.log(
+                "Scanning project..."
+            )
+
             self.set_status(
                 "SCANNING...",
                 ACCENT,
@@ -1104,6 +1220,7 @@ class OrionCleanApp:
             )
 
             self.log("")
+
             self.log(
                 f"__pycache__ directories : {cache_count}"
             )
@@ -1117,13 +1234,18 @@ class OrionCleanApp:
             )
 
             self.log(
-                f"Total eligible size     : "
+                "Total eligible size     : "
                 f"{format_size(result['bytes'])}"
             )
+
+            # ------------------------------------------------
+            # Nothing to clean.
+            # ------------------------------------------------
 
             if result["total"] == 0:
 
                 self.log("")
+
                 self.log(
                     "Nothing to clean."
                 )
@@ -1134,8 +1256,14 @@ class OrionCleanApp:
                     "0",
                 )
 
+                self.root.after(
+                    0,
+                    self.size_var.set,
+                    "0 B",
+                )
+
                 self.set_status(
-                    "CLEAN - NOTHING FOUND",
+                    "CLEAN COMPLETED SUCCESSFULLY",
                     SUCCESS,
                 )
 
@@ -1149,7 +1277,12 @@ class OrionCleanApp:
 
                 return
 
+            # ------------------------------------------------
+            # Delete.
+            # ------------------------------------------------
+
             self.log("")
+
             self.log(
                 "Removing approved cleanup targets..."
             )
@@ -1192,6 +1325,7 @@ class OrionCleanApp:
         except Exception as exc:
 
             self.log("")
+
             self.log(
                 f"ERROR: {exc}"
             )
@@ -1203,7 +1337,7 @@ class OrionCleanApp:
             )
 
     # ========================================================
-    # Finished
+    # CLEANUP FINISHED
     # ========================================================
 
     def cleanup_finished(
@@ -1222,10 +1356,11 @@ class OrionCleanApp:
             cursor="hand2",
         )
 
-        total_removed = (
-            deleted_dirs
-            + deleted_files
-        )
+        self.log("")
+
+        # ----------------------------------------------------
+        # Warnings.
+        # ----------------------------------------------------
 
         if failed:
 
@@ -1234,12 +1369,17 @@ class OrionCleanApp:
                 WARNING,
             )
 
-            self.log("")
-            self.log("=" * 70)
+            self.log(
+                "=" * 70
+            )
+
             self.log(
                 "CLEANUP COMPLETED WITH WARNINGS"
             )
-            self.log("=" * 70)
+
+            self.log(
+                "=" * 70
+            )
 
             self.log(
                 f"Directories removed : {deleted_dirs}"
@@ -1253,27 +1393,46 @@ class OrionCleanApp:
                 f"Failed targets      : {len(failed)}"
             )
 
-            messagebox.showwarning(
-                APP_TITLE,
-                "Cleanup completed with warnings.\n\n"
-                f"Directories removed: {deleted_dirs}\n"
-                f"Files removed: {deleted_files}\n"
-                f"Failed: {len(failed)}",
+            self.log("")
+
+            self.log(
+                "Source code         : PROTECTED"
+            )
+
+            self.log(
+                "Project data        : PROTECTED"
+            )
+
+            self.log(
+                "Git commands        : NOT EXECUTED"
+            )
+
+            self.log(
+                "=" * 70
             )
 
             return
+
+        # ----------------------------------------------------
+        # Success.
+        # ----------------------------------------------------
 
         self.set_status(
             "CLEAN COMPLETED SUCCESSFULLY",
             SUCCESS,
         )
 
-        self.log("")
-        self.log("=" * 70)
+        self.log(
+            "=" * 70
+        )
+
         self.log(
             "CLEANUP COMPLETED SUCCESSFULLY"
         )
-        self.log("=" * 70)
+
+        self.log(
+            "=" * 70
+        )
 
         self.log(
             f"Directories removed : {deleted_dirs}"
@@ -1284,6 +1443,7 @@ class OrionCleanApp:
         )
 
         self.log("")
+
         self.log(
             "Source code         : PROTECTED"
         )
@@ -1296,18 +1456,12 @@ class OrionCleanApp:
             "Git commands        : NOT EXECUTED"
         )
 
-        self.log("=" * 70)
-
-        messagebox.showinfo(
-            APP_TITLE,
-            "ORION CLEAN completed successfully.\n\n"
-            f"Directories removed: {deleted_dirs}\n"
-            f"Files removed: {deleted_files}\n\n"
-            "Source code and project data were not targeted.",
+        self.log(
+            "=" * 70
         )
 
     # ========================================================
-    # Error
+    # ERROR
     # ========================================================
 
     def cleanup_error(
@@ -1329,10 +1483,32 @@ class OrionCleanApp:
             DANGER,
         )
 
-        messagebox.showerror(
-            APP_TITLE,
-            "Cleanup was stopped safely.\n\n"
-            + error_message,
+        self.log("")
+
+        self.log(
+            "=" * 70
+        )
+
+        self.log(
+            "CLEANUP STOPPED SAFELY"
+        )
+
+        self.log(
+            "=" * 70
+        )
+
+        self.log(
+            f"ERROR: {error_message}"
+        )
+
+        self.log("")
+
+        self.log(
+            "No further cleanup operation was performed."
+        )
+
+        self.log(
+            "=" * 70
         )
 
 
@@ -1345,12 +1521,15 @@ def main():
     root = tk.Tk()
 
     try:
+
         root.tk.call(
             "tk",
             "scaling",
             1.0,
         )
+
     except Exception:
+
         pass
 
     OrionCleanApp(
@@ -1361,4 +1540,5 @@ def main():
 
 
 if __name__ == "__main__":
+
     main()
