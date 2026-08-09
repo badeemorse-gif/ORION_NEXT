@@ -21,7 +21,7 @@ base_logger = logging.getLogger(__name__)
 
 @dataclass(frozen=True)
 class ValidationConfig:
-    ENGINE_VERSION: str = "1.4.0"
+    ENGINE_VERSION: str = "1.4.1"
     STRICT_MODE: bool = True
     MIN_SCORE_BOUND: float = 0.0
     MAX_SCORE_BOUND: float = 100.0
@@ -120,22 +120,33 @@ class ValidationRule(ABC):
 
 
 class MetadataRule(ValidationRule):
+    """Validate metadata through the canonical MarketMetadata boundary."""
+
     def validate(self, dataset, config):
         errors, warnings, checks = [], [], 0
         if dataset is None:
             return [ValidationIssue(ValidationCodes.META_DATASET_NONE, "Dataset is None", ValidationStatus.FAILED, "metadata")], warnings, 1
+
+        metadata = getattr(dataset, "metadata", None)
+        if metadata is None:
+            return [ValidationIssue(ValidationCodes.META_DATASET_NONE, "Dataset metadata is missing", ValidationStatus.FAILED, "metadata")], warnings, 1
+
         checks += 1
         if not isinstance(dataset.symbol, str) or not dataset.symbol.strip():
             errors.append(ValidationIssue(ValidationCodes.META_INVALID_SYMBOL, "Missing or invalid dataset symbol", ValidationStatus.FAILED, "metadata"))
+
         checks += 1
-        if not getattr(dataset, "exchange", None):
+        if not getattr(metadata, "exchange", None):
             warnings.append(ValidationIssue(ValidationCodes.META_MISSING_EXCHANGE, "Missing exchange metadata", ValidationStatus.WARNING, "metadata"))
+
         checks += 1
-        if not getattr(dataset, "source", None):
+        if not getattr(metadata, "source", None):
             warnings.append(ValidationIssue(ValidationCodes.META_MISSING_SOURCE, "Missing source identifier metadata", ValidationStatus.WARNING, "metadata"))
+
         checks += 1
-        if getattr(dataset, "downloaded_at", None) is None:
+        if getattr(metadata, "downloaded_at", None) is None:
             warnings.append(ValidationIssue(ValidationCodes.META_MISSING_DOWNLOADED_AT, "Missing downloaded_at timestamp", ValidationStatus.WARNING, "metadata"))
+
         return errors, warnings, checks
 
 
@@ -171,7 +182,6 @@ class TimeframeRule(ValidationRule):
         return errors, warnings, checks
 
 
-# Retained as extension points for later component-level validation.
 class ProfileRule(ValidationRule):
     def validate(self, dataset, config):
         return [], [], 0
