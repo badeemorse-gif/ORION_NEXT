@@ -1023,6 +1023,764 @@ API
 
 **ملاحظة توثيقية:** هذا التقرير يصلح كمحتوى مرجعي جديد، والأفضل عند إضافته رسميًا أن يكون في وثيقة تاريخ/تقرير تطوير مستقلة، بينما تبقى `ORION_PROJECT_STATE.md` مختصرة وتحتوي فقط على نقطة الاستئناف الحالية؛ وهذا يتوافق مع فصل الحالة عن التاريخ في قواعد المشروع.
 
+
+# ORION — تنفيذ الخطوة التالية مكتمل ✅
+
+نفذت **مراجعة سلسلة التنفيذ كاملة** من `Indicator` حتى `Report`، ثم راجعت علاقتها بـ `Application / API / GUI / Scheduler / Output`، مع الرجوع إلى الحالة الرسمية الحالية والـ Baseline والكود الفعلي على `main`.
+
+القواعد الرسمية تلزم في أمر `1` بتحديد المرحلة والحالة والخطوة التالية ثم تنفيذ **الخطوة التالية فقط**.
+
+---
+
+## 1. النتيجة الأساسية
+
+الـ **Result Contract Chain موجودة جزئيًا في Models، لكنها غير موصولة فعليًا ببعضها**.
+
+الـ Baseline يحدد السلسلة المستهدفة:
+
+```text
+MarketDataset
+    ↓
+Validation
+    ↓
+Indicators
+    ↓
+AnalysisResult
+    +
+ProfileResult
+    ↓
+ScoreResult
+    ↓
+DecisionResult
+    ↓
+ExecutionPlan / ExecutionResult
+    ↓
+ReportResult
+```
+
+ويؤكد أن نموذج:
+
+```text
+Every Engine
+    ↓
+.execute()
+    ↓
+MarketDataset
+```
+
+**ليس المعمارية المستهدفة**.
+
+والكود الحالي يثبت أن هذا النموذج القديم ما زال هو الذي يحكم `Orchestrator`.
+
+---
+
+# 2. الحالة الفعلية لكل مرحلة
+
+| المرحلة       | النتيجة                                                   |
+| ------------- | --------------------------------------------------------- |
+| MarketDataset | 🟢 أساس صحيح                                              |
+| Indicators    | 🟡 يعمل، لكن boundary قديم                                |
+| Analysis      | 🟢 Canonical Result موجود ومستخدم داخل Engine             |
+| Profile       | 🔴 ما زال يستخدم `MarketDataset` + `MarketProfile` القديم |
+| Score         | 🟢 Canonical Result جيد                                   |
+| Decision      | 🟢 Canonical Result جيد                                   |
+| Execution     | 🔴 Contract مزدوج واعتماد مباشر على Core                  |
+| Report        | 🔴 **ثلاثة مسارات/نماذج متعارضة**                         |
+| Validation    | 🔴 مبني على الـ legacy dataset state ويأتي متأخرًا        |
+| Orchestrator  | 🔴 Universal `.execute()`                                 |
+| Pipeline      | 🔴 مبني على OrchestratorResult القديم                     |
+| Application   | 🟠 موجود لكن غير موصول بالـ Target Flow                   |
+| API           | 🟡 boundary موجود؛ export مؤجل                            |
+| Scheduler     | 🟡 facade جيد مع duplication في Market Service            |
+| GUI           | 🟡 boundary موجود لكن غير مربوط بـ Application            |
+| Output        | 🔴 يعتمد على `FullReport` القديم                          |
+
+---
+
+# 3. Indicators
+
+`IndicatorEngine` لديه بالفعل contract منطقي جيد:
+
+```text
+MarketDataset
+    ↓
+IndicatorEngine
+    ↓
+MarketDataset
+```
+
+ويحوّل الـ DataFrames فقط، ولا يضيف `indicators_ready` أو حالة تحليلية إلى `TimeframeData`.
+
+وهذا يتوافق مع الـ Baseline الذي يسمح بأن تكون نتيجة Indicators هي `MarketDataset / Indicator data`.
+
+**المشكلة:** الـ `Orchestrator` لا يستدعي:
+
+```text
+calculate_dataset()
+```
+
+بل يفترض:
+
+```text
+indicator_engine.execute(dataset)
+```
+
+إذن المشكلة هنا **integration boundary** وليست إعادة بناء Indicator logic.
+
+---
+
+# 4. Analysis — أفضل جزء حاليًا
+
+`AnalysisEngine` يستقبل:
+
+```text
+MarketDataset
+```
+
+ويعيد:
+
+```text
+AnalysisResult
+```
+
+ولا يكتب Analysis state داخل `MarketDataset`.
+
+وهذا مطابق مباشرة للـ Target Contract:
+
+```text
+MarketDataset
+    ↓
+AnalysisEngine
+    ↓
+AnalysisResult
+```
+
+**الحكم:**
+
+🟢 **Logic + Contract صالحان لإعادة الاستخدام.**
+
+المطلوب لاحقًا فقط ربطه بالـ Orchestrator الجديد.
+
+---
+
+# 5. Profile — تعارض مؤكد
+
+هنا وجدنا المخالفة التي كانت متوقعة.
+
+يوجد بالفعل `ProfileResult` canonical، وهو مصمم صراحة ليكون مستقلًا عن `MarketDataset`.
+
+لكن `ProfileEngine` الحالي:
+
+```text
+build_dataset_profile()
+        ↓
+MarketDataset
+        ↓
+dataset.profile
+```
+
+ويكتب كذلك:
+
+```text
+tf_data.profile
+tf_data.profile_ready
+```
+
+كما أنه يستورد `MarketProfile` من `profile_builder`.
+
+إذن لدينا:
+
+```text
+Canonical:
+ProfileResult
+
+Legacy active path:
+MarketProfile
+    ↓
+TimeframeData.profile
+    ↓
+MarketDataset.profile
+```
+
+**الحكم: 🔴 Profile Contract Reconstruction مؤكدة.**
+
+ولا نحتاج إعادة بناء منطق `ProfileBuilder` بالكامل؛ الـ Baseline نفسه يصنف `ProfileBuilder logic` ضمن المكونات التي ينبغي الحفاظ على قيمتها وإعادة بناء الـ interface حولها.
+
+---
+
+# 6. Score — Contract صحيح
+
+`ScoreEngine` الحالي يستقبل:
+
+```text
+AnalysisResult
+```
+
+ويعيد:
+
+```text
+ScoreResult
+```
+
+ويستخدم فقط:
+
+```text
+score
+category
+factors
+warnings
+```
+
+وهو بالضبط الشكل canonical المطلوب.
+
+**الحكم: 🟢 لا نعيد كتابة Score logic.**
+
+المشكلة فقط أن `Orchestrator` لا يعرف هذا contract.
+
+---
+
+# 7. Decision — Contract صحيح
+
+`DecisionEngine` يستقبل:
+
+```text
+AnalysisResult
++
+ScoreResult
+```
+
+ويعيد:
+
+```text
+DecisionResult
+```
+
+وهذا مطابق للـ Target Architecture، مع كون `ProfileResult` اختياريًا عندما تكون قواعد القرار بحاجة إليه.
+
+**الحكم: 🟢 Decision logic قابلة للحفاظ.**
+
+لكن توجد مشكلة منفصلة مؤكدة في المشروع: وجود Decision implementation إضافية على مستوى الجذر، والـ Baseline يطلب توحيدها في implementation واحدة.
+
+---
+
+# 8. Execution — Contract فعليًا مزدوج
+
+هنا ظهر تعارض مهم.
+
+لدينا canonical:
+
+```text
+models.execution
+```
+
+وفيه:
+
+```text
+DecisionResult
+    ↓
+ExecutionPlan
+    ↓
+ExecutionRequest
+    ↓
+ExecutionResult
+```
+
+وهو مستقل عن `MarketDataset` و`Orchestrator`.
+
+لكن `engines.execution_engine.py` ما زال يعرف:
+
+```python
+from core.orchestrator import OrchestratorResult, ExecutionPayload
+```
+
+ثم يعرف داخله مرة أخرى:
+
+```text
+ExecutionRequest
+ExecutionResult
+ExecutionSide
+ExecutionStatus
+```
+
+أي لدينا **Execution contract ثاني**.
+
+وهذا يخالف الـ Baseline صراحة:
+
+> Execution must not depend on internal Orchestrator result types.
+
+**الحكم: 🔴 Execution Contract Reconstruction مؤكدة.**
+
+لكن `TradeExecutor` و`PaperExecutionAdapter` يحتويان قيمة قابلة للحفاظ، وهو أيضًا ما يوصي به الـ Baseline.
+
+---
+
+# 9. Report — التعارض الأكبر
+
+لدينا فعليًا **ثلاثة Report Contracts**:
+
+### Canonical
+
+```text
+models.report.ReportResult
+```
+
+وهو يجمع:
+
+```text
+AnalysisResult
+ProfileResult
+ScoreResult
+DecisionResult
+ExecutionResult
+```
+
+وهو مستقل تمامًا عن `MarketDataset`.
+
+### Legacy Engine Contract
+
+`engines.report_engine.py` يعرف `ReportResult` آخر:
+
+```text
+symbol
+exchange
+profile: dict
+score: dict
+decision: dict
+summary
+highlights
+warnings
+metadata
+json_ready
+```
+
+ويكتب:
+
+```text
+dataset.report = report_result
+```
+
+ويشترط أصلًا:
+
+```text
+dataset.profile
+dataset.score
+dataset.decision
+```
+
+### Export Contract
+
+`reports.report_models.py` لديه:
+
+```text
+FullReport
+├── metadata
+├── summary
+└── symbols
+```
+
+ثم `ReportExporter` يعتمد عليه مباشرة.
+
+إذن:
+
+```text
+models.report.ReportResult
+        ≠
+engines.report_engine.ReportResult
+        ≠
+reports.report_models.FullReport
+```
+
+**الحكم: 🔴 Report Contract Reconstruction مؤكدة.**
+
+وهذا يتطابق حرفيًا مع الـ Baseline الذي يطلب:
+
+```text
+one canonical report model
++
+one canonical report-engine path
+```
+
+والأهم: `test_report_contract.py` موجود فعلًا الآن على `main` ويثبت الـ canonical contract المطلوب.
+
+---
+
+# 10. Validation — مكانه وContractه كلاهما قديمان
+
+الـ `ValidationEngine` الحالي يفحص:
+
+```text
+MarketDataset
+ ├── profile
+ ├── score
+ ├── decision
+ └── report
+```
+
+ويبحث عن حقول legacy مثل:
+
+```text
+score.total_score
+decision.risk
+decision.position_size_factor
+decision.reason_codes
+report.json_ready
+```
+
+بينما الـ canonical models الحالية لا تعتمد على هذه البنية.
+
+كما أن الـ Orchestrator الحالي ينفذ:
+
+```text
+Report
+ ↓
+Validation
+```
+
+بينما الـ Baseline يحدد:
+
+```text
+Provider
+ ↓
+MarketDataset
+ ↓
+Validation
+ ↓
+Valid MarketDataset
+```
+
+ثم validation للـ processing/result boundaries عند الحاجة.
+
+**الحكم: 🔴 Validation Contract + Boundary Reconstruction.**
+
+---
+
+# 11. Orchestrator — تم إثبات نقطة الانهيار المركزية
+
+الـ Orchestrator يعرّف صراحة:
+
+```text
+ExecutableEngine.execute(
+    MarketDataset
+) -> MarketDataset
+```
+
+ثم ينفذ:
+
+```text
+Indicator .execute()
+Profile   .execute()
+Score     .execute()
+Decision  .execute()
+Report    .execute()
+```
+
+وكل مرحلة تعيد `MarketDataset`.
+
+لكن الـ Engines canonical الحالية تستخدم:
+
+```text
+IndicatorEngine.calculate_dataset()
+AnalysisEngine.analyze()
+ProfileEngine → يحتاج reconstruction
+ScoreEngine.calculate()
+DecisionEngine.decide()
+```
+
+إذن الـ Orchestrator الحالي **غير قادر أصلًا على استهلاك الـ canonical contracts دون adapters/تغيير معماري**.
+
+والـ Baseline يقول صراحة إن الـ universal `.execute()` architecture ليست الهدف.
+
+**الحكم: 🔴 Orchestrator Reconstruction مؤكدة.**
+
+---
+
+# 12. Pipeline
+
+الـ Pipeline الحالي:
+
+```text
+Pipeline
+ ↓
+Orchestrator
+ ↓
+ExecutionEngine
+```
+
+ويعتمد على:
+
+```text
+OrchestratorResult
+```
+
+ثم يرسل هذا الـ result إلى ExecutionEngine.
+
+وهذا يعكس مشكلة Execution السابقة.
+
+كما أن الـ Baseline يحدد أن Pipeline يجب أن يجمع canonical components ولا يعيد منطق Engines.
+
+**الحكم: 🔴 Pipeline يحتاج reconstruction بعد تثبيت Contracts.**
+
+---
+
+# 13. Application — توجد فجوات تشغيلية مؤكدة
+
+`OrionApplication` بالفعل يبني:
+
+```text
+DependencyContainer
+ ↓
+Pipeline
+```
+
+وهذا اتجاه جيد.
+
+لكن توجد فجوات contract واضحة بينه وبين `Pipeline` الحالي، مثل اعتماد Application على عمليات مثل:
+
+```text
+pipeline.stop()
+pipeline.state()
+pipeline.statistics()
+```
+
+بينما الـ Pipeline الذي تمت مراجعته لا يقدم هذه الواجهة بالصورة التي يتوقعها Application.
+
+وهذا يؤكد أن Application Runtime **لا يمكن تثبيته الآن قبل إعادة بناء Core/Pipeline**.
+
+---
+
+# 14. API
+
+الـ API boundary نفسها جيدة نسبيًا:
+
+```text
+ApiService
+ ↓
+SchedulerService
+ ↓
+ReportExporter
+```
+
+لكنها **ليست Target Application boundary**؛ فهي لا تمر حاليًا عبر Application use-case layer.
+
+والـ `export_report()` ما زال:
+
+```text
+Not implemented yet.
+```
+
+وهذا **ليس شيئًا سنصلحه الآن**؛ لأن الـ Baseline يشترط تثبيت Report Contract أولًا قبل إكمال export.
+
+**الحكم: 🟡 مؤجل عمدًا.**
+
+---
+
+# 15. GUI
+
+الـ GUI لديه فصل جيد بين:
+
+```text
+GuiController
+ ↓
+GuiService
+```
+
+ولا يضع business logic داخل controller.
+
+لكن لا توجد حاليًا علاقة واضحة:
+
+```text
+GUI
+ ↓
+Application
+```
+
+بل هو subsystem مستقل تقريبًا.
+
+والـ Baseline يضع GUI downstream من Core stabilization.
+
+**الحكم: 🟡 لا نلمسه الآن.**
+
+---
+
+# 16. Scheduler
+
+`SchedulerService` نفسه منظم كـ facade:
+
+```text
+SchedulerService
+ ├── JobRegistry
+ └── SchedulerEngine
+```
+
+وهذا متوافق مع المسؤولية المطلوبة.
+
+لكن يوجد **تكرار مؤكد في Market Service**:
+
+```text
+services/market_service.py
+scheduler/market_service.py
+```
+
+والاثنان يعرّفان `MarketService`.
+
+وهذا يطابق duplication المسجل في الـ Baseline.
+
+**الحكم: 🟡 Scheduler ليس سبب الإصلاح الحالي؛ Market Service consolidation يأتي لاحقًا.**
+
+---
+
+# 17. Output
+
+Output حاليًا مربوط بالمسار القديم:
+
+```text
+ReportExporter
+ ↓
+FullReport
+ ↓
+HTML / JSON Renderers
+```
+
+بينما Target:
+
+```text
+ReportResult
+ ↓
+ReportExporter
+ ├── JSON
+ └── HTML
+```
+
+إذن Output **لا يمكن تثبيته قبل Report Contract**.
+
+---
+
+# 18. GAP MAP النهائي
+
+بعد هذه المراجعة أصبحت الـ GAP Map أكثر دقة:
+
+```text
+                    CURRENT
+                       │
+                       ▼
+               ┌──────────────┐
+               │ MarketDataset│
+               └──────┬───────┘
+                      │
+                      ▼
+                 Indicators
+                      │
+                      ▼
+             AnalysisResult  ✓
+                      │
+          ┌───────────┴───────────┐
+          ▼                       ▼
+   Profile legacy          ProfileResult ✓
+          │
+          └──────────┐
+                     ▼
+                 ScoreResult ✓
+                     │
+                     ▼
+               DecisionResult ✓
+                     │
+                     ▼
+          Execution legacy/core
+                     │
+                     ▼
+             Report × × ×
+                     │
+                     ▼
+             Validation legacy
+```
+
+بينما المطلوب:
+
+```text
+MarketDataset
+      ↓
+Validation
+      ↓
+Indicators
+      ↓
+ ┌───────────────┐
+ ▼               ▼
+Analysis       Profile
+ ▼               ▼
+AnalysisResult  ProfileResult
+ └───────┬───────┘
+         ▼
+    ScoreResult
+         ▼
+   DecisionResult
+         ▼
+   ExecutionPlan
+         ▼
+   ExecutionResult
+         ▼
+     ReportResult
+         ▼
+   JSON / HTML
+```
+
+---
+
+# 19. القرار التنفيذي
+
+**لن نبدأ بإصلاح `Orchestrator` مباشرة.**
+
+لأن المراجعة أثبتت أن ذلك سيعيد إنتاج نفس المشكلة.
+
+الترتيب الصحيح الآن هو:
+
+```text
+PHASE 1 — CONTRACTS
+        ↓
+Result Models
+        ↓
+Profile Contract
+        ↓
+Execution Contract
+        ↓
+Report Contract
+        ↓
+Validation Contract
+        ↓
+Consumers
+        ↓
+Orchestrator
+```
+
+والـ Baseline يضع **Phase 1 — Contracts = READY** ويحدد صراحة أن Result Models وExecution/Report/Validation Contracts ضمن نطاق reconstruction.
+
+---
+
+## 🚦حالة الخطوة
+
+**Architecture Inventory / Execution Chain Review: مكتملة الآن بشكل مثبت من الكود الفعلي.**
+
+### لم يتم:
+
+* حذف أي ملف.
+* إعادة تسمية أي ملف.
+* تعديل أي كود.
+* تعديل GitHub.
+* اعتماد أي Legacy deletion.
+
+وهذا متوافق مع `ORION_PROJECT_STATE.md` الذي يمنع إعادة الهيكلة قبل اكتمال المقارنة.
+
+### الخطوة التالية
+
+**Phase 1 — Contracts Reconstruction**
+
+والبداية الصحيحة:
+
+> **تثبيت canonical Result Contracts ثم إعادة بناء `ReportResult`/Profile/Execution/Validation حولها، وبعد ذلك نقل المستهلكين، وليس العكس.**
+
+وهذا هو أول تنفيذ فعلي يجب أن نبدأه الآن؛ وليس تعديل `main.py` أو GUI أو API أو Scheduler.
+
+**ملاحظة توثيقية مهمة:** الحالة الرسمية على GitHub ما زالت تسجل أن هذه المراجعة هي "الخطوة التالية"، لأنها لم تُحدّث بعد في `ORION_PROJECT_STATE.md`. لذلك **لم أفترض أنها أصبحت معتمدة لمجرد أن محادثة سابقة قالت ذلك**؛ أثبتُّها الآن من الكود الفعلي، لكن تحديث سجل الحالة نفسه يظل إجراءً توثيقيًا منفصلًا يحتاج تطبيقه محليًا وفق مسار المشروع.
+
 ==================================================
 END
 ==================================================
