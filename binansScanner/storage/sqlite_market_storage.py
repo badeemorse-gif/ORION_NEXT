@@ -3,16 +3,15 @@
 Badee Binance Scanner
 Architecture : ORION
 Module       : storage.sqlite_market_storage
-Version      : 1.1.0
-Status       : ORION Production V1.0 INITIAL
+Version      : 1.2.0
+Status       : ORION Canonical Market Contract
 ===============================================================================
 
-SQLite backend implementation for MarketStorage, responsible solely for
-persisting and retrieving market datasets using native sqlite3 with
-transactions, context managers, and prepared statements.
+SQLite backend implementation for MarketStorage.
 
-Connection lifecycle is explicitly managed so SQLite file handles are always
-released after each operation, including on Windows.
+The backend persists the canonical MarketDataset contract defined by
+models.market.  In particular, TimeframeData exposes ``dataframe`` (not
+``df``), and MarketDataset carries canonical MarketMetadata.
 ===============================================================================
 """
 
@@ -24,30 +23,25 @@ from contextlib import contextmanager
 from datetime import datetime, timezone
 from typing import Any, Iterator, Optional
 
-from models.market import MarketDataset, TimeframeData
+import pandas as pd
+
+from enums import DataHealth, Timeframe
+from models.market import MarketDataset, MarketMetadata, TimeframeData
 from storage.market_storage import MarketStorage
 
 base_logger = logging.getLogger(__name__)
 
 
-# =============================================================================
-# Custom Exceptions
-# =============================================================================
-
 class StorageError(Exception):
-    """Base exception class for all storage related errors."""
+    """Base exception class for SQLite storage failures."""
 
 
 class SQLiteStorageError(StorageError):
-    """Raised when SQLite operations fail."""
+    """Raised when a SQLite storage operation fails."""
 
-
-# =============================================================================
-# Logger Adapter
-# =============================================================================
 
 class LoggerAdapter(logging.LoggerAdapter):
-    """Custom LoggerAdapter injecting storage operation context attributes."""
+    """Logger adapter injecting SQLite storage context."""
 
     def process(
         self,
@@ -60,28 +54,14 @@ class LoggerAdapter(logging.LoggerAdapter):
             for key, value in context.items()
             if value is not None
         )
-        formatted_msg = (
-            f"[{context_str}] {msg}"
-            if context_str
-            else msg
+        return (
+            f"[{context_str}] {msg}" if context_str else msg,
+            kwargs,
         )
-        return formatted_msg, kwargs
 
-
-# =============================================================================
-# SQLite Market Storage Backend
-# =============================================================================
 
 class SQLiteMarketStorage(MarketStorage):
-    """
-    SQLite backend storage implementation for persisting MarketDataset
-    entities using native sqlite3 with strict transactions and prepared
-    statements.
-
-    Every connection created by this class is explicitly closed when its
-    operation finishes. This is required for deterministic lifecycle
-    management and Windows-compatible temporary database cleanup.
-    """
+    """Canonical SQLite persistence backend for MarketDataset."""
 
     def __init__(
         self,
@@ -89,12 +69,7 @@ class SQLiteMarketStorage(MarketStorage):
         logger: Optional[logging.Logger] = None,
     ) -> None:
         self._database_path = database_path
-        self._logger_instance = (
-            logger
-            if logger is not None
-            else base_logger
-        )
-
+        self._logger_instance = logger if logger is not None else base_logger
         self._logger = LoggerAdapter(
             self._logger_instance,
             {
@@ -102,11 +77,6 @@ class SQLiteMarketStorage(MarketStorage):
                 "operation": "init",
             },
         )
-
-        self._logger.info(
-            f"Initializing SQLiteMarketStorage with path: {database_path}"
-        )
-
         self._init_database()
 
     def _get_logger(
@@ -125,25 +95,17 @@ class SQLiteMarketStorage(MarketStorage):
 
     @contextmanager
     def _connection(self) -> Iterator[sqlite3.Connection]:
-        """
-        Create a SQLite connection and guarantee that it is closed.
-
-        sqlite3.Connection implements transaction context management, but
-        exiting ``with connection`` does not close the connection itself.
-        This dedicated context manager closes it deterministically.
-        """
+        """Create and deterministically close one SQLite connection."""
         conn = sqlite3.connect(self._database_path)
         conn.row_factory = sqlite3.Row
-
         try:
             yield conn
         finally:
             conn.close()
 
     def _init_database(self) -> None:
-        """Create the required market_data table if it does not exist."""
-
-        create_table_query = """
+        """Create the canonical OHLCV persistence table."""
+        query = """
         CREATE TABLE IF NOT EXISTS market_data (
             symbol TEXT NOT NULL,
             timeframe TEXT NOT NULL,
@@ -156,104 +118,70 @@ class SQLiteMarketStorage(MarketStorage):
             PRIMARY KEY (symbol, timeframe, timestamp)
         );
         """
-
         try:
             with self._connection() as conn:
-                conn.execute(create_table_query)
+                conn.execute(query)
                 conn.commit()
-
-            self._logger.info(
-                "Database schema initialized successfully."
-            )
-
         except Exception as exc:
-            self._logger.error(
-                f"Failed to initialize database schema: {exc}"
-            )
+            self._logger.error(f"Failed to initialize database schema: {exc}")
             raise SQLiteStorageError(
                 f"Failed to initialize database: {exc}"
             ) from exc
 
     # -------------------------------------------------------------------------
-    # Public Storage Interface
+    # Canonical Storage Interface
     # -------------------------------------------------------------------------
 
     def execute(self, dataset: MarketDataset) -> None:
-        """
-        Unified storage execution contract used by the Orchestrator.
-
-        Persistence remains the sole responsibility of the storage backend;
-        this method intentionally delegates to the canonical save_dataset()
-        implementation without introducing a second storage path.
-        """
+        """Unified storage execution contract used by Orchestrator."""
         if not isinstance(dataset, MarketDataset):
             raise SQLiteStorageError(
                 "Storage execute() requires a MarketDataset instance."
             )
         self.save_dataset(dataset)
 
-    def save_dataset(
-        self,
-        dataset: MarketDataset,
-    ) -> None:
-        """
-        Save all timeframes contained within a MarketDataset into SQLite
-        using a single atomic transaction and prepared statements.
-        """
+    def save_dataset(self, dataset: MarketDataset) -> None:
+        """Persist every canonical timeframe DataFrame atomically."""
+        if not isinstance(dataset, MarketDataset):
+            raise SQLiteStorageError("save_dataset requires a MarketDataset instance.")
 
         symbol = dataset.symbol
-
-        logger = self._get_logger(
-            symbol=symbol,
-            operation="save_dataset",
-        )
-
-        logger.info(
-            f"Saving MarketDataset for symbol '{symbol}' "
-            f"across {len(dataset.timeframes)} timeframes."
-        )
+        logger = self._get_logger(symbol=symbol, operation="save_dataset")
 
         insert_query = """
         INSERT OR REPLACE INTO market_data (
-            symbol,
-            timeframe,
-            timestamp,
-            open,
-            high,
-            low,
-            close,
-            volume
-        )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            symbol, timeframe, timestamp, open, high, low, close, volume
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         """
 
         try:
             with self._connection() as conn:
                 cursor = conn.cursor()
-
                 cursor.execute("BEGIN TRANSACTION;")
 
-                for tf_str, tf_data in dataset.timeframes.items():
-
-                    if tf_data.df is None or tf_data.df.empty:
+                for timeframe, timeframe_data in dataset.timeframes.items():
+                    dataframe = timeframe_data.dataframe
+                    if dataframe is None or dataframe.empty:
                         continue
 
-                    df = tf_data.df
-                    records = []
+                    timeframe_value = (
+                        timeframe.value
+                        if isinstance(timeframe, Timeframe)
+                        else str(timeframe)
+                    )
 
-                    for ts, row in df.iterrows():
-
-                        ts_val = (
-                            int(ts.timestamp() * 1000)
-                            if hasattr(ts, "timestamp")
-                            else int(ts)
-                        )
+                    records: list[tuple[Any, ...]] = []
+                    for timestamp, row in dataframe.iterrows():
+                        if hasattr(timestamp, "timestamp"):
+                            timestamp_ms = int(timestamp.timestamp() * 1000)
+                        else:
+                            timestamp_ms = int(timestamp)
 
                         records.append(
                             (
                                 symbol,
-                                tf_str,
-                                ts_val,
+                                timeframe_value,
+                                timestamp_ms,
                                 float(row["open"]),
                                 float(row["high"]),
                                 float(row["low"]),
@@ -263,22 +191,17 @@ class SQLiteMarketStorage(MarketStorage):
                         )
 
                     if records:
-                        cursor.executemany(
-                            insert_query,
-                            records,
-                        )
+                        cursor.executemany(insert_query, records)
 
                 conn.commit()
 
             logger.info(
                 f"Successfully saved MarketDataset for symbol '{symbol}'."
             )
-
         except Exception as exc:
             logger.error(
                 f"Failed to save MarketDataset for symbol '{symbol}': {exc}"
             )
-
             raise SQLiteStorageError(
                 f"Failed to save dataset for symbol {symbol}: {exc}"
             ) from exc
@@ -288,79 +211,52 @@ class SQLiteMarketStorage(MarketStorage):
         symbol: str,
         timeframes: list[str],
     ) -> Optional[MarketDataset]:
-        """
-        Load a MarketDataset for a symbol and specified timeframes.
-
-        Returns None if no data is found.
-        """
-
-        logger = self._get_logger(
-            symbol=symbol,
-            operation="load_dataset",
-        )
-
-        logger.info(
-            f"Loading MarketDataset for symbol '{symbol}' "
-            f"across timeframes: {timeframes}"
-        )
-
+        """Load canonical MarketDataset data from SQLite."""
+        logger = self._get_logger(symbol=symbol, operation="load_dataset")
         if not timeframes:
-            logger.warning(
-                "load_dataset called with empty timeframes list."
-            )
             return None
 
-        select_query = """
-        SELECT
-            timestamp,
-            open,
-            high,
-            low,
-            close,
-            volume
+        query = """
+        SELECT timestamp, open, high, low, close, volume
         FROM market_data
-        WHERE symbol = ?
-          AND timeframe = ?
+        WHERE symbol = ? AND timeframe = ?
         ORDER BY timestamp ASC;
         """
 
         try:
-            timeframe_dict: dict[str, TimeframeData] = {}
-            has_data = False
+            timeframe_models: dict[Timeframe, TimeframeData] = {}
 
             with self._connection() as conn:
-
                 cursor = conn.cursor()
 
-                for tf in timeframes:
+                for raw_timeframe in timeframes:
+                    try:
+                        timeframe = (
+                            raw_timeframe
+                            if isinstance(raw_timeframe, Timeframe)
+                            else Timeframe(str(raw_timeframe))
+                        )
+                    except ValueError:
+                        logger.warning(
+                            f"Unknown timeframe '{raw_timeframe}' skipped."
+                        )
+                        continue
 
-                    cursor.execute(
-                        select_query,
-                        (symbol, tf),
-                    )
-
+                    cursor.execute(query, (symbol, timeframe.value))
                     rows = cursor.fetchall()
-
                     if not rows:
                         continue
 
-                    has_data = True
-
-                    import pandas as pd
-
-                    data_rows = []
-                    timestamps = []
-
-                    for row in rows:
-
-                        ts_dt = datetime.fromtimestamp(
+                    timestamps = [
+                        datetime.fromtimestamp(
                             row["timestamp"] / 1000.0,
                             tz=timezone.utc,
                         )
+                        for row in rows
+                    ]
 
-                        timestamps.append(ts_dt)
-
-                        data_rows.append(
+                    dataframe = pd.DataFrame(
+                        [
                             {
                                 "open": row["open"],
                                 "high": row["high"],
@@ -368,189 +264,102 @@ class SQLiteMarketStorage(MarketStorage):
                                 "close": row["close"],
                                 "volume": row["volume"],
                             }
-                        )
-
-                    df = pd.DataFrame(
-                        data_rows,
+                            for row in rows
+                        ],
                         index=pd.DatetimeIndex(
                             timestamps,
                             name="timestamp",
                         ),
                     )
 
-                    timeframe_dict[tf] = TimeframeData(
-                        timeframe=tf,
-                        df=df,
+                    candles_count = len(dataframe)
+                    if candles_count >= 1000:
+                        data_health = DataHealth.EXCELLENT
+                    elif candles_count >= 500:
+                        data_health = DataHealth.GOOD
+                    elif candles_count >= 100:
+                        data_health = DataHealth.ACCEPTABLE
+                    elif candles_count > 0:
+                        data_health = DataHealth.POOR
+                    else:
+                        data_health = DataHealth.INVALID
+
+                    timeframe_models[timeframe] = TimeframeData(
+                        timeframe=timeframe,
+                        dataframe=dataframe,
+                        data_health=data_health,
+                        candles_count=candles_count,
+                        first_timestamp=timestamps[0] if timestamps else None,
+                        last_timestamp=timestamps[-1] if timestamps else None,
                     )
 
-            if not has_data:
-                logger.info(
-                    f"No stored data found for symbol '{symbol}'."
-                )
+            if not timeframe_models:
+                logger.info(f"No stored data found for symbol '{symbol}'.")
                 return None
 
-            dataset = MarketDataset(
+            now = datetime.now(timezone.utc)
+            metadata = MarketMetadata(
                 symbol=symbol,
-                timeframes=timeframe_dict,
+                exchange="BINANCE",
+                source="BINANCE_API",
+                cache_version="1.0.0",
+                downloaded_at=now,
+                last_updated_at=now,
+                is_valid=True,
+                validation_message=None,
             )
 
-            logger.info(
-                f"Successfully loaded MarketDataset for symbol '{symbol}'."
+            return MarketDataset(
+                metadata=metadata,
+                timeframes=timeframe_models,
             )
-
-            return dataset
 
         except Exception as exc:
             logger.error(
                 f"Failed to load MarketDataset for symbol '{symbol}': {exc}"
             )
-
             raise SQLiteStorageError(
                 f"Failed to load dataset for symbol {symbol}: {exc}"
             ) from exc
 
-    def dataset_exists(
-        self,
-        symbol: str,
-    ) -> bool:
-        """
-        Check whether any stored market data exists for the given symbol.
-        """
-
-        logger = self._get_logger(
-            symbol=symbol,
-            operation="dataset_exists",
-        )
-
+    def dataset_exists(self, symbol: str) -> bool:
+        """Return whether at least one candle exists for a symbol."""
         query = """
-        SELECT 1
-        FROM market_data
-        WHERE symbol = ?
-        LIMIT 1;
+        SELECT 1 FROM market_data WHERE symbol = ? LIMIT 1;
         """
-
         try:
             with self._connection() as conn:
-
-                cursor = conn.cursor()
-
-                cursor.execute(
-                    query,
-                    (symbol,),
-                )
-
-                row = cursor.fetchone()
-
-                exists = row is not None
-
-            logger.info(
-                f"Dataset existence check for symbol '{symbol}': {exists}"
-            )
-
-            return exists
-
+                return conn.execute(query, (symbol,)).fetchone() is not None
         except Exception as exc:
-            logger.error(
-                f"Failed to check dataset existence for symbol '{symbol}': {exc}"
-            )
-
             raise SQLiteStorageError(
                 f"Failed to check existence for symbol {symbol}: {exc}"
             ) from exc
 
-    def delete_symbol(
-        self,
-        symbol: str,
-    ) -> None:
-        """Delete all stored market data for a symbol."""
-
-        logger = self._get_logger(
-            symbol=symbol,
-            operation="delete_symbol",
-        )
-
-        logger.info(
-            f"Deleting all stored data for symbol '{symbol}'."
-        )
-
-        delete_query = """
-        DELETE FROM market_data
-        WHERE symbol = ?;
-        """
-
+    def delete_symbol(self, symbol: str) -> None:
+        """Delete all persisted market data for a symbol."""
         try:
             with self._connection() as conn:
-
-                cursor = conn.cursor()
-
-                cursor.execute(
-                    "BEGIN TRANSACTION;"
-                )
-
-                cursor.execute(
-                    delete_query,
+                conn.execute(
+                    "DELETE FROM market_data WHERE symbol = ?;",
                     (symbol,),
                 )
-
                 conn.commit()
-
-            logger.info(
-                f"Successfully deleted data for symbol '{symbol}'."
-            )
-
         except Exception as exc:
-            logger.error(
-                f"Failed to delete data for symbol '{symbol}': {exc}"
-            )
-
             raise SQLiteStorageError(
                 f"Failed to delete symbol {symbol}: {exc}"
             ) from exc
 
+    def delete_dataset(self, symbol: str) -> None:
+        """Canonical alias for delete_symbol."""
+        self.delete_symbol(symbol)
+
     def purge(self) -> None:
-        """Purge all stored market data."""
-
-        logger = self._get_logger(
-            operation="purge",
-        )
-
-        logger.info(
-            "Purging all stored market data from database."
-        )
-
-        purge_query = """
-        DELETE FROM market_data;
-        """
-
+        """Delete all persisted market data."""
         try:
             with self._connection() as conn:
-
-                cursor = conn.cursor()
-
-                cursor.execute(
-                    "BEGIN TRANSACTION;"
-                )
-
-                cursor.execute(
-                    purge_query,
-                )
-
+                conn.execute("DELETE FROM market_data;")
                 conn.commit()
-
-            logger.info(
-                "Successfully purged all market data."
-            )
-
         except Exception as exc:
-            logger.error(
-                f"Failed to purge database: {exc}"
-            )
-
             raise SQLiteStorageError(
                 f"Failed to purge database: {exc}"
             ) from exc
-
-
-# =============================================================================
-# End Of File
-# =============================================================================
