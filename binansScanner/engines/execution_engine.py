@@ -46,6 +46,21 @@ class ExecutionStatistics:
 
 
 # =============================================================================
+# Custom Exceptions
+# =============================================================================
+
+class ExecutionError(Exception):
+    """Base exception class for all execution engine related failures."""
+    pass
+
+
+class ExecutionValidationError(ExecutionError):
+    """Raised when request parameters or payload integrity checks fail."""
+    pass
+
+
+
+# =============================================================================
 # Logger Adapter
 # =============================================================================
 
@@ -365,14 +380,14 @@ class ExecutionEngine:
     def _build_request(
         self,
         symbol: str,
-        decision: ExecutionSide,
+        side: ExecutionSide,
         price: float,
         quantity: float,
         confidence: float,
     ) -> ExecutionRequest:
         return ExecutionRequest(
             symbol=symbol,
-            side=decision,
+            side=side,
             price=price,
             quantity=quantity,
             confidence=confidence,
