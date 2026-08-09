@@ -1,14 +1,24 @@
 """
 ===============================================================================
-Badee Binance Scanner
-Architecture : ORION
-Module       : engines.profile_engine
-Version      : 2.0.0
-Status       : ORION Production Coordinator V2
-===============================================================================
+ORION
+Module : engines.profile_engine
+Version: 3.0.0
 
-Market Profile Engine Coordinator adhering strictly to SRP, delegating
-profile construction to ProfileBuilder.
+Canonical Profile Engine.
+
+Boundary
+--------
+MarketDataset
+    |
+    v
+ProfileEngine
+    |
+    v
+ProfileResult
+
+The engine never mutates MarketDataset or TimeframeData.
+ProfileBuilder remains responsible for the actual market-characteristics
+calculation.
 ===============================================================================
 """
 
@@ -16,26 +26,29 @@ from __future__ import annotations
 
 import logging
 import time
+from collections import Counter
 from typing import Any, Optional
 
 import pandas as pd
 
 from enums import Timeframe
-from models.market import (
-    MarketDataset,
-    TimeframeData,
-)
-from engines.profile_builder import (
-    MarketProfile,
-    ProfileBuilder,
-    TrendType,
-    TrendStrengthType,
+from models.market import MarketDataset, TimeframeData
+from models.profile import (
+    EMAAlignment,
+    MarketCharacteristics,
     MarketPhaseType,
-    VolatilityLevelType,
     MomentumState,
-    VolumeStrength,
+    ProfileResult,
+    ProfileStatistics,
     RiskLevel,
+    TimeframeProfile,
+    TrendStrengthType,
+    TrendType,
+    VolatilityLevelType,
+    VolumeStrength,
 )
+from engines.profile_builder import ProfileBuilder
+
 
 base_logger = logging.getLogger(__name__)
 
@@ -48,146 +61,259 @@ TIMEFRAME_WEIGHTS: dict[str, float] = {
 
 
 class ProfileEngineError(Exception):
-    """Base exception for all profile engine related errors."""
-    pass
+    """Base exception for ProfileEngine failures."""
 
 
 class InvalidProfileData(ProfileEngineError):
-    """Raised when data structure is invalid for profile extraction."""
-    pass
+    """Raised when market data cannot be used to build a profile."""
 
 
 class LoggerAdapter(logging.LoggerAdapter):
-    """
-    Custom LoggerAdapter to inject contextual information into every log record.
-    """
+    """Logger adapter carrying Profile execution context."""
 
-    def process(self, msg: str, kwargs: Any) -> tuple[str, dict[str, Any]]:
+    def process(
+        self,
+        msg: str,
+        kwargs: dict[str, Any],
+    ) -> tuple[str, dict[str, Any]]:
         context = self.extra or {}
-        context_str = " | ".join(f"{k}={v}" for k, v in context.items() if v is not None)
+        context_str = " | ".join(
+            f"{key}={value}"
+            for key, value in context.items()
+            if value is not None
+        )
+
         if context_str:
-            formatted_msg = f"[{context_str}] {msg}"
-        else:
-            formatted_msg = msg
-        return formatted_msg, kwargs
+            return f"[{context_str}] {msg}", kwargs
+
+        return msg, kwargs
 
 
 class ProfileEngine:
     """
-    Stateless profile generation engine coordinator adhering to ORION architecture.
-    Delegates profile construction to ProfileBuilder.
+    Stateless coordinator for Profile generation.
+
+    The engine owns ProfileResult construction only.
+    ProfileBuilder owns market-characteristics calculation.
     """
 
-    def __init__(self, builder: Optional[ProfileBuilder] = None) -> None:
-        self._builder = builder if builder is not None else ProfileBuilder()
+    def __init__(
+        self,
+        builder: Optional[ProfileBuilder] = None,
+    ) -> None:
+        self._builder = builder or ProfileBuilder()
+
         self.logger = LoggerAdapter(
             base_logger,
-            {"symbol": None, "timeframe": None, "operation": "init"},
-        )
-
-    def _get_logger(
-        self,
-        symbol: Optional[str] = None,
-        timeframe: Optional[Timeframe | str] = None,
-        operation: Optional[str] = None,
-        trend: Optional[str] = None,
-        market_phase: Optional[str] = None,
-        risk: Optional[str] = None,
-        confidence: Optional[float] = None,
-        elapsed_ms: Optional[float] = None,
-    ) -> LoggerAdapter:
-        tf_str = (
-            timeframe.value
-            if hasattr(timeframe, "value")
-            else str(timeframe)
-            if timeframe
-            else None
-        )
-        return LoggerAdapter(
-            base_logger,
             {
-                "symbol": symbol,
-                "timeframe": tf_str,
-                "operation": operation,
-                "trend": trend,
-                "market_phase": market_phase,
-                "risk": risk,
-                "confidence": confidence,
-                "elapsed_ms": elapsed_ms,
+                "symbol": None,
+                "timeframe": None,
+                "operation": "init",
             },
         )
 
-    # -------------------------------------------------------------------------
-    # Public Methods
-    # -------------------------------------------------------------------------
+    # =========================================================================
+    # Canonical Public Contract
+    # =========================================================================
 
-    def build_dataset_profile(self, dataset: MarketDataset) -> MarketDataset:
+    def build_profile(
+        self,
+        dataset: MarketDataset,
+    ) -> ProfileResult:
         """
-        Build profiles for all timeframes in a MarketDataset and merge them using weighted merge.
+        Build the canonical ProfileResult from a MarketDataset.
+
+        MarketDataset is read-only from the Profile layer.
+        No profile state is written back to the dataset or its timeframes.
         """
+
+        if not isinstance(dataset, MarketDataset):
+            raise TypeError(
+                "ProfileEngine.build_profile() requires MarketDataset."
+            )
+
         symbol = dataset.symbol
-        logger = self._get_logger(symbol=symbol, operation="build_dataset_profile")
-        logger.info("Building dataset profiles across all timeframes.")
+        started = time.perf_counter()
 
-        timeframe_profiles: list[tuple[str, MarketProfile]] = []
-        for tf, tf_data in dataset.timeframes.items():
-            self.build_timeframe_profile(tf_data, symbol=symbol)
-            if hasattr(tf_data, "profile") and tf_data.profile is not None:
-                tf_str = tf.value if hasattr(tf, "value") else str(tf)
-                timeframe_profiles.append((tf_str, tf_data.profile))
+        logger = self._get_logger(
+            symbol=symbol,
+            operation="build_profile",
+        )
 
-        if timeframe_profiles:
-            dataset.profile = self.merge_profiles(timeframe_profiles)
-        else:
-            dataset.profile = MarketProfile()
+        logger.info("Building canonical profile result.")
 
-        logger.info("Dataset profiles built and merged successfully.")
-        return dataset
+        timeframe_profiles: list[TimeframeProfile] = []
+        warnings: list[str] = []
+        blocks: list[str] = []
 
-    def build_timeframe_profile(self, timeframe_data: TimeframeData, symbol: Optional[str] = None) -> TimeframeData:
+        for timeframe, timeframe_data in dataset.timeframes.items():
+            try:
+                profile = self.build_timeframe_profile(
+                    timeframe_data,
+                    symbol=symbol,
+                )
+
+                timeframe_profiles.append(profile)
+                warnings.extend(profile.warnings)
+
+            except InvalidProfileData as exc:
+                message = str(exc)
+                warnings.append(message)
+                blocks.append(message)
+
+            except ProfileEngineError as exc:
+                message = str(exc)
+                warnings.append(message)
+                blocks.append(message)
+
+        market = self.merge_characteristics(
+            [
+                (
+                    profile.timeframe,
+                    profile.characteristics,
+                )
+                for profile in timeframe_profiles
+            ]
+        )
+
+        statistics = self._build_statistics(
+            timeframe_profiles=timeframe_profiles,
+        )
+
+        if not timeframe_profiles:
+            blocks.append(
+                "No valid timeframe data was available for profile generation."
+            )
+
+        is_tradeable = bool(
+            timeframe_profiles
+            and not blocks
+            and market.confidence > 0.0
+        )
+
+        elapsed_ms = (time.perf_counter() - started) * 1000.0
+
+        logger = self._get_logger(
+            symbol=symbol,
+            operation="build_profile",
+            trend=market.trend,
+            market_phase=market.market_phase,
+            risk=market.risk_level,
+            confidence=market.confidence,
+            elapsed_ms=elapsed_ms,
+        )
+
+        logger.info(
+            "Canonical profile result built successfully."
+        )
+
+        return ProfileResult(
+            symbol=symbol,
+            market=market,
+            statistics=statistics,
+            timeframes=tuple(timeframe_profiles),
+            warnings=tuple(dict.fromkeys(warnings)),
+            blocks=tuple(dict.fromkeys(blocks)),
+            is_tradeable=is_tradeable,
+        )
+
+    # =========================================================================
+    # Timeframe Contract
+    # =========================================================================
+
+    def build_timeframe_profile(
+        self,
+        timeframe_data: TimeframeData,
+        symbol: Optional[str] = None,
+    ) -> TimeframeProfile:
         """
-        Build a MarketProfile from a single TimeframeData dataframe by delegating to ProfileBuilder.
-        """
-        tf = timeframe_data.timeframe
-        tf_str = tf.value if hasattr(tf, "value") else str(tf)
-        start_time = time.time()
+        Build an immutable TimeframeProfile.
 
-        df = timeframe_data.dataframe
-        self._validate_dataframe(df, tf_str)
+        This method never mutates TimeframeData.
+        """
+
+        if not isinstance(timeframe_data, TimeframeData):
+            raise TypeError(
+                "build_timeframe_profile() requires TimeframeData."
+            )
+
+        timeframe = timeframe_data.timeframe
+
+        timeframe_str = (
+            timeframe.value
+            if hasattr(timeframe, "value")
+            else str(timeframe)
+        )
+
+        started = time.perf_counter()
+
+        dataframe = timeframe_data.dataframe
+
+        self._validate_dataframe(
+            dataframe,
+            timeframe_str,
+        )
 
         try:
-            profile = self._builder.build(df)
-            timeframe_data.profile = profile
-            timeframe_data.profile_ready = True
+            characteristics = self._builder.build(dataframe)
 
-            elapsed_ms = (time.time() - start_time) * 1000.0
-            logger = self._get_logger(
-                symbol=symbol,
-                timeframe=tf,
-                operation="build_timeframe_profile",
-                trend=profile.trend,
-                market_phase=profile.market_phase,
-                risk=profile.risk_level,
-                confidence=profile.confidence,
-                elapsed_ms=elapsed_ms,
-            )
-            logger.info(f"Profile built successfully for timeframe {tf_str}.")
-
-        except Exception as e:
-            if isinstance(e, ProfileEngineError):
+        except Exception as exc:
+            if isinstance(exc, ProfileEngineError):
                 raise
-            raise ProfileEngineError(f"Failed to build profile for timeframe {tf_str}: {e}") from e
 
-        return timeframe_data
+            raise ProfileEngineError(
+                f"Failed to build profile for timeframe "
+                f"{timeframe_str}: {exc}"
+            ) from exc
 
-    def merge_profiles(self, tf_profiles: list[tuple[str, MarketProfile]]) -> MarketProfile:
+        elapsed_ms = (time.perf_counter() - started) * 1000.0
+
+        logger = self._get_logger(
+            symbol=symbol,
+            timeframe=timeframe,
+            operation="build_timeframe_profile",
+            trend=characteristics.trend,
+            market_phase=characteristics.market_phase,
+            risk=characteristics.risk_level,
+            confidence=characteristics.confidence,
+            elapsed_ms=elapsed_ms,
+        )
+
+        logger.info(
+            f"Profile built successfully for timeframe {timeframe_str}."
+        )
+
+        return TimeframeProfile(
+            timeframe=timeframe_str,
+            characteristics=characteristics,
+            candles_count=int(timeframe_data.candles_count),
+            first_timestamp=timeframe_data.first_timestamp,
+            last_timestamp=timeframe_data.last_timestamp,
+            data_health=timeframe_data.data_health,
+            missing_candles=0,
+            warnings=(),
+        )
+
+    # =========================================================================
+    # Characteristics Merge
+    # =========================================================================
+
+    def merge_characteristics(
+        self,
+        tf_profiles: list[
+            tuple[str, MarketCharacteristics]
+        ],
+    ) -> MarketCharacteristics:
         """
-        Merge multiple timeframe profiles into a single consolidated MarketProfile using weighted merge.
+        Merge timeframe-level characteristics into one canonical
+        MarketCharacteristics instance.
         """
+
         if not tf_profiles:
-            return MarketProfile()
+            return MarketCharacteristics()
 
         total_weight = 0.0
+
         weighted_confidence = 0.0
         weighted_volatility = 0.0
         weighted_liquidity = 0.0
@@ -197,85 +323,200 @@ class ProfileEngine:
         weighted_volatility_score = 0.0
 
         trends: list[str] = []
+        trend_strengths: list[str] = []
         phases: list[str] = []
         risks: list[str] = []
+        momentums: list[str] = []
+        volume_strengths: list[str] = []
+        volatility_levels: list[str] = []
+        price_locations: list[str] = []
+        ema_alignments: list[str] = []
+
         supports: list[float] = []
         resistances: list[float] = []
 
-        for tf_str, profile in tf_profiles:
-            w = TIMEFRAME_WEIGHTS.get(tf_str, 0.25)
-            total_weight += w
-            weighted_confidence += profile.confidence * w
-            weighted_volatility += profile.volatility * w
-            weighted_liquidity += profile.liquidity * w
-            weighted_trend_score += profile.trend_score * w
-            weighted_momentum_score += profile.momentum_score * w
-            weighted_volume_score += profile.volume_score * w
-            weighted_volatility_score += profile.volatility_score * w
+        latest_characteristics = tf_profiles[-1][1]
 
-            trends.append(profile.trend)
-            phases.append(profile.market_phase)
-            risks.append(profile.risk_level)
-            if profile.support > 0:
-                supports.append(profile.support)
-            if profile.resistance > 0:
-                resistances.append(profile.resistance)
+        for timeframe_str, characteristics in tf_profiles:
+            weight = TIMEFRAME_WEIGHTS.get(
+                timeframe_str,
+                0.25,
+            )
 
-        if total_weight > 0:
-            confidence = weighted_confidence / total_weight
-            volatility = weighted_volatility / total_weight
-            liquidity = weighted_liquidity / total_weight
-            trend_score = weighted_trend_score / total_weight
-            momentum_score = weighted_momentum_score / total_weight
-            volume_score = weighted_volume_score / total_weight
-            volatility_score = weighted_volatility_score / total_weight
-        else:
-            confidence = 50.0
-            volatility = 0.0
-            liquidity = 0.0
-            trend_score = 0.0
-            momentum_score = 0.0
-            volume_score = 0.0
-            volatility_score = 0.0
+            total_weight += weight
 
-        dominant_trend = max(set(trends), key=trends.count) if trends else TrendType.SIDEWAYS.value
-        dominant_phase = max(set(phases), key=phases.count) if phases else MarketPhaseType.RANGE.value
-        dominant_risk = max(set(risks), key=risks.count) if risks else RiskLevel.MEDIUM.value
+            weighted_confidence += (
+                characteristics.confidence * weight
+            )
 
-        best_support = min(supports) if supports else 0.0
-        best_resistance = max(resistances) if resistances else 0.0
+            weighted_volatility += (
+                characteristics.volatility * weight
+            )
 
-        latest_profile = tf_profiles[-1][1]
+            weighted_liquidity += (
+                characteristics.liquidity * weight
+            )
 
-        return MarketProfile(
-            trend=dominant_trend,
-            trend_strength=TrendStrengthType.MEDIUM.value,
+            weighted_trend_score += (
+                characteristics.trend_score * weight
+            )
+
+            weighted_momentum_score += (
+                characteristics.momentum_score * weight
+            )
+
+            weighted_volume_score += (
+                characteristics.volume_score * weight
+            )
+
+            weighted_volatility_score += (
+                characteristics.volatility_score * weight
+            )
+
+            trends.append(characteristics.trend)
+            trend_strengths.append(
+                characteristics.trend_strength
+            )
+            phases.append(characteristics.market_phase)
+            risks.append(characteristics.risk_level)
+            momentums.append(characteristics.momentum)
+            volume_strengths.append(
+                characteristics.volume_strength
+            )
+            volatility_levels.append(
+                characteristics.volatility_level
+            )
+            price_locations.append(
+                characteristics.price_location
+            )
+            ema_alignments.append(
+                characteristics.ema_alignment
+            )
+
+            if characteristics.support > 0:
+                supports.append(characteristics.support)
+
+            if characteristics.resistance > 0:
+                resistances.append(
+                    characteristics.resistance
+                )
+
+        if total_weight <= 0:
+            return MarketCharacteristics()
+
+        confidence = (
+            weighted_confidence / total_weight
+        )
+
+        volatility = (
+            weighted_volatility / total_weight
+        )
+
+        liquidity = (
+            weighted_liquidity / total_weight
+        )
+
+        trend_score = (
+            weighted_trend_score / total_weight
+        )
+
+        momentum_score = (
+            weighted_momentum_score / total_weight
+        )
+
+        volume_score = (
+            weighted_volume_score / total_weight
+        )
+
+        volatility_score = (
+            weighted_volatility_score / total_weight
+        )
+
+        return MarketCharacteristics(
+            trend=self._dominant_value(
+                trends,
+                TrendType.SIDEWAYS.value,
+            ),
+            trend_strength=self._dominant_value(
+                trend_strengths,
+                TrendStrengthType.WEAK.value,
+            ),
             volatility=volatility,
-            volatility_level=VolatilityLevelType.NORMAL.value,
-            momentum=MomentumState.NEUTRAL.value,
-            volume_strength=VolumeStrength.NORMAL.value,
+            volatility_level=self._dominant_value(
+                volatility_levels,
+                VolatilityLevelType.NORMAL.value,
+            ),
+            momentum=self._dominant_value(
+                momentums,
+                MomentumState.NEUTRAL.value,
+            ),
+            volume_strength=self._dominant_value(
+                volume_strengths,
+                VolumeStrength.NORMAL.value,
+            ),
             liquidity=liquidity,
-            price_location=latest_profile.price_location,
-            support=best_support,
-            resistance=best_resistance,
-            ema_alignment=all(p.ema_alignment for _, p in tf_profiles),
-            market_phase=dominant_phase,
-            risk_level=dominant_risk,
+            price_location=self._dominant_value(
+                price_locations,
+                "Middle",
+            ),
+            support=min(supports) if supports else 0.0,
+            resistance=(
+                max(resistances)
+                if resistances
+                else 0.0
+            ),
+            ema_alignment=self._merge_ema_alignment(
+                ema_alignments
+            ),
+            market_phase=self._dominant_value(
+                phases,
+                MarketPhaseType.RANGE.value,
+            ),
+            risk_level=self._dominant_value(
+                risks,
+                RiskLevel.MEDIUM.value,
+            ),
             confidence=confidence,
-            timestamp=latest_profile.timestamp,
-            distance_to_support=latest_profile.distance_to_support,
-            distance_to_resistance=latest_profile.distance_to_resistance,
-            distance_to_ema200=latest_profile.distance_to_ema200,
+            timestamp=latest_characteristics.timestamp,
+            distance_to_support=(
+                latest_characteristics.distance_to_support
+            ),
+            distance_to_resistance=(
+                latest_characteristics.distance_to_resistance
+            ),
+            distance_to_ema200=(
+                latest_characteristics.distance_to_ema200
+            ),
             trend_score=trend_score,
             momentum_score=momentum_score,
             volume_score=volume_score,
             volatility_score=volatility_score,
         )
 
-    def profile_summary(self, profile: MarketProfile) -> dict[str, Any]:
+    # =========================================================================
+    # Compatibility Helper
+    # =========================================================================
+
+    def merge_profiles(
+        self,
+        tf_profiles: list[
+            tuple[str, MarketCharacteristics]
+        ],
+    ) -> MarketCharacteristics:
         """
-        Return a summary dictionary of market profile characteristics.
+        Compatibility alias for the old merge_profiles name.
+
+        The returned object is the canonical MarketCharacteristics contract.
         """
+
+        return self.merge_characteristics(tf_profiles)
+
+    def profile_summary(
+        self,
+        profile: MarketCharacteristics,
+    ) -> dict[str, Any]:
+        """Return a serializable summary of MarketCharacteristics."""
+
         return {
             "trend": profile.trend,
             "trend_strength": profile.trend_strength,
@@ -291,28 +532,226 @@ class ProfileEngine:
             "market_phase": profile.market_phase,
             "risk_level": profile.risk_level,
             "confidence": profile.confidence,
-            "timestamp": profile.timestamp.isoformat() if profile.timestamp else None,
-            "distance_to_support": profile.distance_to_support,
-            "distance_to_resistance": profile.distance_to_resistance,
-            "distance_to_ema200": profile.distance_to_ema200,
+            "timestamp": (
+                profile.timestamp.isoformat()
+                if profile.timestamp
+                else None
+            ),
+            "distance_to_support": (
+                profile.distance_to_support
+            ),
+            "distance_to_resistance": (
+                profile.distance_to_resistance
+            ),
+            "distance_to_ema200": (
+                profile.distance_to_ema200
+            ),
             "trend_score": profile.trend_score,
             "momentum_score": profile.momentum_score,
             "volume_score": profile.volume_score,
             "volatility_score": profile.volatility_score,
         }
 
-    # -------------------------------------------------------------------------
-    # Internal Validation Methods
-    # -------------------------------------------------------------------------
+    # =========================================================================
+    # Statistics
+    # =========================================================================
 
-    def _validate_dataframe(self, df: pd.DataFrame, tf_str: str) -> None:
-        """
-        Validate dataframe readiness for profile generation.
-        """
-        if df is None or df.empty:
-            raise InvalidProfileData(f"DataFrame for timeframe {tf_str} is empty or None.")
+    def _build_statistics(
+        self,
+        timeframe_profiles: list[TimeframeProfile],
+    ) -> ProfileStatistics:
+        """Build consolidated Profile statistics."""
 
-        required_cols = {"open", "high", "low", "close", "volume"}
-        missing_cols = required_cols - set(df.columns)
-        if missing_cols:
-            raise InvalidProfileData(f"DataFrame for timeframe {tf_str} is missing required columns: {missing_cols}")
+        if not timeframe_profiles:
+            return ProfileStatistics()
+
+        total_candles = sum(
+            max(profile.candles_count, 0)
+            for profile in timeframe_profiles
+        )
+
+        total_missing = sum(
+            max(profile.missing_candles, 0)
+            for profile in timeframe_profiles
+        )
+
+        newest_values = [
+            profile.last_timestamp
+            for profile in timeframe_profiles
+            if profile.last_timestamp is not None
+        ]
+
+        oldest_values = [
+            profile.first_timestamp
+            for profile in timeframe_profiles
+            if profile.first_timestamp is not None
+        ]
+
+        confidence_values = [
+            profile.confidence
+            for profile in timeframe_profiles
+        ]
+
+        health_score = (
+            sum(confidence_values)
+            / len(confidence_values)
+            if confidence_values
+            else 0.0
+        )
+
+        confidence_limit = (
+            min(confidence_values)
+            if confidence_values
+            else 0.0
+        )
+
+        completion_ratio = (
+            max(
+                0.0,
+                min(
+                    1.0,
+                    (
+                        total_candles - total_missing
+                    )
+                    / total_candles,
+                ),
+            )
+            if total_candles > 0
+            else 0.0
+        )
+
+        return ProfileStatistics(
+            health_score=health_score,
+            confidence_limit=confidence_limit,
+            completion_ratio=completion_ratio,
+            total_candles=total_candles,
+            missing_candles=total_missing,
+            newest_candle=(
+                max(newest_values)
+                if newest_values
+                else None
+            ),
+            oldest_candle=(
+                min(oldest_values)
+                if oldest_values
+                else None
+            ),
+        )
+
+    # =========================================================================
+    # Validation
+    # =========================================================================
+
+    def _validate_dataframe(
+        self,
+        dataframe: pd.DataFrame,
+        timeframe: str,
+    ) -> None:
+        """
+        Validate the minimum OHLCV contract required by ProfileBuilder.
+        """
+
+        if dataframe is None or dataframe.empty:
+            raise InvalidProfileData(
+                f"DataFrame for timeframe "
+                f"{timeframe} is empty or None."
+            )
+
+        required_columns = {
+            "open",
+            "high",
+            "low",
+            "close",
+            "volume",
+        }
+
+        missing_columns = (
+            required_columns
+            - set(dataframe.columns)
+        )
+
+        if missing_columns:
+            raise InvalidProfileData(
+                f"DataFrame for timeframe "
+                f"{timeframe} is missing required "
+                f"columns: {sorted(missing_columns)}"
+            )
+
+    # =========================================================================
+    # Internal Helpers
+    # =========================================================================
+
+    @staticmethod
+    def _dominant_value(
+        values: list[str],
+        default: str,
+    ) -> str:
+        if not values:
+            return default
+
+        return Counter(values).most_common(1)[0][0]
+
+    @staticmethod
+    def _merge_ema_alignment(
+        values: list[str],
+    ) -> str:
+        if not values:
+            return EMAAlignment.NONE.value
+
+        normalized = {
+            str(value)
+            for value in values
+        }
+
+        if normalized == {
+            EMAAlignment.BULLISH.value
+        }:
+            return EMAAlignment.BULLISH.value
+
+        if normalized == {
+            EMAAlignment.BEARISH.value
+        }:
+            return EMAAlignment.BEARISH.value
+
+        return EMAAlignment.NONE.value
+
+    def _get_logger(
+        self,
+        symbol: Optional[str] = None,
+        timeframe: Optional[Timeframe | str] = None,
+        operation: Optional[str] = None,
+        trend: Optional[str] = None,
+        market_phase: Optional[str] = None,
+        risk: Optional[str] = None,
+        confidence: Optional[float] = None,
+        elapsed_ms: Optional[float] = None,
+    ) -> LoggerAdapter:
+        timeframe_value = (
+            timeframe.value
+            if hasattr(timeframe, "value")
+            else str(timeframe)
+            if timeframe is not None
+            else None
+        )
+
+        return LoggerAdapter(
+            base_logger,
+            {
+                "symbol": symbol,
+                "timeframe": timeframe_value,
+                "operation": operation,
+                "trend": trend,
+                "market_phase": market_phase,
+                "risk": risk,
+                "confidence": confidence,
+                "elapsed_ms": elapsed_ms,
+            },
+        )
+
+
+__all__ = [
+    "ProfileEngine",
+    "ProfileEngineError",
+    "InvalidProfileData",
+    "TIMEFRAME_WEIGHTS",
+]
