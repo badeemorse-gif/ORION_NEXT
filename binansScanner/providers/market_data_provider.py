@@ -99,6 +99,17 @@ class MarketDataProvider:
             else base_logger
         )
 
+    def execute(
+        self,
+        symbol: str,
+        timeframes: list[str | Timeframe],
+    ) -> MarketDataset:
+        """Execute the canonical market-data provider contract."""
+        return self.fetch_symbol(
+            symbol=symbol,
+            timeframes=timeframes,
+        )
+
     def fetch_symbol(
         self,
         symbol: str,
