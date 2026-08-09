@@ -1,20 +1,9 @@
-"""
-===============================================================================
-Badee Binance Scanner
-Architecture : ORION
-Module       : core.orchestrator
-Version      : 4.1.0
-Status       : ORION Production Candidate V4 with ExecutionPlan integration
-===============================================================================
+"""ORION canonical intelligence orchestrator.
 
-Core Orchestrator Engine acting as the strict, stateless pipeline coordinator
-for all ORION production modules. Fully enforcing pure Dependency Injection
-for both the immutable OrchestratorConfig and all execution components,
-while utilizing a uniform `.execute()` protocol across every engine,
-storage handler, provider, and validator.
-===============================================================================
+The orchestrator coordinates domain stages using their real result contracts.
+It does not embed downstream results in MarketDataset and does not depend on
+ExecutionEngine or ReportEngine internals.
 """
-
 from __future__ import annotations
 
 import logging
@@ -22,102 +11,55 @@ import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
-from typing import Any, Optional, Protocol, runtime_checkable
+from typing import Any, Optional, Protocol
 
+from engines.analysis_engine import AnalysisEngine
+from engines.decision_engine import DecisionEngine
+from engines.indicator_engine import IndicatorEngine
+from engines.profile_engine import ProfileEngine
+from engines.score_engine import ScoreEngine
+from engines.validation_engine import ValidationEngine
+from models.analysis import AnalysisResult
+from models.decision import DecisionResult
+from models.execution import ExecutionPlan, ExecutionSide
 from models.market import MarketDataset
-from models.execution import ExecutionPlan
+from models.profile import ProfileResult
+from models.score import ScoreResult
 
 base_logger = logging.getLogger(__name__)
 
 
-# =============================================================================
-# Configuration & Enums
-# =============================================================================
-
 @dataclass(frozen=True)
 class OrchestratorConfig:
-    """Immutable configuration profile for the Orchestrator engine (Fully Injected)."""
-    ENGINE_VERSION: str = "4.1.0"
-    PIPELINE_VERSION: str = "1.0.0"
+    ENGINE_VERSION: str = "5.0.0"
+    PIPELINE_VERSION: str = "2.0.0"
     ENABLE_TIMING: bool = True
     ENABLE_LOGGING: bool = True
 
 
 class PipelineStage(str, Enum):
-    """Enumeration of all sequential pipeline execution stages."""
     INITIALIZE = "INITIALIZE"
     DOWNLOAD = "DOWNLOAD"
     STORE = "STORE"
     INDICATORS = "INDICATORS"
+    ANALYSIS = "ANALYSIS"
     PROFILE = "PROFILE"
     SCORE = "SCORE"
     DECISION = "DECISION"
-    REPORT = "REPORT"
     VALIDATION = "VALIDATION"
     FINISHED = "FINISHED"
 
 
-# =============================================================================
-# Uniform Execution Protocols (Strict Dependency Inversion Principle - DIP)
-# =============================================================================
-
-@runtime_checkable
-class ExecutableProvider(Protocol):
-    """Protocol defining a strict uniform .execute() interface for market data providers."""
-
-    def execute(self, symbol: str, timeframes: list[str]) -> MarketDataset:
-        """Fetch and return market dataset via uniform execute call."""
-        ...
+class MarketProviderProtocol(Protocol):
+    def execute(self, symbol: str, timeframes: list[str]) -> MarketDataset: ...
 
 
-@runtime_checkable
-class ExecutableStorage(Protocol):
-    """Protocol defining a strict uniform .execute() interface for storage handlers."""
+class MarketStorageProtocol(Protocol):
+    def execute(self, dataset: MarketDataset) -> None: ...
 
-    def execute(self, dataset: MarketDataset) -> None:
-        """Persist or save market dataset via uniform execute call."""
-        ...
-
-
-@runtime_checkable
-class ExecutableEngine(Protocol):
-    """Protocol defining a strict uniform .execute() interface for analytical engines."""
-
-    def execute(self, dataset: MarketDataset) -> MarketDataset:
-        """Process dataset through engine analysis via uniform execute call."""
-        ...
-
-
-@runtime_checkable
-class ExecutableValidator(Protocol):
-    """Protocol defining a strict uniform .execute() interface for validation engines."""
-
-    def execute(self, dataset: MarketDataset) -> Any:
-        """Validate dataset integrity via uniform execute call and return validation result."""
-        ...
-
-
-# =============================================================================
-# Custom Exceptions
-# =============================================================================
-
-class OrchestratorError(Exception):
-    """Base exception class for all orchestrator related failures."""
-    pass
-
-
-class PipelineError(OrchestratorError):
-    """Raised when any specific pipeline stage fails during orchestration."""
-    pass
-
-
-# =============================================================================
-# Dataclasses (Statistics & Results)
-# =============================================================================
 
 @dataclass(slots=True)
 class PipelineStatistics:
-    """Immutable metrics capturing granular details of a pipeline execution cycle."""
     started_at: Optional[datetime] = None
     finished_at: Optional[datetime] = None
     elapsed_ms: float = 0.0
@@ -129,351 +71,224 @@ class PipelineStatistics:
 
 @dataclass(slots=True)
 class OrchestratorResult:
-    """Container holding final dataset, validation results, and execution statistics."""
     dataset: Optional[MarketDataset] = None
     validation: Optional[Any] = None
-    statistics: PipelineStatistics = field(default_factory=PipelineStatistics)
+    analysis: Optional[AnalysisResult] = None
+    profile: Optional[ProfileResult] = None
+    score: Optional[ScoreResult] = None
+    decision: Optional[DecisionResult] = None
     execution_payload: Optional[ExecutionPlan] = None
+    statistics: PipelineStatistics = field(default_factory=PipelineStatistics)
 
 
-# =============================================================================
-# Logger Adapter
-# =============================================================================
+class OrchestratorError(Exception):
+    pass
+
+
+class PipelineError(OrchestratorError):
+    pass
+
 
 class LoggerAdapter(logging.LoggerAdapter):
-    """Custom LoggerAdapter injecting stage and timing metrics into every log entry."""
-
     def process(self, msg: str, kwargs: Any) -> tuple[str, dict[str, Any]]:
         context = self.extra or {}
-        context_str = " | ".join(f"{k}={v}" for k, v in context.items() if v is not None)
-        formatted_msg = f"[{context_str}] {msg}" if context_str else msg
-        return formatted_msg, kwargs
+        text = " | ".join(f"{k}={v}" for k, v in context.items() if v is not None)
+        return (f"[{text}] {msg}" if text else msg), kwargs
 
-
-# =============================================================================
-# Main Orchestrator Class
-# =============================================================================
 
 class Orchestrator:
-    """
-    Stateless, fully dependency-injected central pipeline orchestrator executing all
-    production components exclusively via direct uniform .execute() calls, accepting
-    both components and OrchestratorConfig strictly through constructor injection,
-    with zero internal knowledge of component-specific methods or analytical logic.
-    """
+    """Coordinates provider, market persistence and intelligence contracts."""
 
     def __init__(
         self,
-        provider: ExecutableProvider,
-        storage: ExecutableStorage,
-        indicator_engine: ExecutableEngine,
-        profile_engine: ExecutableEngine,
-        score_engine: ExecutableEngine,
-        decision_engine: ExecutableEngine,
-        report_engine: ExecutableEngine,
-        validation_engine: ExecutableValidator,
+        provider: MarketProviderProtocol,
+        storage: MarketStorageProtocol,
+        indicator_engine: IndicatorEngine,
+        analysis_engine: AnalysisEngine,
+        profile_engine: ProfileEngine,
+        score_engine: ScoreEngine,
+        decision_engine: DecisionEngine,
+        validation_engine: ValidationEngine,
         config: OrchestratorConfig,
     ) -> None:
-        if not provider:
-            raise OrchestratorError("ExecutableProvider dependency is required.")
-        if not storage:
-            raise OrchestratorError("ExecutableStorage dependency is required.")
-        if not indicator_engine:
-            raise OrchestratorError("IndicatorEngine ExecutableEngine dependency is required.")
-        if not profile_engine:
-            raise OrchestratorError("ProfileEngine ExecutableEngine dependency is required.")
-        if not score_engine:
-            raise OrchestratorError("ScoreEngine ExecutableEngine dependency is required.")
-        if not decision_engine:
-            raise OrchestratorError("DecisionEngine ExecutableEngine dependency is required.")
-        if not report_engine:
-            raise OrchestratorError("ReportEngine ExecutableEngine dependency is required.")
-        if not validation_engine:
-            raise OrchestratorError("ValidationEngine ExecutableValidator dependency is required.")
-        if not config:
-            raise OrchestratorError("OrchestratorConfig dependency is required.")
+        dependencies = {
+            "provider": provider,
+            "storage": storage,
+            "indicator_engine": indicator_engine,
+            "analysis_engine": analysis_engine,
+            "profile_engine": profile_engine,
+            "score_engine": score_engine,
+            "decision_engine": decision_engine,
+            "validation_engine": validation_engine,
+            "config": config,
+        }
+        for name, value in dependencies.items():
+            if value is None:
+                raise OrchestratorError(f"{name} dependency is required.")
 
-        # Bind dependencies and injected config strictly
         self._provider = provider
         self._storage = storage
         self._indicator_engine = indicator_engine
+        self._analysis_engine = analysis_engine
         self._profile_engine = profile_engine
         self._score_engine = score_engine
         self._decision_engine = decision_engine
-        self._report_engine = report_engine
         self._validation_engine = validation_engine
         self._config = config
-
         self._last_result: Optional[OrchestratorResult] = None
         self._current_stage = PipelineStage.INITIALIZE
-
-        self._logger = LoggerAdapter(
-            base_logger,
-            {
-                "symbol": "NONE",
-                "stage": self._current_stage.value,
-                "elapsed_ms": 0.0,
-                "operation": "init",
-            },
-        )
-
-    # -------------------------------------------------------------------------
-    # Public Methods
-    # -------------------------------------------------------------------------
+        self._logger = LoggerAdapter(base_logger, {"symbol": "NONE", "stage": "INITIALIZE", "operation": "init"})
 
     def run(self, symbol: str, timeframes: list[str]) -> OrchestratorResult:
-        """Alias for run_pipeline for orchestrating analysis execution."""
-        return self.run_pipeline(symbol=symbol, timeframes=timeframes)
+        return self.run_pipeline(symbol, timeframes)
 
     def run_pipeline(self, symbol: str, timeframes: list[str]) -> OrchestratorResult:
-        """
-        Execute the complete analysis pipeline sequentially through all components
-        exclusively via direct uniform .execute() calls. Each stage is independently
-        wrapped with robust error handling and precise performance tracking.
-        """
-        perf_start = time.perf_counter()
-        started_at = datetime.now(timezone.utc)
-        completed_count = 0
-
-        self._logger.extra.update({
-            "symbol": symbol,
-            "stage": self._current_stage.value,
-            "operation": "run_pipeline",
-        })
-        self._log_stage("Pipeline execution started.")
-
-        dataset: Optional[MarketDataset] = None
-        validation_result: Optional[Any] = None
-        error_msg: Optional[str] = None
+        started = datetime.now(timezone.utc)
+        perf = time.perf_counter()
+        completed = 0
+        dataset = None
+        validation = None
+        analysis = None
+        profile = None
+        score = None
+        decision = None
+        error_message = None
         success = False
+        self._logger.extra.update({"symbol": symbol, "operation": "run_pipeline"})
 
         try:
-            # Stage 1: Initialization
-            self._initialize()
-            completed_count += 1
+            self._change_stage(PipelineStage.INITIALIZE)
+            self._validate_input(symbol, timeframes)
+            completed += 1
 
-            # Stage 2: Download Market Data via Provider (.execute)
-            dataset = self._download(symbol=symbol, timeframes=timeframes)
-            completed_count += 1
+            self._change_stage(PipelineStage.DOWNLOAD)
+            dataset = self._provider.execute(symbol=symbol, timeframes=timeframes)
+            self._require_dataset(dataset)
+            completed += 1
 
-            # Stage 3: Storage & Persistence (.execute)
-            self._store(dataset=dataset)
-            completed_count += 1
+            self._change_stage(PipelineStage.STORE)
+            self._storage.execute(dataset)
+            completed += 1
 
-            # Stage 4: Indicator Calculation (.execute)
-            dataset = self._run_indicators(dataset=dataset)
-            completed_count += 1
+            self._change_stage(PipelineStage.INDICATORS)
+            dataset = self._indicator_engine.calculate_dataset(dataset)
+            completed += 1
 
-            # Stage 5: Market Profile Generation (.execute)
-            dataset = self._run_profile(dataset=dataset)
-            completed_count += 1
+            self._change_stage(PipelineStage.ANALYSIS)
+            analysis = self._analysis_engine.analyze(dataset)
+            completed += 1
 
-            # Stage 6: Scoring Evaluation (.execute)
-            dataset = self._run_score(dataset=dataset)
-            completed_count += 1
+            self._change_stage(PipelineStage.PROFILE)
+            profile = self._profile_engine.build_profile(dataset)
+            completed += 1
 
-            # Stage 7: Decision Classification (.execute)
-            dataset = self._run_decision(dataset=dataset)
-            completed_count += 1
+            self._change_stage(PipelineStage.SCORE)
+            score = self._score_engine.calculate(analysis)
+            completed += 1
 
-            # Stage 8: Report Building (.execute)
-            dataset = self._run_report(dataset=dataset)
-            completed_count += 1
+            self._change_stage(PipelineStage.DECISION)
+            decision = self._decision_engine.decide(analysis, score)
+            completed += 1
 
-            # Stage 9: Validation Inspection (.execute)
-            validation_result = self._run_validation(dataset=dataset)
-            completed_count += 1
+            self._change_stage(PipelineStage.VALIDATION)
+            validation = self._validation_engine.validate_dataset(dataset)
+            completed += 1
 
-            # Stage 10: Finalization
-            self._finalize()
+            self._change_stage(PipelineStage.FINISHED)
             success = True
 
-        except Exception as e:
-            error_msg = str(e)
-            self._logger.error(f"Pipeline failed during stage [{self._current_stage.value}]: {error_msg}")
-            if not isinstance(e, PipelineError):
-                raise PipelineError(f"Pipeline error for symbol {symbol} at stage {self._current_stage.value}: {e}") from e
-            raise
-
+        except Exception as exc:
+            error_message = str(exc)
+            self._logger.error(f"Pipeline failed at [{self._current_stage.value}]: {exc}")
+            if isinstance(exc, PipelineError):
+                raise
+            raise PipelineError(
+                f"Pipeline error for symbol {symbol} at stage {self._current_stage.value}: {exc}"
+            ) from exc
         finally:
-            elapsed_ms = (time.perf_counter() - perf_start) * 1000.0 if self._config.ENABLE_TIMING else 0.0
-            finished_at = datetime.now(timezone.utc)
-
+            finished = datetime.now(timezone.utc)
+            elapsed = (time.perf_counter() - perf) * 1000.0 if self._config.ENABLE_TIMING else 0.0
             stats = PipelineStatistics(
-                started_at=started_at,
-                finished_at=finished_at,
-                elapsed_ms=elapsed_ms,
+                started_at=started,
+                finished_at=finished,
+                elapsed_ms=elapsed,
                 current_stage=self._current_stage,
-                completed_stage_count=completed_count,
+                completed_stage_count=completed,
                 success=success,
-                error_message=error_msg,
+                error_message=error_message,
             )
-
-            execution_payload = self._build_execution_payload(dataset=dataset)
-
             self._last_result = OrchestratorResult(
                 dataset=dataset,
-                validation=validation_result,
+                validation=validation,
+                analysis=analysis,
+                profile=profile,
+                score=score,
+                decision=decision,
+                execution_payload=self._build_execution_plan(dataset, decision),
                 statistics=stats,
-                execution_payload=execution_payload,
             )
-
-            self._logger.extra.update({
-                "stage": self._current_stage.value,
-                "elapsed_ms": f"{elapsed_ms:.2f}ms",
-            })
-            self._log_stage(f"Pipeline execution finalized. Success: {success}")
+            self._logger.extra.update({"stage": self._current_stage.value, "elapsed_ms": f"{elapsed:.2f}ms"})
 
         return self._last_result
 
     def reset(self) -> None:
-        """Reset orchestrator state and cached execution result."""
-        self._current_stage = PipelineStage.INITIALIZE
         self._last_result = None
-        self._logger.extra.update({"stage": self._current_stage.value, "elapsed_ms": 0.0})
-        self._log_stage("Orchestrator state reset.")
+        self._current_stage = PipelineStage.INITIALIZE
+        self._logger.extra.update({"stage": self._current_stage.value})
 
     def statistics(self) -> Optional[PipelineStatistics]:
-        """Return execution statistics from the last pipeline run if available."""
-        if self._last_result:
-            return self._last_result.statistics
-        return None
+        return self._last_result.statistics if self._last_result else None
 
     def last_result(self) -> Optional[OrchestratorResult]:
-        """Return the complete result container from the last pipeline run."""
         return self._last_result
 
-    # -------------------------------------------------------------------------
-    # Internal Pipeline Stage Methods (Stateless & Strictly .execute() Based)
-    # -------------------------------------------------------------------------
+    @staticmethod
+    def _validate_input(symbol: str, timeframes: list[str]) -> None:
+        if not isinstance(symbol, str) or not symbol.strip():
+            raise PipelineError(f"Invalid symbol: {symbol!r}")
+        if not isinstance(timeframes, list) or not timeframes:
+            raise PipelineError("At least one timeframe is required.")
 
-    def _initialize(self) -> None:
-        self._change_stage(PipelineStage.INITIALIZE)
-        self._log_stage("Initializing pipeline execution parameters.")
+    @staticmethod
+    def _require_dataset(dataset: Optional[MarketDataset]) -> None:
+        if not isinstance(dataset, MarketDataset):
+            raise PipelineError("Provider returned an invalid MarketDataset.")
+        if not dataset.timeframes:
+            raise PipelineError("Provider returned a MarketDataset without timeframes.")
 
-    def _download(self, symbol: str, timeframes: list[str]) -> MarketDataset:
-        self._change_stage(PipelineStage.DOWNLOAD)
-        self._log_stage(f"Executing market data fetch for {symbol} across timeframes: {timeframes}")
-        try:
-            dataset = self._provider.execute(symbol=symbol, timeframes=timeframes)
-            if not dataset:
-                raise PipelineError("Provider returned empty or None dataset.")
-            return dataset
-        except Exception as e:
-            raise PipelineError(f"Download stage failed: {e}") from e
-
-    def _store(self, dataset: MarketDataset) -> None:
-        self._change_stage(PipelineStage.STORE)
-        self._log_stage("Executing dataset persistence into storage cache.")
-        try:
-            self._storage.execute(dataset)
-        except Exception as e:
-            raise PipelineError(f"Storage stage failed: {e}") from e
-
-    def _run_indicators(self, dataset: MarketDataset) -> MarketDataset:
-        self._change_stage(PipelineStage.INDICATORS)
-        self._log_stage("Executing indicator engine via .execute().")
-        try:
-            return self._indicator_engine.execute(dataset)
-        except Exception as e:
-            raise PipelineError(f"Indicator calculation stage failed: {e}") from e
-
-    def _run_profile(self, dataset: MarketDataset) -> MarketDataset:
-        self._change_stage(PipelineStage.PROFILE)
-        self._log_stage("Executing profile engine via .execute().")
-        try:
-            return self._profile_engine.execute(dataset)
-        except Exception as e:
-            raise PipelineError(f"Profile building stage failed: {e}") from e
-
-    def _run_score(self, dataset: MarketDataset) -> MarketDataset:
-        self._change_stage(PipelineStage.SCORE)
-        self._log_stage("Executing score engine via .execute().")
-        try:
-            return self._score_engine.execute(dataset)
-        except Exception as e:
-            raise PipelineError(f"Score evaluation stage failed: {e}") from e
-
-    def _run_decision(self, dataset: MarketDataset) -> MarketDataset:
-        self._change_stage(PipelineStage.DECISION)
-        self._log_stage("Executing decision engine via .execute().")
-        try:
-            return self._decision_engine.execute(dataset)
-        except Exception as e:
-            raise PipelineError(f"Decision classification stage failed: {e}") from e
-
-    def _run_report(self, dataset: MarketDataset) -> MarketDataset:
-        self._change_stage(PipelineStage.REPORT)
-        self._log_stage("Executing report engine via .execute().")
-        try:
-            return self._report_engine.execute(dataset)
-        except Exception as e:
-            raise PipelineError(f"Report generation stage failed: {e}") from e
-
-    def _run_validation(self, dataset: MarketDataset) -> Any:
-        self._change_stage(PipelineStage.VALIDATION)
-        self._log_stage("Executing validation engine via .execute().")
-        try:
-            return self._validation_engine.execute(dataset)
-        except Exception as e:
-            raise PipelineError(f"Validation inspection stage failed: {e}") from e
-
-    def _finalize(self) -> None:
-        self._change_stage(PipelineStage.FINISHED)
-        self._log_stage("Pipeline successfully completed all stages.")
-
-    # -------------------------------------------------------------------------
-    # Internal Helper Methods
-    # -------------------------------------------------------------------------
-
-    def _build_execution_payload(self, dataset: Optional[MarketDataset]) -> Optional[ExecutionPlan]:
-        if not dataset:
+    @staticmethod
+    def _build_execution_plan(
+        dataset: Optional[MarketDataset],
+        decision: Optional[DecisionResult],
+    ) -> Optional[ExecutionPlan]:
+        if dataset is None or decision is None:
             return None
-        
-        try:
-            symbol = getattr(dataset, "symbol", "UNKNOWN")
-            decision_obj = getattr(dataset, "decision", None)
-            
-            side = "HOLD"
-            confidence = 0.0
-            if decision_obj is not None:
-                if hasattr(decision_obj, "decision"):
-                    dec_val = decision_obj.decision
-                    side = dec_val.value if hasattr(dec_val, "value") else str(dec_val)
-                elif isinstance(decision_obj, str):
-                    side = decision_obj
-                
-                if hasattr(decision_obj, "confidence"):
-                    confidence = float(getattr(decision_obj, "confidence", 0.0))
 
-            price = 0.0
-            if hasattr(dataset, "dataframes") and isinstance(dataset.dataframes, dict):
-                for tf, df in dataset.dataframes.items():
-                    if df is not None and not df.empty and "close" in df.columns:
-                        price = float(df["close"].iloc[-1])
-                        break
+        mapping = {
+            "FAVORABLE": ExecutionSide.BUY,
+            "UNFAVORABLE": ExecutionSide.SELL,
+            "WAIT": ExecutionSide.HOLD,
+        }
+        side = mapping.get(str(decision.decision).strip().upper(), ExecutionSide.NONE)
+        price = 0.0
+        for timeframe_data in dataset.timeframes.values():
+            dataframe = timeframe_data.dataframe
+            if dataframe is not None and not dataframe.empty and "close" in dataframe.columns:
+                price = float(dataframe["close"].iloc[-1])
+                break
 
-            quantity = 1.0
-
-            return ExecutionPlan(
-                symbol=symbol,
-                side=side,
-                price=price,
-                quantity=quantity,
-                confidence=confidence,
-            )
-        except Exception:
-            return None
+        return ExecutionPlan(
+            symbol=dataset.symbol,
+            side=side,
+            price=price,
+            quantity=1.0,
+            confidence=float(decision.confidence),
+            reason="; ".join(decision.reasons),
+        )
 
     def _change_stage(self, stage: PipelineStage) -> None:
         self._current_stage = stage
         self._logger.extra["stage"] = stage.value
 
-    def _log_stage(self, message: str) -> None:
-        if self._config.ENABLE_LOGGING:
-            self._logger.info(message)
 
-
-# =============================================================================
 # End Of File
-# =============================================================================
