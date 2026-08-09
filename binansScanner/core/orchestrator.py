@@ -4,7 +4,7 @@ Badee Binance Scanner
 Architecture : ORION
 Module       : core.orchestrator
 Version      : 4.1.0
-Status       : ORION Production Candidate V4 with ExecutionPayload integration
+Status       : ORION Production Candidate V4 with ExecutionPlan integration
 ===============================================================================
 
 Core Orchestrator Engine acting as the strict, stateless pipeline coordinator

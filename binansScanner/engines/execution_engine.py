@@ -8,7 +8,7 @@ Status       : ORION Production Candidate V2.1
 ===============================================================================
 
 Execution Engine responsible for translating Orion pipeline decisions into
-simulated market orders exclusively via an isolated ExecutionPayload from OrchestratorResult,
+simulated market orders exclusively via an isolated ExecutionPlan from OrchestratorResult,
 strictly enforcing clean architecture, absolute zero dataset coupling, dependency injection,
 stateless processing, and zero external exchange dependencies.
 ===============================================================================
@@ -202,7 +202,7 @@ class PaperExecutionAdapter(ExecutionAdapter):
 class ExecutionEngine:
     """
     Stateless, dependency-injected execution engine that consumes OrchestratorResults
-    exclusively via ExecutionPayload, ensuring zero knowledge or access to market datasets
+    exclusively via ExecutionPlan, ensuring zero knowledge or access to market datasets
     or underlying analytical models, delegating actual order execution to TradeExecutor.
     """
 
@@ -238,7 +238,7 @@ class ExecutionEngine:
 
     def execute(self, orchestrator_result: OrchestratorResult, quantity: Optional[float] = None) -> ExecutionResult:
         """
-        Main entry point for coordinating the processing of an OrchestratorResult exclusively through its ExecutionPayload.
+        Main entry point for coordinating the processing of an OrchestratorResult exclusively through its ExecutionPlan.
         """
         perf_start = time.perf_counter()
         
@@ -248,7 +248,7 @@ class ExecutionEngine:
         self._statistics.total_processed += 1
 
         try:
-            # Step 1: Extract and validate ExecutionPayload strictly from OrchestratorResult
+            # Step 1: Extract and validate ExecutionPlan strictly from OrchestratorResult
             payload = self._extract_payload(orchestrator_result)
             symbol = payload.symbol
             raw_decision = payload.side
@@ -354,7 +354,7 @@ class ExecutionEngine:
 
     def _extract_payload(self, orchestrator_result: OrchestratorResult) -> ExecutionPlan:
         """
-        Extract ExecutionPayload strictly from OrchestratorResult.execution_payload.
+        Extract ExecutionPlan strictly from OrchestratorResult.execution_payload.
         Ensures absolute zero inspection or coupling with MarketDataset, reports, or analytical models.
         """
         if not hasattr(orchestrator_result, "execution_payload") or orchestrator_result.execution_payload is None:
