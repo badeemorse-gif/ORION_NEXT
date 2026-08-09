@@ -25,7 +25,8 @@ from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Optional
 
-from core.orchestrator import OrchestratorResult, ExecutionPayload
+from core.orchestrator import OrchestratorResult
+from models.execution import ExecutionPlan
 from models.execution import ExecutionSide, ExecutionStatus, ExecutionRequest, ExecutionResult
 
 base_logger = logging.getLogger(__name__)
@@ -351,7 +352,7 @@ class ExecutionEngine:
     # Internal Methods (Isolated & Structured Steps)
     # -------------------------------------------------------------------------
 
-    def _extract_payload(self, orchestrator_result: OrchestratorResult) -> ExecutionPayload:
+    def _extract_payload(self, orchestrator_result: OrchestratorResult) -> ExecutionPlan:
         """
         Extract ExecutionPayload strictly from OrchestratorResult.execution_payload.
         Ensures absolute zero inspection or coupling with MarketDataset, reports, or analytical models.
@@ -360,8 +361,8 @@ class ExecutionEngine:
             raise ExecutionValidationError("OrchestratorResult lacks a valid execution_payload.")
         
         payload = orchestrator_result.execution_payload
-        if not isinstance(payload, ExecutionPayload):
-            raise ExecutionValidationError("Execution payload is not an instance of ExecutionPayload.")
+        if not isinstance(payload, ExecutionPlan):
+            raise ExecutionValidationError("Execution payload is not an instance of ExecutionPlan.")
             
         return payload
 

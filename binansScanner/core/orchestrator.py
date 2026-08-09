@@ -25,6 +25,7 @@ from enum import Enum
 from typing import Any, Optional, Protocol, runtime_checkable
 
 from models.market import MarketDataset
+from models.execution import ExecutionPlan
 
 base_logger = logging.getLogger(__name__)
 
@@ -115,16 +116,6 @@ class PipelineError(OrchestratorError):
 # =============================================================================
 
 @dataclass(slots=True)
-class ExecutionPayload:
-    """Immutable data structure representing an isolated execution payload for the execution engine."""
-    symbol: str
-    side: str
-    price: float
-    quantity: float
-    confidence: float
-
-
-@dataclass(slots=True)
 class PipelineStatistics:
     """Immutable metrics capturing granular details of a pipeline execution cycle."""
     started_at: Optional[datetime] = None
@@ -142,7 +133,7 @@ class OrchestratorResult:
     dataset: Optional[MarketDataset] = None
     validation: Optional[Any] = None
     statistics: PipelineStatistics = field(default_factory=PipelineStatistics)
-    execution_payload: Optional[ExecutionPayload] = None
+    execution_payload: Optional[ExecutionPlan] = None
 
 
 # =============================================================================
@@ -435,7 +426,7 @@ class Orchestrator:
     # Internal Helper Methods
     # -------------------------------------------------------------------------
 
-    def _build_execution_payload(self, dataset: Optional[MarketDataset]) -> Optional[ExecutionPayload]:
+    def _build_execution_payload(self, dataset: Optional[MarketDataset]) -> Optional[ExecutionPlan]:
         if not dataset:
             return None
         
@@ -464,7 +455,7 @@ class Orchestrator:
 
             quantity = 1.0
 
-            return ExecutionPayload(
+            return ExecutionPlan(
                 symbol=symbol,
                 side=side,
                 price=price,
