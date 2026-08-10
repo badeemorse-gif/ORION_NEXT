@@ -2,9 +2,9 @@
 ===============================================================================
 Badee Binance Scanner
 Architecture : ORION
-Module       : core.dependency_container
-Version      : 1.7.0
-Status       : ORION Canonical Composition Root
+Module      : core.dependency_container
+Version     : 1.8.0
+Status      : ORION Canonical Composition Root
 ===============================================================================
 
 Composition Root responsible solely for object creation, dependency wiring,
@@ -144,6 +144,7 @@ class DependencyContainer:
     def _create_api_service(self) -> ApiService:
         return ApiService(
             scheduler=self.build_scheduler_service(),
+            pipeline=self.build_pipeline(),
             logger=self._logger_instance,
         )
 
