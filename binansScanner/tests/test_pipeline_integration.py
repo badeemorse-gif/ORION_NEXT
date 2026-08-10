@@ -3,7 +3,7 @@
 Badee Binance Scanner
 Architecture : ORION
 Module       : tests.test_pipeline_integration
-Version      : 2.2.1
+Version      : 2.2.2
 Status       : ORION Composition Root Integration Contract
 ===============================================================================
 
@@ -21,7 +21,7 @@ from __future__ import annotations
 import tempfile
 import unittest
 from pathlib import Path
-from typing import get_type_hints
+from typing import Optional, get_type_hints
 
 from core.dependency_container import (
     ContainerConfiguration,
