@@ -3,7 +3,7 @@
 Badee Binance Scanner
 Architecture : ORION
 Module       : tests.test_pipeline_integration
-Version      : 2.2.0
+Version      : 2.2.1
 Status       : ORION Composition Root Integration Contract
 ===============================================================================
 
@@ -21,13 +21,14 @@ from __future__ import annotations
 import tempfile
 import unittest
 from pathlib import Path
+from typing import get_type_hints
 
 from core.dependency_container import (
     ContainerConfiguration,
     DependencyContainer,
 )
 
-from core.orchestrator import Orchestrator
+from core.orchestrator import Orchestrator, OrchestratorResult
 from core.pipeline import Pipeline
 
 from engines.report_engine import ReportEngine
@@ -186,10 +187,11 @@ class TestPipelineIntegration(unittest.TestCase):
         """Execution boundary must expose ExecutionPlan, never legacy payload naming."""
 
         result_fields = set(OrchestratorResult.__dataclass_fields__)
+        resolved_types = get_type_hints(OrchestratorResult)
 
         self.assertIn("execution_plan", result_fields)
         self.assertNotIn("execution_payload", result_fields)
-        self.assertIs(OrchestratorResult.__dataclass_fields__["execution_plan"].type, Optional[ExecutionPlan])
+        self.assertEqual(resolved_types["execution_plan"], Optional[ExecutionPlan])
 
     def test_pipeline_creation(self) -> None:
         """Pipeline can be created from the canonical container graph."""
