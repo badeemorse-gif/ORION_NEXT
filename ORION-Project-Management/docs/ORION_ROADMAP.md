@@ -1,6 +1,6 @@
 # ORION — خارطة طريق المشروع
 
-الإصدار: 2.1
+الإصدار: 2.2
 الحالة: ACTIVE
 المشروع: ORION
 
@@ -55,13 +55,13 @@ main
 ==================================================
 
 الحالة:
-IN PROGRESS
+COMPLETED
 
 الهدف:
 
 تثبيت الأساس المعماري، Result Contracts، حدود الطبقات، والـwiring الأساسي دون إعادة كتابة المنطق الذي ثبتت صحته.
 
-يشمل:
+تم استيفاء البوابة عبر:
 
 - تثبيت Result Contracts.
 - تثبيت Core/Application boundaries.
@@ -70,27 +70,23 @@ IN PROGRESS
 - تثبيت ExecutionPlan boundary.
 - تثبيت API transport contracts.
 - تنظيف التعارضات المعمارية المكتشفة.
-- Verification baseline.
-
-بوابة الإغلاق:
-
-- اكتمال التنفيذ المطلوب.
-- نجاح الاختبارات المرتبطة.
-- مراجعة Findings.
-- عدم وجود Blocking Finding.
-- Verification.
-- تحديث PROJECT_STATE.
+- Full Verification: 108 tests / OK.
+- Python syntax compilation: PASSED.
+- مراجعة Findings: لا توجد Blocking Findings مفتوحة.
+- إغلاق AF-007 كـVerification Governance Gate.
+- تثبيت Report Architecture كحد قانوني مستقر بما يكفي للانتقال.
+- تحديث PROJECT_STATE وCHANGELOG.
 
 ==================================================
 5. المرحلة 2 — CORE INTELLIGENCE COMPLETION
 ==================================================
 
 الحالة:
-PENDING
+IN PROGRESS
 
 الهدف:
 
-إكمال وربط قلب ORION التحليلي وتحقيق مسار E2E مستقر من Market Data حتى Decision وExecutionPlan.
+إكمال وربط قلب ORION التحليلي وتحقيق مسار E2E مستقر من Market Data حتى Decision وExecutionPlan فوق العقود المثبتة في Phase 1.
 
 المسار المستهدف:
 
@@ -112,10 +108,16 @@ ExecutionPlan
 
 يشمل:
 
-- إكمال وربط المحركات.
+- مراجعة Core Intelligence الحالي وتحديد أي أجزاء ناقصة فعلًا.
+- إكمال وربط المحركات عند الحاجة فقط.
 - تثبيت Profile/Score/Decision relationships وفق القرارات المعتمدة.
+- تعزيز منطق intelligence الذي لم يصل بعد إلى مستوى الإنتاج.
 - Verification شامل للمسار.
 - تثبيت العقود التي ستصبح أساس المستهلكين اللاحقين.
+
+قاعدة Phase 2:
+
+لا يعاد فتح Result Contracts المستقرة في Phase 1 إلا إذا ظهر تعارض أو متطلب جديد مثبت باختبار أو قرار معماري.
 
 ==================================================
 6. المرحلة 3 — تثبيت Configuration
@@ -539,10 +541,17 @@ ORION_FUTURE_ROADMAP.md = المراحل الكبرى المستقبلية.
 
 المرحلة الحالية الرسمية:
 
-PHASE 1 — CONTRACT STABILIZATION / RECONSTRUCTION
+PHASE 2 — CORE INTELLIGENCE COMPLETION
 
 الحالة:
 IN PROGRESS
+
+المرحلة السابقة:
+
+PHASE 1 — CONTRACT STABILIZATION / RECONSTRUCTION
+
+الحالة:
+COMPLETED
 
 المرجع التفصيلي للحالة:
 ORION_PROJECT_STATE.md
