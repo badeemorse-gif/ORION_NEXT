@@ -3,14 +3,15 @@
 Badee Binance Scanner
 Architecture : ORION
 Module       : tests.test_pipeline_integration
-Version      : 2.0.0
+Version      : 2.1.0
 Status       : ORION Composition Root Integration Contract
 ===============================================================================
 
 Integration tests for the ORION dependency graph.
 
-These tests intentionally validate construction and dependency wiring only.
-They do not perform network calls or real market execution.
+These tests validate construction and dependency wiring only. ReportEngine is
+owned by the application Pipeline boundary, not by the intelligence
+Orchestrator. No network calls or real market execution are performed here.
 ===============================================================================
 """
 
@@ -28,6 +29,7 @@ from core.dependency_container import (
 from core.orchestrator import Orchestrator
 from core.pipeline import Pipeline
 
+from engines.report_engine import ReportEngine
 from providers.market_data_provider import MarketDataProvider
 from repositories.market_repository import MarketRepository
 from services.market_service import MarketService
@@ -36,7 +38,7 @@ from storage.sqlite_market_storage import SQLiteMarketStorage
 
 class TestPipelineIntegration(unittest.TestCase):
     """
-    Validate the Composition Root and the construction graph.
+    Validate the Composition Root and the canonical construction graph.
     """
 
     def setUp(self) -> None:
@@ -124,7 +126,7 @@ class TestPipelineIntegration(unittest.TestCase):
         )
 
     def test_orchestrator_creation(self) -> None:
-        """Orchestrator can be created successfully."""
+        """Orchestrator can be created successfully with intelligence dependencies."""
 
         orchestrator = self.container.build_orchestrator()
 
@@ -149,6 +151,11 @@ class TestPipelineIntegration(unittest.TestCase):
         )
 
         self.assertIs(
+            orchestrator._analysis_engine,
+            self.container.build_analysis_engine(),
+        )
+
+        self.assertIs(
             orchestrator._profile_engine,
             self.container.build_profile_engine(),
         )
@@ -164,17 +171,17 @@ class TestPipelineIntegration(unittest.TestCase):
         )
 
         self.assertIs(
-            orchestrator._report_engine,
-            self.container.build_report_engine(),
-        )
-
-        self.assertIs(
             orchestrator._validation_engine,
             self.container.build_validation_engine(),
         )
 
+        self.assertFalse(
+            hasattr(orchestrator, "_report_engine"),
+            "ReportEngine belongs to Pipeline, not Orchestrator.",
+        )
+
     def test_pipeline_creation(self) -> None:
-        """Pipeline can be created from container."""
+        """Pipeline can be created from the canonical container graph."""
 
         pipeline = self.container.build_pipeline()
 
@@ -191,6 +198,16 @@ class TestPipelineIntegration(unittest.TestCase):
         self.assertIs(
             pipeline._execution_engine,
             self.container.build_execution_engine(),
+        )
+
+        self.assertIs(
+            pipeline._report_engine,
+            self.container.build_report_engine(),
+        )
+
+        self.assertIsInstance(
+            pipeline._report_engine,
+            ReportEngine,
         )
 
 
