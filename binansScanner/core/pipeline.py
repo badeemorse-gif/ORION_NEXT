@@ -31,6 +31,7 @@ class PipelineItemResult:
     elapsed_ms: float = 0.0
     success: bool = False
     error_message: Optional[str] = None
+    failed_stage: Optional[str] = None
 
 
 @dataclass(slots=True)
@@ -85,17 +86,22 @@ class Pipeline:
         exec_res = None
         report_res = None
         error_message = None
+        failed_stage: Optional[str] = None
         success = False
         self._logger.extra.update({"symbol": symbol, "operation": "run_symbol"})
 
         try:
             self._validate_symbol(symbol)
+
+            failed_stage = "ORCHESTRATION"
             orch_res = self._orchestrator.run(symbol, timeframes)
             if orch_res.execution_plan is None:
                 raise PipelineError("Orchestrator did not produce an ExecutionPlan.")
 
+            failed_stage = "EXECUTION"
             exec_res = self._execution_engine.execute(orch_res.execution_plan, quantity=quantity)
 
+            failed_stage = "REPORT"
             report_res = self._report_engine.build_report(
                 symbol=symbol,
                 analysis=orch_res.analysis,
@@ -108,9 +114,17 @@ class Pipeline:
                 ),
             )
             success = True
+            failed_stage = None
         except Exception as exc:
             error_message = str(exc)
-            self._logger.error(f"Pipeline failed for [{symbol}]: {exc}")
+            # Orchestrator preserves its partial result in finally even when a
+            # stage raises. Keep that canonical diagnostic state in the
+            # PipelineItemResult instead of discarding it at the boundary.
+            if orch_res is None:
+                orch_res = self._orchestrator.last_result()
+            self._logger.error(
+                f"Pipeline failed for [{symbol}] at stage [{failed_stage}]: {exc}"
+            )
 
         finished = datetime.now(timezone.utc)
         elapsed = (time.perf_counter() - perf) * 1000.0
@@ -124,6 +138,7 @@ class Pipeline:
             elapsed_ms=elapsed,
             success=success,
             error_message=error_message,
+            failed_stage=failed_stage,
         )
 
     def run_symbols(
