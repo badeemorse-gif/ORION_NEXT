@@ -40,26 +40,13 @@ class LoggerAdapter(logging.LoggerAdapter):
 class ApiServer:
     """FastAPI transport wrapper around the framework-agnostic ApiRouter."""
 
-    def __init__(
-        self,
-        router: Optional[ApiRouter] = None,
-        logger: Optional[logging.Logger] = None,
-    ) -> None:
+    def __init__(self, router: Optional[ApiRouter] = None, logger: Optional[logging.Logger] = None) -> None:
         self._logger_instance = logger if logger is not None else base_logger
-        self._logger = LoggerAdapter(
-            self._logger_instance,
-            {"component": "ApiServer", "operation": "init"},
-        )
+        self._logger = LoggerAdapter(self._logger_instance, {"component": "ApiServer", "operation": "init"})
         self.router = router if router is not None else ApiRouter(logger=self._logger_instance)
         self.app = FastAPI(title="ORION_NEXT", version="1.1")
         self._register_routes()
         self._logger.info("ApiServer initialized successfully with routes registered.")
-
-    def _get_logger(self, operation: Optional[str] = None) -> LoggerAdapter:
-        return LoggerAdapter(
-            self._logger_instance,
-            {"component": "ApiServer", "operation": operation},
-        )
 
     @staticmethod
     async def _request_body(request: Request, default_endpoint: str) -> ApiRequest:
@@ -70,65 +57,65 @@ class ApiServer:
             payload=body.get("payload", {}),
         )
 
+    @staticmethod
+    def _json_response(payload: dict[str, Any], status_code: int) -> JSONResponse:
+        return JSONResponse(content=payload, status_code=status_code)
+
     def _register_routes(self) -> None:
         @self.app.get("/health")
         async def health_endpoint() -> JSONResponse:
             try:
                 response = self.router.health()
-                return JSONResponse(200, response.payload | {"success": response.success, "message": response.message})
+                return self._json_response(response.payload | {"success": response.success, "message": response.message}, 200)
             except ApiRouterError as err:
-                return JSONResponse(500, {"success": False, "message": str(err)})
+                return self._json_response({"success": False, "message": str(err)}, 500)
             except Exception as err:
-                return JSONResponse(500, {"success": False, "message": f"Internal server error: {err}"})
+                return self._json_response({"success": False, "message": f"Internal server error: {err}"}, 500)
 
         @self.app.get("/scheduler/state")
         async def scheduler_state_endpoint() -> JSONResponse:
             try:
                 response = self.router.scheduler_state()
-                return JSONResponse(200, response.payload | {"success": response.success, "message": response.message})
+                return self._json_response(response.payload | {"success": response.success, "message": response.message}, 200)
             except ApiRouterError as err:
-                return JSONResponse(500, {"success": False, "message": str(err)})
+                return self._json_response({"success": False, "message": str(err)}, 500)
             except Exception as err:
-                return JSONResponse(500, {"success": False, "message": f"Internal server error: {err}"})
+                return self._json_response({"success": False, "message": f"Internal server error: {err}"}, 500)
 
         @self.app.get("/scheduler/jobs")
         async def scheduler_jobs_endpoint() -> JSONResponse:
             try:
                 response = self.router.registered_jobs()
-                return JSONResponse(200, response.payload | {"success": response.success, "message": response.message})
+                return self._json_response(response.payload | {"success": response.success, "message": response.message}, 200)
             except ApiRouterError as err:
-                return JSONResponse(500, {"success": False, "message": str(err)})
+                return self._json_response({"success": False, "message": str(err)}, 500)
             except Exception as err:
-                return JSONResponse(500, {"success": False, "message": f"Internal server error: {err}"})
+                return self._json_response({"success": False, "message": f"Internal server error: {err}"}, 500)
 
         @self.app.post("/pipeline/run")
         async def pipeline_run_endpoint(request: Request) -> JSONResponse:
             try:
                 api_request = await self._request_body(request, "/pipeline/run")
                 response = self.router.run_symbol(request=api_request)
-                status_code = 200 if response.success else 422
-                return JSONResponse(
-                    status_code=status_code,
-                    content=response.payload | {"success": response.success, "message": response.message},
+                return self._json_response(
+                    response.payload | {"success": response.success, "message": response.message},
+                    200 if response.success else 422,
                 )
             except ApiRouterError as err:
-                return JSONResponse(500, {"success": False, "message": str(err)})
+                return self._json_response({"success": False, "message": str(err)}, 500)
             except Exception as err:
-                return JSONResponse(500, {"success": False, "message": f"Internal server error: {err}"})
+                return self._json_response({"success": False, "message": f"Internal server error: {err}"}, 500)
 
         @self.app.post("/report/export")
         async def report_export_endpoint(request: Request) -> JSONResponse:
             try:
                 api_request = await self._request_body(request, "/report/export")
                 response = self.router.export_report(request=api_request)
-                return JSONResponse(
-                    200,
-                    response.payload | {"success": response.success, "message": response.message},
-                )
+                return self._json_response(response.payload | {"success": response.success, "message": response.message}, 200)
             except ApiRouterError as err:
-                return JSONResponse(500, {"success": False, "message": str(err)})
+                return self._json_response({"success": False, "message": str(err)}, 500)
             except Exception as err:
-                return JSONResponse(500, {"success": False, "message": f"Internal server error: {err}"})
+                return self._json_response({"success": False, "message": f"Internal server error: {err}"}, 500)
 
 
 __all__ = ["ApiServer", "LoggerAdapter"]
