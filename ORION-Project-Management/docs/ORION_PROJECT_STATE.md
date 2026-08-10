@@ -1,6 +1,6 @@
 # ORION — PROJECT STATE
 
-الإصدار: 1.5
+الإصدار: 1.6
 الحالة: ACTIVE
 المشروع: ORION
 
@@ -88,9 +88,9 @@ ProfileResult مستقل عن Score/Decision في Core Intelligence الحالي
 5. Verification الأخير المسجل
 ==================================================
 
-آخر Verification المسجل:
+آخر Verification فعلي قدمه التنفيذ المحلي:
 
-107 tests
+106 tests
 OK
 
 VERIFICATION PASSED
@@ -99,6 +99,10 @@ VERIFICATION PASSED
 
 21 tests
 OK
+
+ملاحظة Governance:
+
+كان السجل السابق يذكر 107 tests. تم تصحيح Project State إلى 106 وفق آخر Full unittest run موثق فعليًا، ولا يُعاد رفع الرقم إلا بعد تشغيل Verification جديد يثبت ذلك.
 
 ==================================================
 6. Findings
@@ -119,17 +123,17 @@ ORION_ARCHITECTURE_FINDINGS.md
 7. Report Architecture
 ==================================================
 
-ما زال هناك مسار تقارير يحتاج حسمًا نهائيًا قبل اعتباره مغلقًا بالكامل.
+ReportResult هو العقد القانوني للتقارير في المسار الحالي، وReportExporter والـrenderers يستهلكونه عبر حدود منفصلة.
 
-المكونات الحالية ذات الصلة:
+المسار الحالي المثبت في الكود:
 
 models.report.ReportResult
-engines.report_engine
-reports.report_engine
-reports.report_models.FullReport
-ReportExporter
+↓
+reports.json_report.JsonReportRenderer / reports.html_report.HtmlReportRenderer
+↓
+reports.report_exporter.ReportExporter
 
-لا يتم حذف أو دمج هذه المكونات بالحدس؛ القرار النهائي يمر عبر Architecture Review وDECISIONS عند الحاجة.
+لا توجد في main الحالية حاجة إلى إبقاء Report Engine بديل كمسار تنفيذي مستقل؛ أي مرجع تاريخي لمسارات engines.report_engine أو FullReport يجب التعامل معه كـlegacy documentation ولا يعاد إدخاله في المسار الحالي دون Architecture Review وDECISION صريح.
 
 ==================================================
 8. المراحل القادمة
