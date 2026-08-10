@@ -21,12 +21,12 @@ class TestMainEntrypoint(unittest.TestCase):
 
         with patch.object(main, "BootstrapRunner", return_value=runner), patch.object(
             main, "ApplicationRuntime", return_value=runtime
-        ):
+        ) as runtime_factory:
             result = main.main()
 
         self.assertEqual(result, 0)
         runner.run.assert_called_once()
-        main.ApplicationRuntime.assert_called_once_with(container)
+        runtime_factory.assert_called_once_with(container)
         runtime.run.assert_called_once_with()
 
     def test_main_fails_when_bootstrap_fails(self) -> None:
