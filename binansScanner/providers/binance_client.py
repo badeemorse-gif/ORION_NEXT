@@ -3,8 +3,8 @@
 Badee Binance Scanner
 Architecture : ORION
 Module      : providers.binance_client
-Version      : 2.0.0
-Status       : ORION Production Client Component
+Version     : 2.0.0
+Status      : ORION Production Client Component
 ===============================================================================
 
 Binance REST API communication client handling authentication, timeout,
@@ -17,6 +17,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+import warnings
 from typing import Any, Optional
 
 from binance.client import Client
@@ -25,10 +26,6 @@ from requests.exceptions import ConnectionError, ReadTimeout, Timeout
 
 base_logger = logging.getLogger(__name__)
 
-
-# =============================================================================
-# Custom Exceptions
-# =============================================================================
 
 class BinanceClientError(Exception):
     """Base exception for all Binance client related errors."""
@@ -45,10 +42,6 @@ class ClientRateLimitError(BinanceClientError):
     pass
 
 
-# =============================================================================
-# Token Bucket Rate Limiter
-# =============================================================================
-
 class TokenBucketRateLimiter:
     """
     Token Bucket algorithm implementation for dynamic rate limiting and weight tracking
@@ -58,7 +51,7 @@ class TokenBucketRateLimiter:
     def __init__(self, capacity: float = 1200.0, refill_rate: float = 20.0) -> None:
         self.capacity: float = capacity
         self.tokens: float = capacity
-        self.refill_rate: float = refill_rate  # tokens per second
+        self.refill_rate: float = refill_rate
         self.last_refill: float = time.time()
 
     def acquire(self, weight: int = 1) -> None:
@@ -79,10 +72,6 @@ class TokenBucketRateLimiter:
         self.tokens -= weight
 
 
-# =============================================================================
-# Binance Client Component
-# =============================================================================
-
 class BinanceClient:
     """
     Responsible for raw REST requests, connection management, authentication,
@@ -102,9 +91,9 @@ class BinanceClient:
         self.testnet: bool = testnet
 
         try:
-            # python-binance's BaseClient calls asyncio.get_event_loop() during
-            # synchronous Client construction. Python 3.12 no longer creates a
-            # loop implicitly, so provide a temporary loop when none is running.
+            # python-binance currently calls asyncio.get_event_loop() during
+            # synchronous Client construction. Python 3.12 no longer creates
+            # a loop implicitly, so provide a temporary loop when none exists.
             try:
                 asyncio.get_running_loop()
                 construction_loop = None
@@ -115,12 +104,23 @@ class BinanceClient:
                 owns_construction_loop = True
 
             try:
-                self._client: Client = Client(
-                    api_key=self.api_key,
-                    api_secret=self.api_secret,
-                    requests_params={"timeout": self.timeout},
-                    ping=False,
-                )
+                # Keep this suppression narrowly scoped to the third-party
+                # python-binance compatibility warning. ORION owns the event
+                # loop lifecycle; the dependency warning is not actionable
+                # application output.
+                with warnings.catch_warnings():
+                    warnings.filterwarnings(
+                        "ignore",
+                        message="There is no current event loop",
+                        category=DeprecationWarning,
+                        module=r"binance\.helpers",
+                    )
+                    self._client: Client = Client(
+                        api_key=self.api_key,
+                        api_secret=self.api_secret,
+                        requests_params={"timeout": self.timeout},
+                        ping=False,
+                    )
             finally:
                 if owns_construction_loop and construction_loop is not None:
                     asyncio.set_event_loop(None)
