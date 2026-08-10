@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 
 # ==========================================
 # Badee Binance Scanner
@@ -287,7 +287,7 @@ def analyze_data_profile(
 
         "build": 1,
 
-        "generated_at": datetime.utcnow().isoformat() + "Z",
+        "generated_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
 
         "engine": {
 
