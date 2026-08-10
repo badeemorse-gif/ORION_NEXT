@@ -1,286 +1,39 @@
 # ORION — PROJECT STATE
 
-الإصدار: 1.4
+الإصدار: 1.5
 الحالة: ACTIVE
+المشروع: ORION
 
 ==================================================
-1. المشروع
+1. الحالة الحالية
 ==================================================
 
-المستودع:
-
-badeemorse-gif/ORION_NEXT
-
-الفرع:
-
-main
-
-الجذر البرمجي:
-
-C:\Users\badee\Desktop\ORION_NEXT\binansScanner
-
-==================================================
-2. المرحلة الحالية
-==================================================
+المرحلة الحالية:
 
 PHASE 1 — CONTRACT STABILIZATION / RECONSTRUCTION
 
 الحالة:
-
 IN PROGRESS
 
-الهدف الحالي هو تثبيت حدود Result Contracts وربط المستهلكين بها دون إعادة كتابة المنطق الذي ثبتت صحته.
+الهدف الحالي:
 
-بوابة Phase 1 تقترب من الإغلاق، لكن AF-007 ما زال مفتوحًا كـverification governance gate.
+تثبيت حدود Result Contracts وربط المستهلكين بها دون إعادة كتابة المنطق الذي ثبتت صحته.
+
+بوابة Phase 1 لم تعتمد نهائيًا بعد؛ AF-007 ما زال OPEN كـVerification Governance Gate.
 
 ==================================================
-3. خارطة الطريق الكاملة المعتمدة للمشروع
+2. الخطوة الحالية
 ==================================================
 
-هذه الخارطة تمثل المسار الكامل المقصود لـ ORION حتى الوصول إلى المنتج النهائي.
+استكمال Verification وGovernance للحدود والعقود المثبتة قبل إعلان Phase 1 مكتملة.
 
-وجود مرحلة مستقبلية في هذه الخارطة لا يعني البدء بها الآن.
-
-لا يتم الانتقال إلى مرحلة لاحقة إلا بعد استقرار المرحلة السابقة وتحقيق شروط Verification والاعتماد الخاصة بها.
-
---------------------------------------------------
-
-PHASE 1 — FOUNDATION / CONTRACT STABILIZATION
-
-الهدف:
-
-تثبيت الأساس المعماري، Result Contracts، حدود الطبقات، والـwiring الأساسي.
-
-يشمل:
-
-- تثبيت Result Contracts.
-- تثبيت Core/Application boundaries.
-- تثبيت Validation وStorage boundaries.
-- تثبيت Fail-Fast behavior.
-- تثبيت ExecutionPlan boundary.
-- تثبيت API transport contracts.
-- تنظيف التعارضات المعمارية المكتشفة.
-- بناء Verification baseline.
-
-الحالة الحالية:
-IN PROGRESS
-
---------------------------------------------------
-
-PHASE 2 — CORE INTELLIGENCE COMPLETION
-
-الهدف:
-
-إكمال محرك ORION الأساسي المسؤول عن تحويل بيانات السوق إلى تحليل منظم ثم Score ثم Decision ثم ExecutionPlan.
-
-المسار المستهدف:
-
-Market Data
-↓
-Validation
-↓
-Indicators
-↓
-Analysis
-↓
-Profile Context
-├── مستقل عن Score في النسخة الحالية
-└── متاح للمستهلكين اللاحقين مثل Opportunity Engine
-↓
-Score
-↓
-Decision
-↓
-ExecutionPlan
-
-يشمل:
-
-- إكمال وربط جميع محركات التحليل.
-- تثبيت Profile/Score/Decision relationships.
-- إزالة أي تكرار غير ضروري في المسؤوليات.
-- Verification شامل لمسار الـE2E.
-- تثبيت العقود التي ستصبح أساس واجهة المستخدم والتشغيل اللاحق.
-
---------------------------------------------------
-
-PHASE 3 — SCALPING OPPORTUNITY ENGINE
-
-الهدف الرئيسي لـ ORION:
-
-ترشيح أفضل الفرص القريبة للسكالبينج بصورة منهجية وقابلة للتفسير، بدل الاعتماد على البحث اليدوي أو الانطباع اللحظي.
-
-يشمل:
-
-- Ranking للفرص.
-- Scoring متقدم.
-- Confidence.
-- Risk/Reward context.
-- Market regime/context.
-- تحديد أفضل الفرص القريبة زمنيًا.
-- ترتيب الفرص حسب جودة واحتمالية نجاح السيناريو.
-- استمرار قابلية التفسير لكل ترشيح.
-
-هذه المرحلة هي الهدف التشغيلي الأساسي للمشروع قبل بناء التداول الآلي.
-
---------------------------------------------------
-
-PHASE 4 — ORION DESKTOP APPLICATION / GUI
-
-الهدف:
-
-إخراج ORION من الاعتماد على أوامر Python/Command Line إلى برنامج Desktop واضح ومميز للمستخدم.
-
-يشمل:
-
-- Dashboard رئيسية.
-- عرض الفرص المرشحة.
-- عرض Score / Confidence / Decision / ExecutionPlan بصورة مفهومة.
-- تحديث البيانات بصورة منظمة.
-- سجل النتائج والتنبيهات.
-- تشغيل الوظائف الأساسية من الواجهة دون الحاجة إلى Command Line.
-- إبقاء GUI منفصلة عن Business Logic.
-
-قاعدة:
-
-GUI هي Downstream consumer ولا تمتلك منطق الأعمال الأساسي.
-
---------------------------------------------------
-
-PHASE 5 — PRE-EXPLOSION / EXPLOSIVE COIN RADAR
-
-الهدف:
-
-إضافة قائمة مستقلة داخل ORION ترصد العملات التي تظهر عليها مؤشرات مبكرة قد تسبق حركة سعرية انفجارية.
-
-هذه المرحلة لا تستبدل هدف السكالبينج الرئيسي ولا تغيره.
-
-المسار:
-
-Scalping Opportunities
-
-يبقى هو المسار الرئيسي.
-
-Explosive Coin Radar
-
-يكون مسارًا موازيًا مستقلًا داخل البرنامج.
-
-يشمل مستقبلًا:
-
-- اكتشاف الأنماط غير الطبيعية في الحجم والسيولة.
-- تغيرات الزخم.
-- تغيرات التقلب.
-- تحولات الـOrder Flow المتاحة للبيانات.
-- تراكم المؤشرات قبل الحركة.
-- مقارنة السلوك الحالي بسلوك تاريخي مشابه.
-- تقدير نافذة زمنية تقريبية لاحتمال الحركة.
-- إخراج احتمال/درجة وليس وعدًا بحدوث انفجار.
-
-مثال للمخرج:
-
-Coin X
-Potential explosive move:
-HIGH / MEDIUM / LOW
-Estimated window:
-Hours / 1 day / 1-2 days / longer
-Confidence:
-XX%
-
-قاعدة مهمة:
-
-هذه خاصية احتمالية وليست تنبؤًا يقينيًا.
-
---------------------------------------------------
-
-PHASE 6 — TRADING BOT / PAPER EXECUTION
-
-الهدف:
-
-تحويل ExecutionPlan المعتمد إلى طبقة تنفيذ تداول حقيقية بعد اكتمال واختبار النظام التحليلي.
-
-التدرج الإلزامي:
-
-Decision
-↓
-ExecutionPlan
-↓
-Paper Execution
-↓
-Simulation / Backtest
-↓
-Controlled Live Execution
-
-يشمل:
-
-- Broker/Exchange adapter.
-- Order management.
-- Position management.
-- Risk controls.
-- Stop/Take Profit logic.
-- Capital/exposure limits.
-- Logging.
-- Error recovery.
-- Execution verification.
-
-قاعدة:
-
-لا يتم ربط التداول الحقيقي مباشرة بمحرك القرار قبل اكتمال Verification وPaper Execution والاختبارات المطلوبة.
-
---------------------------------------------------
-
-PHASE 7 — BACKTESTING / VALIDATION / HARDENING
-
-الهدف:
-
-إثبات أن ORION لا يعمل فقط على أمثلة ناجحة، بل يمكن تقييمه بصورة موضوعية على بيانات تاريخية وحالات مختلفة.
-
-يشمل:
-
-- Backtesting.
-- Scenario testing.
-- Failure testing.
-- Edge cases.
-- Performance evaluation.
-- False-positive analysis.
-- False-negative analysis.
-- Slippage/fees assumptions.
-- Stability testing.
-- Regression testing.
-
-لا يتم اعتبار المشروع جاهزًا للتداول الحقيقي قبل اجتياز هذه المرحلة وفق معايير الاعتماد.
-
---------------------------------------------------
-
-PHASE 8 — PRODUCTION ORION
-
-الهدف النهائي:
-
-إخراج ORION كمنظومة متكاملة قابلة للاستخدام اليومي، تجمع التحليل والترشيح والتنبيه والتنفيذ المنضبط في برنامج واحد.
-
-الصورة النهائية المستهدفة:
-
-ORION Desktop
-│
-├── Scalping Opportunities
-├── Explosive Coin Radar
-├── Market Intelligence
-├── Risk / Execution Planning
-├── Paper / Backtest Results
-└── Trading Bot
-
-مع:
-
-- سجل تشغيل واضح.
-- تنبيهات.
-- قابلية التتبع.
-- Verification مستمر.
-- فصل واضح بين Intelligence وExecution وUI.
-- إمكانية إيقاف التداول الآلي دون تعطيل التحليل.
+لا يوجد أمر بالقفز إلى مراحل GUI أو Explosion Radar أو Trading Bot في الوقت الحالي.
 
 ==================================================
-4. الحالة التنفيذية المثبتة
+3. الحالة التنفيذية المثبتة
 ==================================================
 
-تم تثبيت واختبار الحدود التالية:
+المسار الحالي المثبت:
 
 Provider
 ↓
@@ -306,83 +59,19 @@ Execution
 ↓
 Report
 
-تم إثبات أن فشل Validation يمنع Storage، وأن فشل أي مرحلة يمنع المراحل اللاحقة.
+تم إثبات أن فشل Validation يمنع Storage، وأن فشل المرحلة يمنع المراحل اللاحقة ضمن الحدود المختبرة.
 
-تم تثبيت API transport contract والمسارات الأساسية.
-
-تم تثبيت Decision → ExecutionPlan عبر ExecutionPlanBuilder.
-
-تم إثبات E2E لكل من:
-
-- WAIT → HOLD → SKIPPED → Report.
-- FAVORABLE → BUY → EXECUTED → Report.
-- Execution failure → لا Report.
-
-==================================================
-5. آخر Verification معتمد
-==================================================
-
-آخر تشغيل كامل مقدم من بيئة التطوير:
-
-107 tests
-OK
-
-VERIFICATION PASSED
-
-كما نجحت مجموعة API:
-
-21 tests
-OK
-
-وتشمل العقود الحالية:
-
-- API composition root
-- API router
-- API server transport
-- API service
-- Application facade
-- Bootstrap configuration
-- Analysis
-- Decision
-- Execution bridge
-- Indicators
-- Market models
-- Orchestrator validation order
-- Orchestrator stage failure boundary
-- Pipeline integration / E2E
-- Profile
-- Report
-- Score
-
-==================================================
-6. التعديلات الأخيرة
-==================================================
-
-تم إصلاح ترتيب Validation قبل Storage.
-
-تم تثبيت fail-fast بين مراحل Orchestrator.
-
-تم تثبيت FastAPI dependencies.
-
-تم إصلاح ترتيب معاملات JSONResponse في ApiServer.
-
-تم تثبيت API server contract tests.
-
-تم فصل تحويل DecisionResult إلى ExecutionPlan عن Orchestrator في:
+تم تثبيت Decision → ExecutionPlan عبر:
 
 binansScanner\core\execution_plan_builder.py
 
-وأصبح Orchestrator يفوض بناء ExecutionPlan إلى هذا المكون بدل امتلاك mapping logic داخله.
+تم تثبيت Execution → Report boundary، بما في ذلك عدم بناء Report عند فشل Execution.
 
-تم تثبيت Execution → Report boundary، بما في ذلك منع بناء Report عند فشل Execution.
-
-تم تثبيت القرار المعماري بأن ProfileResult مستقل عن Score/Decision في Core Intelligence الحالي، ويُحتفظ به كسياق سوقي لاستهلاك Opportunity Engine والمستهلكين اللاحقين.
+تم تثبيت API transport contracts والمسارات الأساسية.
 
 ==================================================
-7. Result Contracts
+4. Result Contracts
 ==================================================
-
-الحالة الحالية:
 
 AnalysisResult  — STABLE
 ScoreResult     — STABLE
@@ -391,8 +80,28 @@ ExecutionPlan   — CANONICAL
 ReportResult    — CANONICAL CONTRACT
 ProfileResult   — CANONICAL CONTRACT
 
+قرار ProfileResult:
+
+ProfileResult مستقل عن Score/Decision في Core Intelligence الحالي، ويستخدم كسياق سوقي للمستهلكين اللاحقين مثل Opportunity Engine.
+
 ==================================================
-8. Findings
+5. Verification الأخير المسجل
+==================================================
+
+آخر Verification المسجل:
+
+107 tests
+OK
+
+VERIFICATION PASSED
+
+مجموعة API:
+
+21 tests
+OK
+
+==================================================
+6. Findings
 ==================================================
 
 AF-001 — VERIFIED / CLOSED
@@ -403,13 +112,16 @@ AF-005 — VERIFIED / CLOSED
 AF-006 — DEFERRED TO PHASE 6
 AF-007 — OPEN / VERIFICATION GOVERNANCE GATE
 
+المصدر التفصيلي:
+ORION_ARCHITECTURE_FINDINGS.md
+
 ==================================================
-9. Report Architecture
+7. Report Architecture
 ==================================================
 
-ما زال هناك أكثر من مسار/نموذج تقارير في المشروع.
+ما زال هناك مسار تقارير يحتاج حسمًا نهائيًا قبل اعتباره مغلقًا بالكامل.
 
-يوجد:
+المكونات الحالية ذات الصلة:
 
 models.report.ReportResult
 engines.report_engine
@@ -417,77 +129,44 @@ reports.report_engine
 reports.report_models.FullReport
 ReportExporter
 
-لم يتم حذف أو دمج أي منها قبل اعتماد Report Architecture النهائية.
-
-إكمال Report Export عبر HTTP ليس أولوية قبل تثبيت Report Contract ومسؤولية كل طبقة.
+لا يتم حذف أو دمج هذه المكونات بالحدس؛ القرار النهائي يمر عبر Architecture Review وDECISIONS عند الحاجة.
 
 ==================================================
-10. Application / GUI / Scheduler
+8. المراحل القادمة
 ==================================================
 
-Application Lifecycle يحتاج مراجعة نهائية بعد استقرار Core Contracts.
+المرحلة التالية بعد اعتماد Phase 1:
 
-GUI يبقى downstream ولا يتم ربطه بمنطق الأعمال مباشرة.
+PHASE 2 — CORE INTELLIGENCE COMPLETION
 
-SchedulerService يحتفظ بدور facade، وتبقى أي ازدواجية في MarketService ضمن المراجعة اللاحقة.
+ثم:
 
-==================================================
-11. قاعدة التطوير الحالية
-==================================================
+PHASE 3 — SCALPING OPPORTUNITY ENGINE
 
-الترتيب التنفيذي:
+وهو الهدف التشغيلي الرئيسي للمشروع.
 
-Inspect
-↓
-Concrete Modification
-↓
-Targeted Test
-↓
-Fix immediately if failed
-↓
-Full Verification
-↓
-Update State / Findings
+خارطة المراحل التنفيذية التفصيلية:
+ORION_ROADMAP.md
 
-لا يتم استبدال التطوير بتكرار الاختبارات دون تعديل فعلي عندما تكون هناك فجوة معمارية قابلة للإصلاح.
+خارطة المراحل المستقبلية الكبرى:
+ORION_FUTURE_ROADMAP.md
 
 ==================================================
-12. قاعدة الانتقال بين المراحل
+9. قاعدة عدم تكرار الحالة
 ==================================================
 
-لا ينتقل ORION من مرحلة إلى المرحلة التالية لمجرد اكتمال ملفات أو classes.
+هذا الملف يحتوي **الحالة الحالية فقط**.
 
-الانتقال يتطلب:
+لا يعيد نسخ خارطة الطريق الكاملة أو الرؤية المستقبلية أو التاريخ التنفيذي.
 
-- Implementation مناسب.
-- Tests مناسبة.
-- Full Verification.
-- Architecture Review.
-- إغلاق أو قبول جميع Blocking Findings.
-- تحديث Project State.
-- عدم وجود تعارض مع Target Architecture.
+لذلك:
 
-==================================================
-13. الخطوة التنفيذية التالية
-==================================================
-
-إغلاق بوابة Phase 1 بعد Verification النهائي للـbaseline، ثم بدء Phase 2 — Core Intelligence Completion بصورة فعلية.
-
-في Phase 2 تكون الأولوية لتقوية Intelligence outputs والعلاقات بين Analysis / Profile Context / Score / Decision، ثم تجهيز العقود اللازمة لـScalping Opportunity Engine.
-
-لا توجد حاجة لإعادة فتح AF-002 أو AF-003 أو AF-004 ما لم يظهر Regression.
-
-==================================================
-14. المزامنة
-==================================================
-
-Local
-↓
-Git
-↓
-GitHub
-
-يتم اعتماد GitHub main كمرجع الحالة المحدثة، مع الحفاظ على تغييرات المشروع مركزة وقابلة للمراجعة.
+- Roadmap للتخطيط المرحلي.
+- Future Roadmap للأهداف الكبرى المستقبلية.
+- Changelog للتاريخ التنفيذي.
+- Decisions للقرارات.
+- Findings للملاحظات المعمارية.
+- Known Problems للمشاكل المؤكدة.
 
 ==================================================
 END
