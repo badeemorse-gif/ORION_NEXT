@@ -91,10 +91,10 @@ class Pipeline:
         try:
             self._validate_symbol(symbol)
             orch_res = self._orchestrator.run(symbol, timeframes)
-            if orch_res.execution_payload is None:
+            if orch_res.execution_plan is None:
                 raise PipelineError("Orchestrator did not produce an ExecutionPlan.")
 
-            exec_res = self._execution_engine.execute(orch_res.execution_payload, quantity=quantity)
+            exec_res = self._execution_engine.execute(orch_res.execution_plan, quantity=quantity)
 
             report_res = self._report_engine.build_report(
                 symbol=symbol,
