@@ -11,6 +11,7 @@ import pandas as pd
 
 from core.dependency_container import ContainerConfiguration, DependencyContainer
 from enums import DataHealth, Timeframe
+from models.decision import DecisionResult
 from models.execution import ExecutionSide, ExecutionStatus
 from models.market import MarketDataset, MarketMetadata, TimeframeData
 
@@ -75,17 +76,29 @@ class TestPipelineExecutionE2E(unittest.TestCase):
             timeframes={Timeframe.H1: timeframe_data},
         )
 
-    def test_container_pipeline_reaches_execution_and_builds_report(self) -> None:
-        """Real container graph reaches execution and ReportEngine with the real decision."""
+    def _run_with_real_market_stages(
+        self,
+        decision: DecisionResult | None = None,
+    ):
         dataset = self._dataset()
         provider = self.container.build_market_data_provider()
         storage = self.container.build_market_storage()
         pipeline = self.container.build_pipeline()
 
+        decision_patch = (
+            patch.object(pipeline._orchestrator._decision_engine, "decide", return_value=decision)
+            if decision is not None
+            else patch.object(pipeline._orchestrator._decision_engine, "decide", wraps=pipeline._orchestrator._decision_engine.decide)
+        )
+
         with patch.object(provider, "execute", return_value=dataset), patch.object(
             storage, "execute", return_value=None
-        ):
-            result = pipeline.run_symbol("BTCUSDT", [Timeframe.H1.value])
+        ), decision_patch:
+            return pipeline.run_symbol("BTCUSDT", [Timeframe.H1.value], quantity=1.0)
+
+    def test_container_pipeline_reaches_execution_and_builds_report(self) -> None:
+        """Real container graph reaches execution and ReportEngine with the real decision."""
+        result = self._run_with_real_market_stages()
 
         self.assertTrue(result.success)
         self.assertIsNone(result.error_message)
@@ -101,14 +114,46 @@ class TestPipelineExecutionE2E(unittest.TestCase):
         assert execution is not None
         assert report is not None
 
-        # This fixture is intentionally validated against the real decision engine;
-        # its deterministic outcome is HOLD, which must cross the execution boundary
-        # as SKIPPED rather than being forced into a BUY outcome.
+        # The real deterministic fixture produces WAIT. HOLD must cross the
+        # execution boundary and become SKIPPED rather than being forced into
+        # an executable BUY/SELL path.
         self.assertEqual(result.orchestrator_result.decision.decision, "WAIT")
         self.assertEqual(plan.side, ExecutionSide.HOLD)
         self.assertEqual(execution.status, ExecutionStatus.SKIPPED)
         self.assertFalse(execution.executed)
         self.assertIsNone(execution.order_id)
+        self.assertIs(report.execution, execution)
+        self.assertTrue(report.is_complete)
+
+    def test_container_pipeline_executes_favorable_decision_end_to_end(self) -> None:
+        """A favorable real-orchestrator decision must execute through PaperExecutionAdapter."""
+        result = self._run_with_real_market_stages(
+            DecisionResult(
+                decision="FAVORABLE",
+                confidence=0.95,
+                reasons=["E2E executable decision"],
+            )
+        )
+
+        self.assertTrue(result.success)
+        self.assertIsNone(result.error_message)
+        self.assertIsNotNone(result.orchestrator_result)
+        self.assertIsNotNone(result.execution_result)
+        self.assertIsNotNone(result.report_result)
+
+        plan = result.orchestrator_result.execution_plan
+        execution = result.execution_result
+        report = result.report_result
+        assert plan is not None
+        assert execution is not None
+        assert report is not None
+
+        self.assertEqual(result.orchestrator_result.decision.decision, "FAVORABLE")
+        self.assertEqual(plan.side, ExecutionSide.BUY)
+        self.assertEqual(execution.status, ExecutionStatus.EXECUTED)
+        self.assertTrue(execution.executed)
+        self.assertIsNotNone(execution.order_id)
+        self.assertTrue(execution.order_id.startswith("PAPER-"))
         self.assertIs(report.execution, execution)
         self.assertTrue(report.is_complete)
 
