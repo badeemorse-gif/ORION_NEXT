@@ -2,13 +2,14 @@
 ===============================================================================
 Badee Binance Scanner
 Architecture : ORION
-Module       : providers.binance_client
-Version      : 2.0.0
-Status       : ORION Production Client Component
+Module      : providers.binance_client
 ===============================================================================
 
-Binance REST API communication client handling authentication, timeout,
-retry policies, and rate limiting via python-binance.
+Binance REST client boundary.
+
+The client owns transport concerns only. Construction must remain side-effect
+free: connectivity is established when an actual API operation is requested,
+not while the dependency graph is being assembled.
 ===============================================================================
 """
 
@@ -16,65 +17,37 @@ from __future__ import annotations
 
 import logging
 import time
-from typing import Any, Optional
+from typing import Any, Callable, Optional, TypeVar
 
 from binance.client import Client
-from binance.exceptions import BinanceAPIException, BinanceRequestException
-from requests.exceptions import ConnectionError, ReadTimeout, Timeout
+
+from providers.binance_exceptions import BinanceClientError
 
 base_logger = logging.getLogger(__name__)
 
+T = TypeVar("T")
 
-# =============================================================================
-# Custom Exceptions
-# =============================================================================
-
-class BinanceClientError(Exception):
-    """Base exception for all Binance client related errors."""
-    pass
-
-
-class ClientConnectionError(BinanceClientError):
-    """Raised when connection or timeout occurs."""
-    pass
-
-
-class ClientRateLimitError(BinanceClientError):
-    """Raised when rate limit is exceeded."""
-    pass
-
-
-# =============================================================================
-# Token Bucket Rate Limiter
-# =============================================================================
 
 class TokenBucketRateLimiter:
-    """
-    Token Bucket algorithm implementation for dynamic rate limiting and weight tracking
-    with precise post-sleep token recalculation.
-    """
+    """Simple local rate limiter for Binance requests."""
 
-    def __init__(self, capacity: float = 1200.0, refill_rate: float = 20.0) -> None:
-        self.capacity: float = capacity
-        self.tokens: float = capacity
-        self.refill_rate: float = refill_rate  # tokens per second
-        self.last_refill: float = time.time()
+    def __init__(self, capacity: int = 1200, refill_rate: float = 20.0) -> None:
+        self.capacity = capacity
+        self.refill_rate = refill_rate
+        self.tokens = float(capacity)
+        self.last_refill = time.time()
 
-    def acquire(self, weight: int = 1) -> None:
-        now = time.time()
-        elapsed = now - self.last_refill
-        self.last_refill = now
-        self.tokens = min(self.capacity, self.tokens + elapsed * self.refill_rate)
-
-        if self.tokens < weight:
-            required = weight - self.tokens
-            sleep_time = required / self.refill_rate
-            time.sleep(sleep_time)
+    def consume(self, weight: int = 1) -> None:
+        while True:
             now = time.time()
             elapsed = now - self.last_refill
             self.last_refill = now
             self.tokens = min(self.capacity, self.tokens + elapsed * self.refill_rate)
-
+            if self.tokens >= weight:
+                break
+            required = weight - self.tokens
+            sleep_time = required / self.refill_rate
+            time.sleep(sleep_time)
         self.tokens -= weight
 
 
@@ -86,6 +59,11 @@ class BinanceClient:
     """
     Responsible for raw REST requests, connection management, authentication,
     timeout handling, and retry policies for Binance API.
+
+    Construction is intentionally network-free. python-binance performs a
+    connectivity ping by default during ``Client`` construction; disabling
+    that implicit ping keeps dependency-container construction deterministic
+    and prevents API availability from becoming a composition-root concern.
     """
 
     def __init__(
@@ -105,6 +83,7 @@ class BinanceClient:
                 api_key=self.api_key,
                 api_secret=self.api_secret,
                 requests_params={"timeout": self.timeout},
+                ping=False,
             )
             if self.testnet:
                 self._client.API_URL = "https://testnet.binance.vision/api"
@@ -134,33 +113,19 @@ class BinanceClient:
         )
 
     def get_symbol_ticker(self, symbol: str) -> dict[str, Any]:
-        return self._retry_request(
-            lambda: self._client.get_symbol_ticker(symbol=symbol),
-            weight=1,
-        )
+        return self._retry_request(lambda: self._client.get_symbol_ticker(symbol=symbol), weight=1)
 
-    def _retry_request(self, func: Any, weight: int = 1) -> Any:
-        retries = 3
-        backoff_delays = [1, 2, 4]
-
+    def _retry_request(self, operation: Callable[[], T], weight: int = 1, retries: int = 3) -> T:
+        last_error: Optional[Exception] = None
         for attempt in range(retries):
             try:
-                self._limiter.acquire(weight=weight)
-                return func()
-            except (BinanceAPIException, BinanceRequestException) as e:
-                status_code = getattr(e, "status_code", None)
-                code = getattr(e, "code", None)
-                if status_code in {429, 418} or code in {-1003, -1021}:
-                    self.logger.warning(f"Rate limited or server throttle encountered (status={status_code}): {e}. Retrying...")
-                    if attempt == retries - 1:
-                        raise ClientRateLimitError(f"Rate limit exceeded after {retries} retries: {e}") from e
-                    time.sleep(backoff_delays[attempt])
-                else:
-                    raise BinanceClientError(f"Binance non-retryable API exception: {e}") from e
-            except (Timeout, ReadTimeout, ConnectionError) as e:
-                self.logger.warning(f"Network timeout or connection error on attempt {attempt + 1}: {e}")
-                if attempt == retries - 1:
-                    raise ClientConnectionError(f"Network request failed after {retries} retries: {e}") from e
-                time.sleep(backoff_delays[attempt])
-            except Exception as e:
-                raise BinanceClientError(f"Unexpected request error: {e}") from e
+                self._limiter.consume(weight)
+                return operation()
+            except Exception as exc:
+                last_error = exc
+                if attempt < retries - 1:
+                    time.sleep(0.5 * (attempt + 1))
+        raise BinanceClientError(f"Binance request failed after {retries} attempts: {last_error}") from last_error
+
+
+__all__ = ["BinanceClient", "BinanceClientError", "TokenBucketRateLimiter"]
