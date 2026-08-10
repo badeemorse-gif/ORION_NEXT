@@ -6,6 +6,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import Mock
 
 from models.report import ReportResult
 from reports.html_report import HtmlReportRenderer
@@ -31,21 +32,24 @@ class TestReportResultContract(unittest.TestCase):
 
     def test_report_result_is_incomplete_when_an_upstream_result_is_missing(self) -> None:
         report = ReportResult(symbol="BTCUSDT")
-        self.assertFalse(report.is_structurally_complete)
+        self.assertFalse(report.is_complete)
 
     def test_report_result_is_structurally_complete_when_all_results_exist(self) -> None:
         report = ReportResult(
             symbol="BTCUSDT",
-            analysis=object(),
-            execution=object(),
-            profile=object(),
-            scoring=object(),
+            analysis=Mock(),
+            execution=Mock(),
+            profile=Mock(),
+            score=Mock(),
+            decision=Mock(),
         )
-        self.assertTrue(report.is_structurally_complete)
+        self.assertTrue(report.is_complete)
 
     def test_report_result_metadata_is_canonical(self) -> None:
         report = ReportResult(symbol="BTCUSDT", summary=("canonical report",))
-        self.assertEqual(report.metadata.symbol, "BTCUSDT")
+        self.assertEqual(report.metadata.report_name, "ORION Report")
+        self.assertEqual(report.metadata.project_version, "")
+        self.assertGreaterEqual(report.metadata.execution_time_ms, 0.0)
 
     def test_report_result_uses_immutable_top_level_contract(self) -> None:
         report = ReportResult(symbol="BTCUSDT")
