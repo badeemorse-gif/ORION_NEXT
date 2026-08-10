@@ -19,7 +19,7 @@ Profile results must never be written back into MarketDataset.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 from typing import Optional
 
@@ -267,7 +267,7 @@ class ProfileResult:
 
     is_tradeable: bool = False
 
-    generated_at: datetime = field(default_factory=datetime.utcnow)
+    generated_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
     @property
     def has_warnings(self) -> bool:
