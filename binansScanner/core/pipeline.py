@@ -72,6 +72,7 @@ class Pipeline:
         self._orchestrator = orchestrator
         self._execution_engine = execution_engine
         self._report_engine = report_engine
+        self._last_summary: Optional[PipelineSummary] = None
         self._logger = LoggerAdapter(logger or base_logger, {"symbol": "NONE", "operation": "init"})
 
     def run_symbol(
@@ -173,19 +174,27 @@ class Pipeline:
         )
         finished = datetime.now(timezone.utc)
         elapsed = (time.perf_counter() - perf) * 1000.0
-        return (
-            PipelineSummary(
-                started_at=started,
-                finished_at=finished,
-                elapsed_ms=elapsed,
-                processed_symbols=processed,
-                successful_symbols=successful,
-                failed_symbols=failed,
-                execution_count=executed,
-                success=processed > 0 and failed == 0,
-            ),
-            results,
+        summary = PipelineSummary(
+            started_at=started,
+            finished_at=finished,
+            elapsed_ms=elapsed,
+            processed_symbols=processed,
+            successful_symbols=successful,
+            failed_symbols=failed,
+            execution_count=executed,
+            success=processed > 0 and failed == 0,
         )
+        self._last_summary = summary
+        return summary, results
+
+    def statistics(self) -> Optional[PipelineSummary]:
+        """Return the summary of the most recent batch execution, if any."""
+        return self._last_summary
+
+    def reset(self) -> None:
+        """Reset pipeline-level cached state without rebuilding dependencies."""
+        self._last_summary = None
+        self._logger.extra.update({"symbol": "NONE", "operation": "reset"})
 
     @staticmethod
     def _validate_symbol(symbol: str) -> None:
