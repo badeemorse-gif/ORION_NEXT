@@ -1,6 +1,6 @@
 # ORION — PROJECT STATE
 
-الإصدار: 1.3
+الإصدار: 1.4
 الحالة: ACTIVE
 
 ==================================================
@@ -30,6 +30,8 @@ PHASE 1 — CONTRACT STABILIZATION / RECONSTRUCTION
 IN PROGRESS
 
 الهدف الحالي هو تثبيت حدود Result Contracts وربط المستهلكين بها دون إعادة كتابة المنطق الذي ثبتت صحته.
+
+بوابة Phase 1 تقترب من الإغلاق، لكن AF-007 ما زال مفتوحًا كـverification governance gate.
 
 ==================================================
 3. خارطة الطريق الكاملة المعتمدة للمشروع
@@ -81,7 +83,9 @@ Indicators
 ↓
 Analysis
 ↓
-Profile
+Profile Context
+├── مستقل عن Score في النسخة الحالية
+└── متاح للمستهلكين اللاحقين مثل Opportunity Engine
 ↓
 Score
 ↓
@@ -257,15 +261,10 @@ PHASE 8 — PRODUCTION ORION
 ORION Desktop
 │
 ├── Scalping Opportunities
-│
 ├── Explosive Coin Radar
-│
 ├── Market Intelligence
-│
 ├── Risk / Execution Planning
-│
 ├── Paper / Backtest Results
-│
 └── Trading Bot
 
 مع:
@@ -302,10 +301,22 @@ SCORE
 DECISION
 ↓
 ExecutionPlan
+↓
+Execution
+↓
+Report
 
 تم إثبات أن فشل Validation يمنع Storage، وأن فشل أي مرحلة يمنع المراحل اللاحقة.
 
-تم تثبيت API transport contract والمسارات الأساسية، ونجحت اختبارات API الحالية.
+تم تثبيت API transport contract والمسارات الأساسية.
+
+تم تثبيت Decision → ExecutionPlan عبر ExecutionPlanBuilder.
+
+تم إثبات E2E لكل من:
+
+- WAIT → HOLD → SKIPPED → Report.
+- FAVORABLE → BUY → EXECUTED → Report.
+- Execution failure → لا Report.
 
 ==================================================
 5. آخر Verification معتمد
@@ -313,7 +324,7 @@ ExecutionPlan
 
 آخر تشغيل كامل مقدم من بيئة التطوير:
 
-106 tests
+107 tests
 OK
 
 VERIFICATION PASSED
@@ -363,7 +374,9 @@ binansScanner\core\execution_plan_builder.py
 
 وأصبح Orchestrator يفوض بناء ExecutionPlan إلى هذا المكون بدل امتلاك mapping logic داخله.
 
-Verification لهذا التعديل الجديد مطلوب في دورة الاختبار التالية قبل إغلاق Finding المرتبط به.
+تم تثبيت Execution → Report boundary، بما في ذلك منع بناء Report عند فشل Execution.
+
+تم تثبيت القرار المعماري بأن ProfileResult مستقل عن Score/Decision في Core Intelligence الحالي، ويُحتفظ به كسياق سوقي لاستهلاك Opportunity Engine والمستهلكين اللاحقين.
 
 ==================================================
 7. Result Contracts
@@ -375,48 +388,20 @@ AnalysisResult  — STABLE
 ScoreResult     — STABLE
 DecisionResult  — STABLE
 ExecutionPlan   — CANONICAL
-ReportResult    — CANONICAL CONTRACT EXISTS
-ProfileResult   — CANONICAL CONTRACT EXISTS
-
-لا يتم إعادة كتابة المنطق المثبت لمجرد توحيد الحدود؛ تتم إعادة بناء الـwiring والـcontracts عند الحاجة.
+ReportResult    — CANONICAL CONTRACT
+ProfileResult   — CANONICAL CONTRACT
 
 ==================================================
-8. Findings المفتوحة
+8. Findings
 ==================================================
 
-AF-002 — الدور النهائي لـ ProfileResult
-
-الحالة:
-NEEDS_DECISION
-
-AF-003 — مسؤولية بناء ExecutionPlan داخل Orchestrator
-
-الحالة:
-IMPLEMENTED / VERIFICATION PENDING
-
-تم نقل mapping إلى ExecutionPlanBuilder.
-
-AF-004 — تثبيت الحدود بين Orchestrator و Pipeline و Execution و Report
-
-الحالة:
-OPEN
-
-AF-005 — انجراف Project State عن التنفيذ الفعلي
-
-الحالة:
-ADDRESSED
-
-تم تنظيف هذه الوثيقة وتحديثها لتطابق التنفيذ الحالي بدل الحالة التاريخية القديمة.
-
-AF-006 — منع تثبيت ExecutionPlan mapping كاعتماد ضمني قبل Trading Bot
-
-الحالة:
-IN PROGRESS
-
-AF-007 — عدم الخلط بين Result Contract و Stage Completion
-
-الحالة:
-OPEN
+AF-001 — VERIFIED / CLOSED
+AF-002 — VERIFIED / CLOSED
+AF-003 — VERIFIED / CLOSED
+AF-004 — VERIFIED / CLOSED
+AF-005 — VERIFIED / CLOSED
+AF-006 — DEFERRED TO PHASE 6
+AF-007 — OPEN / VERIFICATION GOVERNANCE GATE
 
 ==================================================
 9. Report Architecture
@@ -486,14 +471,11 @@ Update State / Findings
 13. الخطوة التنفيذية التالية
 ==================================================
 
-التحقق من ExecutionPlanBuilder عبر:
+إغلاق بوابة Phase 1 بعد Verification النهائي للـbaseline، ثم بدء Phase 2 — Core Intelligence Completion بصورة فعلية.
 
-- اختبار العقد الجديد مباشرة.
-- اختبار Decision → ExecutionPlan → PaperExecution.
-- اختبار Orchestrator E2E للتأكد من أن الخطة ما زالت تصل إلى Execution دون تغيير السلوك.
-- ثم تشغيل verify.py.
+في Phase 2 تكون الأولوية لتقوية Intelligence outputs والعلاقات بين Analysis / Profile Context / Score / Decision، ثم تجهيز العقود اللازمة لـScalping Opportunity Engine.
 
-بعد إغلاق هذا الحد، ينتقل التنفيذ إلى العقد التالي الأعلى أولوية في Phase 1 وفق الـFindings المفتوحة.
+لا توجد حاجة لإعادة فتح AF-002 أو AF-003 أو AF-004 ما لم يظهر Regression.
 
 ==================================================
 14. المزامنة
