@@ -64,23 +64,27 @@ class ApiService:
         return ApiResponse(success=True, message="OK", payload={})
 
     def scheduler_state(self) -> ApiResponse:
-        """Return scheduler runtime state."""
+        """Return a JSON-safe scheduler runtime state snapshot."""
         logger = self._get_logger("scheduler_state")
         try:
+            state = self._scheduler.state()
+            payload = asdict(state)
+            if state.last_tick is not None:
+                payload["last_tick"] = state.last_tick.isoformat()
             return ApiResponse(
                 success=True,
                 message="Scheduler state retrieved successfully.",
-                payload=asdict(self._scheduler.state()),
+                payload=payload,
             )
         except Exception as err:
             logger.error("Failed to retrieve scheduler state: %s", err)
             raise ApiServiceError(f"Failed to retrieve scheduler state: {err}") from err
 
     def registered_jobs(self) -> ApiResponse:
-        """Return registered scheduler jobs."""
+        """Return JSON-safe registered scheduler job definitions without callbacks."""
         logger = self._get_logger("registered_jobs")
         try:
-            jobs = [asdict(job) for job in self._scheduler.registered_jobs()]
+            jobs = [asdict(job.definition) for job in self._scheduler.registered_jobs()]
             return ApiResponse(
                 success=True,
                 message="Registered jobs retrieved successfully.",
