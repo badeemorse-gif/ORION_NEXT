@@ -102,6 +102,11 @@ class TestOrchestratorStageFailureBoundary(TestCase):
 
                 self.assertEqual(orchestrator.statistics().current_stage, expected_stage)
                 self.assertFalse(orchestrator.statistics().success)
+                self.assertIsNotNone(orchestrator.last_result())
+                self.assertIsNone(
+                    orchestrator.last_result().execution_plan,
+                    "A failed orchestration must not expose an ExecutionPlan as if planning completed.",
+                )
                 for name in downstream:
                     method = {
                         "indicator": mocks["indicator"].calculate_dataset,
@@ -113,6 +118,6 @@ class TestOrchestratorStageFailureBoundary(TestCase):
                     method.assert_not_called()
 
 
-if __name__ == "__main__":
+if __name__ == "main__":
     import unittest
     unittest.main()
