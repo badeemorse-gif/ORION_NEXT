@@ -3,7 +3,7 @@
 Badee Binance Scanner
 Architecture : ORION
 Module       : core.dependency_container
-Version      : 1.6.0
+Version      : 1.7.0
 Status       : ORION Canonical Composition Root
 ===============================================================================
 
@@ -31,6 +31,9 @@ from engines.decision_engine import DecisionEngine
 from engines.report_engine import ReportEngine
 from engines.validation_engine import ValidationEngine
 from engines.execution_engine import ExecutionEngine, PaperExecutionAdapter, ExecutionAdapter
+from scheduler.scheduler_service import SchedulerService
+from api.api_service import ApiService
+from api.api_router import ApiRouter
 from core.orchestrator import Orchestrator, OrchestratorConfig
 from core.pipeline import Pipeline
 
@@ -82,6 +85,9 @@ class DependencyContainer:
         self._validation_engine_instance: Optional[ValidationEngine] = None
         self._execution_adapter_instance: Optional[ExecutionAdapter] = None
         self._execution_engine_instance: Optional[ExecutionEngine] = None
+        self._scheduler_service_instance: Optional[SchedulerService] = None
+        self._api_service_instance: Optional[ApiService] = None
+        self._api_router_instance: Optional[ApiRouter] = None
         self._orchestrator_instance: Optional[Orchestrator] = None
         self._pipeline_instance: Optional[Pipeline] = None
 
@@ -131,6 +137,21 @@ class DependencyContainer:
 
     def _create_execution_adapter(self) -> ExecutionAdapter:
         return PaperExecutionAdapter()
+
+    def _create_scheduler_service(self) -> SchedulerService:
+        return SchedulerService(logger=self._logger_instance)
+
+    def _create_api_service(self) -> ApiService:
+        return ApiService(
+            scheduler=self.build_scheduler_service(),
+            logger=self._logger_instance,
+        )
+
+    def _create_api_router(self) -> ApiRouter:
+        return ApiRouter(
+            service=self.build_api_service(),
+            logger=self._logger_instance,
+        )
 
     def build_binance_provider(self) -> BinanceProvider:
         if self._binance_provider_instance is None:
@@ -217,6 +238,21 @@ class DependencyContainer:
             )
         return self._execution_engine_instance
 
+    def build_scheduler_service(self) -> SchedulerService:
+        if self._scheduler_service_instance is None:
+            self._scheduler_service_instance = self._create_scheduler_service()
+        return self._scheduler_service_instance
+
+    def build_api_service(self) -> ApiService:
+        if self._api_service_instance is None:
+            self._api_service_instance = self._create_api_service()
+        return self._api_service_instance
+
+    def build_api_router(self) -> ApiRouter:
+        if self._api_router_instance is None:
+            self._api_router_instance = self._create_api_router()
+        return self._api_router_instance
+
     def build_orchestrator(self) -> Orchestrator:
         if self._orchestrator_instance is None:
             config = self._config.orchestrator_config or OrchestratorConfig()
@@ -244,6 +280,9 @@ class DependencyContainer:
         return self._pipeline_instance
 
     def reset(self) -> None:
+        if self._scheduler_service_instance is not None:
+            self._scheduler_service_instance.stop()
+
         self._binance_provider_instance = None
         self._market_data_provider_instance = None
         self._market_storage_instance = None
@@ -258,6 +297,9 @@ class DependencyContainer:
         self._validation_engine_instance = None
         self._execution_adapter_instance = None
         self._execution_engine_instance = None
+        self._scheduler_service_instance = None
+        self._api_service_instance = None
+        self._api_router_instance = None
         self._orchestrator_instance = None
         self._pipeline_instance = None
 
