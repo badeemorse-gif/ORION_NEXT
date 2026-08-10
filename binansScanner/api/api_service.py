@@ -1,71 +1,38 @@
-"""
-===============================================================================
-Badee Binance Scanner
-Architecture : ORION
-Module       : api.api_service
-Version      : 1.0.2
-Status       : ORION Production V1.0 APPROVED
-===============================================================================
-
-API Service Facade responsible solely for orchestrating core business operations,
-scheduler states, and export handlers without containing web framework elements,
-HTTP routing, or request/response protocols.
-===============================================================================
-"""
-
+"""Framework-agnostic API service facade for ORION."""
 from __future__ import annotations
 
 import logging
 from dataclasses import asdict
+from pathlib import Path
 from typing import Any, Optional
 
-from api.api_models import (
-    ApiRequest,
-    ApiResponse,
-)
-
-from scheduler.scheduler_service import SchedulerService
-from reports.report_exporter import ReportExporter
+from api.api_models import ApiRequest, ApiResponse
+from models.report import ReportResult
 from reports.html_report import HtmlReportRenderer
 from reports.json_report import JsonReportRenderer
+from reports.report_exporter import ReportExporter, ReportFormat
+from scheduler.scheduler_service import SchedulerService
 
 base_logger = logging.getLogger(__name__)
 
 
-# =============================================================================
-# Custom Exceptions
-# =============================================================================
-
 class ApiServiceError(Exception):
-    """Base exception class for all API service related errors."""
-    pass
+    """Base exception for API service failures."""
 
-
-# =============================================================================
-# Logger Adapter
-# =============================================================================
 
 class LoggerAdapter(logging.LoggerAdapter):
-    """Custom LoggerAdapter injecting API service context attributes into log entries."""
+    """Logger adapter adding API service context."""
 
     def process(self, msg: str, kwargs: Any) -> tuple[str, dict[str, Any]]:
         context = self.extra or {}
         context_str = " | ".join(
-            f"{k}={v}" for k, v in context.items() if v is not None
+            f"{key}={value}" for key, value in context.items() if value is not None
         )
-        formatted_msg = f"[{context_str}] {msg}" if context_str else msg
-        return formatted_msg, kwargs
+        return (f"[{context_str}] {msg}" if context_str else msg), kwargs
 
-
-# =============================================================================
-# API Service Facade
-# =============================================================================
 
 class ApiService:
-    """
-    Facade service coordinating system health, scheduler operations, and report
-    exports completely decoupled from any specific web transport or framework.
-    """
+    """Coordinate API operations without HTTP/framework concerns."""
 
     def __init__(
         self,
@@ -76,138 +43,105 @@ class ApiService:
         logger: Optional[logging.Logger] = None,
     ) -> None:
         self._logger_instance = logger if logger is not None else base_logger
-
-        self._logger = LoggerAdapter(
-            self._logger_instance,
-            {
-                "component": "ApiService",
-                "operation": "init",
-            },
-        )
-
-        self._scheduler = (
-            scheduler
-            if scheduler is not None
-            else SchedulerService(logger=self._logger_instance)
-        )
-
+        self._scheduler = scheduler or SchedulerService(logger=self._logger_instance)
         if report_exporter is not None:
             self._report_exporter = report_exporter
         else:
-            resolved_html_renderer = (
-                html_renderer
-                if html_renderer is not None
-                else HtmlReportRenderer(logger=self._logger_instance)
-            )
-
-            resolved_json_renderer = (
-                json_renderer
-                if json_renderer is not None
-                else JsonReportRenderer(logger=self._logger_instance)
-            )
-
             self._report_exporter = ReportExporter(
-                html_renderer=resolved_html_renderer,
-                json_renderer=resolved_json_renderer,
+                html_renderer=html_renderer or HtmlReportRenderer(logger=self._logger_instance),
+                json_renderer=json_renderer or JsonReportRenderer(logger=self._logger_instance),
                 logger=self._logger_instance,
             )
-
-        self._logger.info("ApiService initialized successfully.")
 
     def _get_logger(self, operation: Optional[str] = None) -> LoggerAdapter:
         return LoggerAdapter(
             self._logger_instance,
-            {
-                "component": "ApiService",
-                "operation": operation,
-            },
+            {"component": "ApiService", "operation": operation},
         )
-
-    # -------------------------------------------------------------------------
-    # Public Methods
-    # -------------------------------------------------------------------------
 
     def health(self) -> ApiResponse:
-        """
-        Returns system health status response.
-        """
-        logger = self._get_logger(operation="health")
-        logger.debug("Health check requested.")
-
-        return ApiResponse(
-            success=True,
-            message="OK",
-            payload={},
-        )
+        """Return service health."""
+        return ApiResponse(success=True, message="OK", payload={})
 
     def scheduler_state(self) -> ApiResponse:
-        """
-        Retrieves the current runtime state of the scheduler service.
-        """
-        logger = self._get_logger(operation="scheduler_state")
-        logger.info("Fetching scheduler state.")
-
+        """Return scheduler runtime state."""
+        logger = self._get_logger("scheduler_state")
         try:
-            state_obj = self._scheduler.state()
-            state_dict = asdict(state_obj)
-
             return ApiResponse(
                 success=True,
                 message="Scheduler state retrieved successfully.",
-                payload=state_dict,
+                payload=asdict(self._scheduler.state()),
             )
-
         except Exception as err:
-            logger.error(f"Failed to retrieve scheduler state: {err}")
-            raise ApiServiceError(
-                f"Failed to retrieve scheduler state: {err}"
-            ) from err
+            logger.error("Failed to retrieve scheduler state: %s", err)
+            raise ApiServiceError(f"Failed to retrieve scheduler state: {err}") from err
 
     def registered_jobs(self) -> ApiResponse:
-        """
-        Retrieves all currently registered jobs from the scheduler service.
-        """
-        logger = self._get_logger(operation="registered_jobs")
-        logger.info("Fetching registered jobs.")
-
+        """Return registered scheduler jobs."""
+        logger = self._get_logger("registered_jobs")
         try:
-            jobs_tuple = self._scheduler.registered_jobs()
-            jobs_list = [asdict(job) for job in jobs_tuple]
-
+            jobs = [asdict(job) for job in self._scheduler.registered_jobs()]
             return ApiResponse(
                 success=True,
                 message="Registered jobs retrieved successfully.",
-                payload={
-                    "jobs": jobs_list,
-                    "count": len(jobs_list),
-                },
+                payload={"jobs": jobs, "count": len(jobs)},
             )
-
         except Exception as err:
-            logger.error(f"Failed to retrieve registered jobs: {err}")
-            raise ApiServiceError(
-                f"Failed to retrieve registered jobs: {err}"
-            ) from err
+            logger.error("Failed to retrieve registered jobs: %s", err)
+            raise ApiServiceError(f"Failed to retrieve registered jobs: {err}") from err
 
     def export_report(self, request: ApiRequest) -> ApiResponse:
+        """Export a canonical ReportResult through ReportExporter.
+
+        Required request payload keys are ``report``, ``output_path`` and
+        ``format`` (``html`` or ``json``). The API layer never renders the
+        report itself; it delegates to the canonical exporter boundary.
         """
-        Placeholder report export endpoint logic pending full pipeline integration.
-        """
-        logger = self._get_logger(operation="export_report")
-        logger.info(
-            f"Export report requested with request_id: {request.request_id}"
-        )
+        if not isinstance(request, ApiRequest):
+            raise ApiServiceError("export_report requires an ApiRequest.")
 
-        return ApiResponse(
-            success=False,
-            message="Not implemented yet.",
-            payload={
-                "request_id": request.request_id,
-                "endpoint": request.endpoint,
-            },
-        )
+        payload = request.payload
+        report = payload.get("report")
+        output_path = payload.get("output_path")
+        requested_format = payload.get("format")
+
+        if not isinstance(report, ReportResult):
+            raise ApiServiceError(
+                "export_report requires payload['report'] to be a ReportResult."
+            )
+        if output_path is None:
+            raise ApiServiceError("export_report requires payload['output_path'].")
+
+        if isinstance(requested_format, ReportFormat):
+            selected_format = requested_format
+        else:
+            normalized_format = str(requested_format or "").strip().lower()
+            try:
+                selected_format = ReportFormat(normalized_format)
+            except ValueError as err:
+                raise ApiServiceError(
+                    "export_report requires payload['format'] to be 'html' or 'json'."
+                ) from err
+
+        try:
+            exported_path = self._report_exporter.export(
+                report=report,
+                output_path=Path(output_path),
+                report_format=selected_format,
+            )
+            return ApiResponse(
+                success=True,
+                message="Report exported successfully.",
+                payload={
+                    "request_id": request.request_id,
+                    "endpoint": request.endpoint,
+                    "format": selected_format.value,
+                    "output_path": str(exported_path),
+                },
+            )
+        except Exception as err:
+            self._get_logger("export_report").error("Failed to export report: %s", err)
+            raise ApiServiceError(f"Failed to export report: {err}") from err
 
 
-# =============================================================================
-# End Of File
-# =============================================================================
+__all__ = ["ApiService", "ApiServiceError", "LoggerAdapter"]
