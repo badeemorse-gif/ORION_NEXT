@@ -1,6 +1,6 @@
-# ORION — خارطة طريق المشروع
+# ORION — خارطة طريق التنفيذ الرسمية
 
-الإصدار: 2.2
+الإصدار: 3.0
 الحالة: ACTIVE
 المشروع: ORION
 
@@ -8,77 +8,87 @@
 1. وظيفة الوثيقة
 ==================================================
 
-هذه الوثيقة هي المرجع الوحيد لترتيب **مراحل التنفيذ الحالية والتقنية** وشروط الانتقال بينها.
+هذه الوثيقة هي المرجع الوحيد لترتيب مراحل التنفيذ الرسمية وشروط الانتقال بينها.
 
 لا تكرر:
 
-- تعريف المشروع وأهدافه العامة → ORION_PROJECT_CHARTER.md
 - الحالة الحالية → ORION_PROJECT_STATE.md
-- الأهداف المستقبلية الكبرى → ORION_FUTURE_ROADMAP.md
-- تفاصيل المعمارية → ORION_ARCHITECTURE.md
-- التاريخ التنفيذي → ORION_CHANGELOG.md
+- المعمارية → ORION_ARCHITECTURE.md
+- الأهداف الكبرى المستقبلية → ORION_FUTURE_ROADMAP.md
+- تعريف المشروع → ORION_PROJECT_CHARTER.md
+- التاريخ → ORION_CHANGELOG.md
 
 ==================================================
 2. قاعدة الانتقال
 ==================================================
 
-لا يتم الانتقال إلى مرحلة جديدة لمجرد انتهاء كتابة الكود.
+لا تعتبر مرحلة مكتملة لمجرد انتهاء الكود أو نجاح اختبار منفرد.
 
-حسب طبيعة المرحلة يلزم:
+بوابة الانتقال:
 
-1. Implementation
-2. Tests
-3. Review
-4. معالجة الأخطاء
-5. Verification
-6. Documentation
-7. Approval
+Implementation
+↓
+Relevant Tests
+↓
+Review
+↓
+Fixes
+↓
+Full Verification
+↓
+Findings Review
+↓
+Documentation
+↓
+Approval
 
-ولا تعتبر المرحلة مكتملة قبل استيفاء شروطها.
+ولا يتم تجاوز ترتيب المراحل إلا بقرار موثق في ORION_DECISIONS.md.
 
 ==================================================
-3. المرحلة 0 — تأسيس المستودع
+3. PHASE 0 — Repository Foundation
 ==================================================
 
 الحالة:
 COMPLETED
 
-تم توحيد ORION داخل مستودع Git رئيسي واحد:
+تم توحيد المشروع داخل:
 
 badeemorse-gif/ORION_NEXT
 
-والفرع الرئيسي:
-main
+ويضم:
+
+binansScanner
+ORION-Project-Management
+tools
 
 ==================================================
-4. المرحلة 1 — CONTRACT STABILIZATION / RECONSTRUCTION
+4. PHASE 1 — Contract Stabilization / Reconstruction
 ==================================================
 
 الحالة:
 COMPLETED
 
-الهدف:
+تم تثبيت:
 
-تثبيت الأساس المعماري، Result Contracts، حدود الطبقات، والـwiring الأساسي دون إعادة كتابة المنطق الذي ثبتت صحته.
+- Result Contracts.
+- Layer boundaries.
+- Validation → Storage boundary.
+- Fail-fast behavior.
+- Decision → ExecutionPlan boundary.
+- Execution → Report boundary.
+- API transport contracts.
+- ReportResult → Renderers → ReportExporter path.
+- Verification Governance Gate.
 
-تم استيفاء البوابة عبر:
+Verification المعتمد:
+108 tests / OK
+Python syntax compilation / PASSED
 
-- تثبيت Result Contracts.
-- تثبيت Core/Application boundaries.
-- تثبيت Validation وStorage boundaries.
-- تثبيت Fail-Fast behavior.
-- تثبيت ExecutionPlan boundary.
-- تثبيت API transport contracts.
-- تنظيف التعارضات المعمارية المكتشفة.
-- Full Verification: 108 tests / OK.
-- Python syntax compilation: PASSED.
-- مراجعة Findings: لا توجد Blocking Findings مفتوحة.
-- إغلاق AF-007 كـVerification Governance Gate.
-- تثبيت Report Architecture كحد قانوني مستقر بما يكفي للانتقال.
-- تحديث PROJECT_STATE وCHANGELOG.
+Findings:
+لا توجد Blocking Findings.
 
 ==================================================
-5. المرحلة 2 — CORE INTELLIGENCE COMPLETION
+5. PHASE 2 — Core Intelligence Completion
 ==================================================
 
 الحالة:
@@ -86,11 +96,11 @@ IN PROGRESS
 
 الهدف:
 
-إكمال وربط قلب ORION التحليلي وتحقيق مسار E2E مستقر من Market Data حتى Decision وExecutionPlan فوق العقود المثبتة في Phase 1.
+إكمال قلب ORION التحليلي فوق العقود والحدود المثبتة، والوصول إلى مسار Core Intelligence متكامل وقابل للتتبع والاختبار.
 
-المسار المستهدف:
+المسار:
 
-Market Data
+MarketDataset
 ↓
 Validation
 ↓
@@ -98,7 +108,7 @@ Indicators
 ↓
 Analysis
 ↓
-Profile Context
+Profile
 ↓
 Score
 ↓
@@ -108,241 +118,127 @@ ExecutionPlan
 
 يشمل:
 
-- مراجعة Core Intelligence الحالي وتحديد أي أجزاء ناقصة فعلًا.
-- إكمال وربط المحركات عند الحاجة فقط.
-- تثبيت Profile/Score/Decision relationships وفق القرارات المعتمدة.
-- تعزيز منطق intelligence الذي لم يصل بعد إلى مستوى الإنتاج.
-- Verification شامل للمسار.
-- تثبيت العقود التي ستصبح أساس المستهلكين اللاحقين.
+- إكمال أي Intelligence behavior ناقص فعليًا.
+- تثبيت العلاقات بين Analysis / Profile / Score / Decision.
+- إزالة أي اعتماد قديم يعيق العقود الحالية.
+- الحفاظ على ReportResult وExecutionPlan والعقود المستقرة.
+- Verification للمسار الكامل عند كل تغيير مؤثر.
 
 قاعدة Phase 2:
 
-لا يعاد فتح Result Contracts المستقرة في Phase 1 إلا إذا ظهر تعارض أو متطلب جديد مثبت باختبار أو قرار معماري.
+لا يعاد فتح Contract مستقر إلا إذا ظهر:
+
+- تعارض معماري مثبت.
+- متطلب جديد معتمد.
+- أو فشل تكاملي يثبت أن العقد الحالي غير كافٍ.
 
 ==================================================
-6. المرحلة 3 — تثبيت Configuration
-==================================================
-
-الحالة:
-PENDING
-
-يشمل:
-
-- Settings.
-- Environment Variables.
-- Binance Configuration.
-- Logging.
-- Storage Configuration.
-- Runtime Configuration.
-- Validation.
-
-الشرط:
-عدم وجود أسرار حساسة داخل Git.
-
-==================================================
-7. المرحلة 4 — تثبيت Bootstrap وDependency Injection
+6. PHASE 3 — Scalping Opportunity Engine
 ==================================================
 
 الحالة:
 PENDING
 
-يشمل:
+**الهدف التشغيلي الرئيسي للمشروع.**
 
-- Bootstrap Builder.
-- Bootstrap Registry.
-- Bootstrap Runner.
-- Bootstrap Service.
-- Dependency Container.
-- Dependency Container Builder.
+الهدف:
 
-الشرط:
-عملية الإنشاء والربط واضحة وقابلة للتتبع.
+تحويل نتائج Core Intelligence إلى قائمة مرتبة ومفسرة لأفضل فرص السكالبينج القريبة.
 
-==================================================
-8. المرحلة 5 — تثبيت Provider Layer
-==================================================
+المخرجات المستهدفة:
 
-الحالة:
-PENDING
+- Ranked Opportunities.
+- Opportunity State.
+- Entry Context.
+- Confidence.
+- Risk Context.
+- Factors / Reasoning.
+- Rejection Reasons.
+- Multi-timeframe context عند الحاجة.
 
-الترتيب:
-
-1. Binance Client.
-2. Binance Mapper.
-3. Binance Provider.
-4. Market Data Provider.
-
-الشرط:
-عزل تفاصيل Binance عن الطبقات الداخلية.
+يجب أن يكون الترشيح قابلًا للتتبع من Market Data إلى Analysis وProfile وScore وDecision.
 
 ==================================================
-9. المرحلة 6 — تثبيت Market Data Flow
-==================================================
-
-الحالة:
-PENDING
-
-Source
-↓
-Provider
-↓
-Mapper
-↓
-Model
-↓
-Repository
-↓
-Storage
-
-الشرط:
-تدفق بيانات واضح وموحد وقابل للاختبار.
-
-==================================================
-10. المرحلة 7 — تثبيت Storage
-==================================================
-
-الحالة:
-PENDING
-
-يشمل:
-
-- Market Storage.
-- SQLite Market Storage.
-- Market Repository.
-
-الشرط:
-فصل التخزين عن منطق الأعمال.
-
-==================================================
-11. المرحلة 8 — تثبيت Pipeline وOrchestrator
-==================================================
-
-الحالة:
-PENDING
-
-يشمل:
-
-- Pipeline.
-- Orchestrator.
-- Application Runtime.
-- Services.
-
-الشرط:
-تسلسل المعالجة واضح وقابل للتتبع.
-
-==================================================
-12. المرحلة 9 — تثبيت Validation
-==================================================
-
-الحالة:
-PENDING
-
-يشمل:
-
-- Validation Engine.
-- Data Validation.
-- Result Validation.
-- Runtime Validation عند الحاجة.
-
-الشرط:
-منع انتقال بيانات أو نتائج غير صالحة إلى المراحل التالية.
-
-==================================================
-13. المرحلة 10 — تثبيت Indicators
-==================================================
-
-الحالة:
-PENDING
-
-يشمل:
-
-- Indicator Calculator.
-- Indicator Engine.
-- Indicator Models.
-
-الشرط:
-الحسابات قابلة للاختبار ومستقلة قدر الإمكان.
-
-==================================================
-14. المرحلة 11 — تثبيت Analysis
-==================================================
-
-الحالة:
-PENDING
-
-يشمل:
-
-- Analysis Engine.
-- Analysis Models.
-- Analysis Inputs.
-- Analysis Results.
-
-الشرط:
-فصل Analysis عن Decision.
-
-==================================================
-15. المرحلة 12 — تثبيت Profile
-==================================================
-
-الحالة:
-PENDING
-
-يشمل:
-
-- Profile Builder.
-- Profile Engine.
-- Profile Models.
-
-الشرط:
-طريقة بناء Profile قابلة للتتبع والمراجعة.
-
-==================================================
-16. المرحلة 13 — تثبيت Score
-==================================================
-
-الحالة:
-PENDING
-
-يشمل:
-
-- Score Engine.
-- Score Models.
-- قواعد احتساب الدرجات.
-
-الشرط:
-قواعد Score واضحة وقابلة للاختبار.
-
-==================================================
-17. المرحلة 14 — تثبيت Decision
-==================================================
-
-الحالة:
-PENDING
-
-يشمل:
-
-- Decision Engine.
-- Decision Models.
-- Decision Rules.
-
-الشرط:
-القرار يعتمد على نتائج منظمة من المراحل السابقة.
-
-==================================================
-18. المرحلة 15 — تثبيت Execution
+7. PHASE 4 — Desktop Application / GUI
 ==================================================
 
 الحالة:
 PENDING
 
 الهدف:
-تثبيت العمليات التنفيذية الواقعة ضمن نطاق ORION.
 
-الشرط:
-تحديد حدود Execution بدقة قبل إضافة عمليات تنفيذ حساسة.
+تحويل ORION إلى برنامج Desktop احترافي للاستخدام اليومي دون الحاجة إلى Command Prompt.
+
+المبدأ:
+
+GUI
+↓
+Application
+↓
+Core
+
+ولا يحتوي GUI على Business Logic.
+
+تفاصيل المنتج النهائي في:
+ORION_FUTURE_PRODUCT_VISION_DESKTOP_APPLICATION.md
 
 ==================================================
-19. المرحلة 16 — تثبيت Reporting
+8. PHASE 5 — Pre-Explosion / Explosive Coin Radar
+==================================================
+
+الحالة:
+PENDING
+
+الهدف:
+
+إنشاء قائمة مستقلة تتحدث باستمرار لرصد العملات التي تظهر مقدمات سوقية قد تسبق حركة انفجارية.
+
+هذه الميزة لا تستبدل Scalping Opportunity Engine.
+
+المخرجات المحتملة:
+
+- Watchlist.
+- Early Momentum Signals.
+- Activity / Accumulation Context.
+- Abnormal Volume / Volatility.
+- Confidence / Probability score.
+- Estimated time window عندما تسمح البيانات.
+- Reasons.
+- Signal invalidation.
+
+لا تدعي الميزة التنبؤ المؤكد بالانفجار.
+
+==================================================
+9. PHASE 6 — Trading Bot / Paper Execution
+==================================================
+
+الحالة:
+PENDING
+
+تبدأ المرحلة بعد استقرار Core وScalping Engine واجتياز البوابات المطلوبة.
+
+الترتيب:
+
+Signal
+↓
+Decision
+↓
+ExecutionPlan
+↓
+Risk Checks
+↓
+Paper Execution
+↓
+Position Management
+↓
+Exit
+↓
+Audit / Report
+
+تبدأ بـ Paper Trading، وليس Live Trading.
+
+==================================================
+10. PHASE 7 — Backtesting / Replay / Validation
 ==================================================
 
 الحالة:
@@ -350,36 +246,18 @@ PENDING
 
 يشمل:
 
-- Report Builder.
-- Report Engine.
-- Report Models.
-- HTML Report.
-- JSON Report.
-- Report Exporter.
+- Backtesting.
+- Replay.
+- Regression.
+- Strategy Validation.
+- Risk Validation.
+- Execution Simulation.
+- Performance Measurement.
 
-الشرط:
-التقارير تعرض النتائج ولا تعيد تنفيذ منطق التحليل.
-
-==================================================
-20. المرحلة 17 — تثبيت Scheduler
-==================================================
-
-الحالة:
-PENDING
-
-يشمل:
-
-- Scheduler Engine.
-- Scheduler Jobs.
-- Scheduler Models.
-- Scheduler Service.
-- Market Service.
-
-الشرط:
-فصل الجدولة عن منطق الأعمال.
+لا يعتمد Live Trading على نتيجة اختبار واحدة.
 
 ==================================================
-21. المرحلة 18 — تثبيت API
+11. PHASE 8 — Live Trading Readiness
 ==================================================
 
 الحالة:
@@ -387,174 +265,82 @@ PENDING
 
 يشمل:
 
-- API Models.
-- API Router.
-- API Server.
-- API Service.
-
-الشرط:
-API لا تحتوي منطق الأعمال الأساسي.
-
-==================================================
-22. المرحلة 19 — تثبيت GUI
-==================================================
-
-الحالة:
-PENDING
-
-يشمل:
-
-- GUI Controller.
-- GUI Models.
-- GUI Runner.
-- GUI Service.
-- GUI Window.
-- Widgets.
-- Dialogs.
-- Themes.
-- Resources.
-
-الشرط:
-فصل GUI عن منطق الأعمال.
+- Security Review.
+- API Key Protection.
+- Risk Limits.
+- Emergency Stop.
+- Failure Handling.
+- Audit Trail.
+- Monitoring.
+- Paper Trading Validation.
+- Final Architecture Review.
+- Operational Verification.
 
 ==================================================
-23. المرحلة 20 — توسيع الاختبارات
+12. PHASE 9 — Production ORION
 ==================================================
 
 الحالة:
 PENDING
 
-يشمل:
+الصورة النهائية:
 
-- Unit Tests.
-- Integration Tests.
-- Pipeline Tests.
-- Provider Tests.
-- Storage Tests.
-- Engine Tests.
-- Application Tests.
-- Regression Tests.
-
-==================================================
-24. المرحلة 21 — الاختبار التشغيلي
-==================================================
-
-الحالة:
-PENDING
-
-يتم التحقق من:
-
-- بدء النظام.
-- تحميل الإعدادات.
-- إنشاء الاعتماديات.
-- الاتصال بمصدر البيانات.
-- معالجة البيانات.
-- Pipeline.
-- النتائج.
-- التقارير.
-- الإيقاف الصحيح.
+Desktop Application
+↓
+Market Scanner
+↓
+Scalping Opportunity Engine
+↓
+Independent Explosive Coin Radar
+↓
+Decision / Risk Management
+↓
+Paper / Approved Live Execution
+↓
+Position Management
+↓
+Reports / Audit / Monitoring
 
 ==================================================
-25. المرحلة 22 — مراجعة الجودة النهائية
+13. Cross-Cutting Gates
 ==================================================
 
-الحالة:
-PENDING
+هذه ليست مراحل منفصلة، بل شروط مستمرة عبر المراحل:
 
-تتم مراجعة:
+- Contract Integrity.
+- Architecture Integrity.
+- Test Integrity.
+- Verification.
+- Security.
+- Documentation Consistency.
+- Legacy Containment.
+- Observability / Auditability.
 
-- المعمارية.
-- الكود.
-- الاعتماديات.
-- الاختبارات.
-- الأمان.
-- الأداء.
-- التقارير.
-- API.
-- GUI.
-- Scheduler.
-- التوثيق.
-- التتبع.
-- قابلية الصيانة.
+لا يجوز استخدام هذه البوابات لإيقاف التطوير بلا دليل؛ لكنها تصبح blocker عندما يثبت أن الاستمرار سيضر Contract أو Architecture أو الهدف التشغيلي.
 
 ==================================================
-26. المرحلة 23 — اعتماد الإصدار الأساسي
+14. قاعدة الخطوة التالية
 ==================================================
 
-الحالة:
-PENDING
+عند الأمر 1:
 
-لا يتم اعتماد الإصدار الأساسي قبل:
-
-1. اكتمال المراحل المطلوبة.
-2. نجاح الاختبارات.
-3. إغلاق المشاكل الحرجة.
-4. مراجعة المعمارية.
-5. مراجعة الوثائق.
-6. اعتماد الحالة النهائية.
+1. يقرأ GPT PROJECT_STATE.
+2. يحدد المرحلة الحالية.
+3. يستخدم هذه الوثيقة لتحديد الخطوة التالية داخل المرحلة.
+4. يراجع الوثائق المتخصصة المطلوبة فقط.
+5. ينفذ الخطوة التالية فقط.
 
 ==================================================
-27. قاعدة الخطوة التالية
+15. علاقة Roadmap بـ Future Roadmap
 ==================================================
 
-عند الأمر:
+ORION_ROADMAP.md
+→ ترتيب التنفيذ الفعلي.
 
-1
+ORION_FUTURE_ROADMAP.md
+→ الرؤية الكبرى وحماية أهداف المشروع طويلة الأجل.
 
-يحدد GPT المرحلة الحالية من PROJECT_STATE، ثم يستخدم ROADMAP لتحديد الخطوة التالية، ثم يرجع إلى الوثائق المتخصصة المطلوبة فقط.
-
-لا تعتمد ROADMAP على ذاكرة المحادثة.
-
-==================================================
-28. قاعدة عدم تجاوز المرحلة
-==================================================
-
-لا يتم الانتقال إلى مرحلة لاحقة لأن تنفيذها أسهل أو أسرع.
-
-يجب الالتزام بالترتيب إلا إذا صدر قرار موثق يغير الترتيب.
-
-==================================================
-29. قاعدة توثيق الانتقال
-==================================================
-
-عند اكتمال مرحلة:
-
-- يتم تحديث PROJECT_STATE.
-- يسجل الإنجاز المهم في CHANGELOG.
-- تسجل القرارات المؤثرة في DECISIONS.
-- تسجل المشاكل غير المحلولة في KNOWN_PROBLEMS.
-- تراجع Findings وتغلق ما تم التحقق منه.
-
-==================================================
-30. العلاقة مع Future Roadmap
-==================================================
-
-ORION_ROADMAP.md = التنفيذ المرحلي التقني الحالي.
-
-ORION_FUTURE_ROADMAP.md = المراحل الكبرى المستقبلية.
-
-لا تعاد كتابة أهداف Future Roadmap داخل هذه الوثيقة إلا بقدر ما يلزم لفهم ترتيب التنفيذ.
-
-==================================================
-31. الحالة الحالية
-==================================================
-
-المرحلة الحالية الرسمية:
-
-PHASE 2 — CORE INTELLIGENCE COMPLETION
-
-الحالة:
-IN PROGRESS
-
-المرحلة السابقة:
-
-PHASE 1 — CONTRACT STABILIZATION / RECONSTRUCTION
-
-الحالة:
-COMPLETED
-
-المرجع التفصيلي للحالة:
-ORION_PROJECT_STATE.md
+وجود هدف مستقبلي لا يعني أن المطور ينفذه الآن.
 
 ==================================================
 END
