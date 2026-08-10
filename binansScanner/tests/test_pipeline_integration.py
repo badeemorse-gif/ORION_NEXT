@@ -3,15 +3,16 @@
 Badee Binance Scanner
 Architecture : ORION
 Module       : tests.test_pipeline_integration
-Version      : 2.1.0
+Version      : 2.2.0
 Status       : ORION Composition Root Integration Contract
 ===============================================================================
 
 Integration tests for the ORION dependency graph.
 
-These tests validate construction and dependency wiring only. ReportEngine is
+These tests validate construction and dependency wiring. ReportEngine is
 owned by the application Pipeline boundary, not by the intelligence
-Orchestrator. No network calls or real market execution are performed here.
+Orchestrator. The canonical execution boundary is explicitly asserted as
+OrchestratorResult -> ExecutionPlan -> ExecutionEngine.
 ===============================================================================
 """
 
@@ -30,6 +31,7 @@ from core.orchestrator import Orchestrator
 from core.pipeline import Pipeline
 
 from engines.report_engine import ReportEngine
+from models.execution import ExecutionPlan
 from providers.market_data_provider import MarketDataProvider
 from repositories.market_repository import MarketRepository
 from services.market_service import MarketService
@@ -179,6 +181,15 @@ class TestPipelineIntegration(unittest.TestCase):
             hasattr(orchestrator, "_report_engine"),
             "ReportEngine belongs to Pipeline, not Orchestrator.",
         )
+
+    def test_orchestrator_result_uses_canonical_execution_plan(self) -> None:
+        """Execution boundary must expose ExecutionPlan, never legacy payload naming."""
+
+        result_fields = set(OrchestratorResult.__dataclass_fields__)
+
+        self.assertIn("execution_plan", result_fields)
+        self.assertNotIn("execution_payload", result_fields)
+        self.assertIs(OrchestratorResult.__dataclass_fields__["execution_plan"].type, Optional[ExecutionPlan])
 
     def test_pipeline_creation(self) -> None:
         """Pipeline can be created from the canonical container graph."""
