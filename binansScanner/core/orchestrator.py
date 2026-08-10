@@ -155,6 +155,7 @@ class Orchestrator:
         profile = None
         score = None
         decision = None
+        execution_plan = None
         error_message = None
         success = False
         self._logger.extra.update({"symbol": symbol, "operation": "run_pipeline"})
@@ -197,6 +198,7 @@ class Orchestrator:
 
             self._change_stage(PipelineStage.DECISION)
             decision = self._decision_engine.decide(analysis, score)
+            execution_plan = self._execution_plan_builder.build(dataset, decision)
             completed += 1
 
             self._change_stage(PipelineStage.FINISHED)
@@ -229,7 +231,7 @@ class Orchestrator:
                 profile=profile,
                 score=score,
                 decision=decision,
-                execution_plan=self._execution_plan_builder.build(dataset, decision),
+                execution_plan=execution_plan,
                 statistics=stats,
             )
             self._logger.extra.update({"stage": self._current_stage.value, "elapsed_ms": f"{elapsed:.2f}ms"})
