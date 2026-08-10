@@ -195,10 +195,15 @@ class IndicatorCalculator:
                     supertrend_df.iloc[:, 1]
                 )
 
+            # pandas-ta's Ichimoku implementation constructs its forward
+            # span index with Timedelta(..., unit="d"), which is deprecated
+            # by current pandas versions. Ichimoku's visible calculations are
+            # positional, so calculate them on a RangeIndex and restore the
+            # canonical market index before joining the result.
             ichimoku_result = ta.ichimoku(
-                high=high,
-                low=low,
-                close=close,
+                high=high.reset_index(drop=True),
+                low=low.reset_index(drop=True),
+                close=close.reset_index(drop=True),
             )
 
             if (
@@ -211,6 +216,8 @@ class IndicatorCalculator:
                     ichimoku_df is not None
                     and not ichimoku_df.empty
                 ):
+                    ichimoku_df = ichimoku_df.copy()
+                    ichimoku_df.index = df.index
                     ichimoku_df = (
                         ichimoku_df
                         .add_prefix("ichimoku_")
