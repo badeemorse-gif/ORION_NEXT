@@ -1,4 +1,4 @@
-"""Canonical JSON report renderer for ORION ReportResult."""
+"""JSON report renderer with canonical ReportResult support."""
 from __future__ import annotations
 
 import json
@@ -15,11 +15,11 @@ class JsonReportRendererError(Exception):
 
 
 class JsonReportRenderer:
-    """Render the canonical ReportResult without depending on legacy report models."""
+    """Render canonical reports and remain compatible with legacy dataclass reports during migration."""
 
-    def render(self, report: ReportResult, indent: int = 4) -> str:
-        if not isinstance(report, ReportResult):
-            raise JsonReportRendererError("render requires a ReportResult.")
+    def render(self, report: ReportResult | Any, indent: int = 4) -> str:
+        if report is None:
+            raise JsonReportRendererError("render requires a report object.")
         try:
             return json.dumps(
                 self._to_serializable(report),
