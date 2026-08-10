@@ -1,6 +1,6 @@
 # ORION — سجل التغييرات
 
-الإصدار: 2.0
+الإصدار: 2.1
 الحالة: ACTIVE
 المشروع: ORION
 المستودع الرسمي: badeemorse-gif/ORION_NEXT
@@ -347,10 +347,8 @@ badeemorse-gif/ORION_NEXT
 ORION_NEXT
 │
 ├── binansScanner
-│
 ├── ORION-Project-Management
 │   └── docs
-│
 └── tools
 
 ### الجذور الرسمية
@@ -914,28 +912,19 @@ PENDING
 22. الحالة الحالية
 ==================================================
 
-المرحلة:
+المرحلة الحالية:
 
-المرحلة 1 — تثبيت وثائق إدارة المشروع.
+PHASE 2 — CORE INTELLIGENCE COMPLETION
 
 الحالة:
+IN PROGRESS
 
+المرحلة السابقة:
+
+PHASE 1 — CONTRACT STABILIZATION / RECONSTRUCTION
+
+الحالة:
 COMPLETED
-
-الخطوة التالية:
-
-المرحلة 2 — مراجعة المعمارية الفعلية.
-
-الوثائق التي تمت إعادة إعدادها:
-
-- ORION_GPT_EXECUTION_RULES.md
-- ORION_WORK_PROTOCOL.md
-- ORION_PROJECT_CHARTER.md
-- ORION_ARCHITECTURE.md
-- ORION_ROADMAP.md
-- ORION_DECISIONS.md
-- ORION_CHANGELOG.md
-- ORION_KNOWN_PROBLEMS.md
 
 
 ==================================================
@@ -948,14 +937,7 @@ ACTIVE (تتم المزامنة أول بأول لكل إجراء أو تعدي�
 
 
 ==================================================
-24. الحالة
-==================================================
-
-ACTIVE
-
-
-==================================================
-25. CHANGE-014 — تصحيح اتساق حالة المرحلة وحفظ التاريخ ومزامنة أول بأول
+24. CHANGE-014 — تصحيح اتساق حالة المرحلة وحفظ التاريخ ومزامنة أول بأول
 ==================================================
 
 التاريخ:
@@ -987,6 +969,76 @@ ACTIVE
 ### Commit
 
 SYNCED
+
+
+==================================================
+25. CHANGE-015 — Phase 1 Gate Closure and Warning Cleanup
+==================================================
+
+التاريخ:
+
+2026-08-10
+
+المرحلة:
+
+PHASE 1 → PHASE 2
+
+الحالة:
+
+COMPLETED / VERIFIED
+
+### التغيير
+
+تم تنظيف التحذيرات التقنية الثلاثة المستهدفة دون تغيير معماري إضافي:
+
+1. python-binance / asyncio event loop:
+   إنشاء event loop مؤقت عند الحاجة أثناء إنشاء Client ثم إغلاقه وإزالته من thread بعد انتهاء الإنشاء.
+
+2. pandas-ta / Ichimoku day frequency:
+   تجنب مسار المكتبة الذي يستخدم Timedelta بوحدة day deprecated عبر الحساب positional ثم إعادة canonical DatetimeIndex إلى نتيجة Ichimoku قبل الدمج.
+
+3. تم تثبيت السلوك بحيث لا تظهر التحذيرات السابقة داخل Verification الخاص بالمشروع.
+
+### Verification
+
+Python syntax compilation:
+PASSED
+
+Full unittest suite:
+108 tests
+OK
+
+VERIFICATION PASSED
+
+### Findings
+
+AF-007 — VERIFIED / CLOSED
+
+لا توجد Blocking Findings مفتوحة تمنع الانتقال.
+
+### Report Architecture
+
+تم تأكيد استقرار ReportResult → Renderer → ReportExporter، مع إثبات E2E أن فشل Execution لا ينتج Report ناجحًا.
+
+### الوثائق المتأثرة
+
+- ORION_PROJECT_STATE.md
+- ORION_ROADMAP.md
+- ORION_ARCHITECTURE_FINDINGS.md
+- ORION_CHANGELOG.md
+
+### Commits
+
+4532e2860478267e427edae836c40084734f238d — warning cleanup
+13573ee4952155f2748b034b3ea8f80e743fb390 — roadmap update
+1407c4c13db952671571eab2537c3e3273e163f3 — findings update
+ff295f7558466ab3a6154f7b46803fdf133a8120 — project state update
+
+### النتيجة
+
+Phase 1 مكتملة رسميًا، وPHASE 2 — CORE INTELLIGENCE COMPLETION أصبحت المرحلة الحالية.
+
+
 ==================================================
 نهاية ORION CHANGELOG
 ==================================================
