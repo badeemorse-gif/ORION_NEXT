@@ -26,8 +26,8 @@ class TestOrchestratorValidationOrder(TestCase):
                 downloaded_at=now, last_updated_at=now,
             ),
             timeframes={
-                Timeframe.ONE_MINUTE: TimeframeData(
-                    timeframe=Timeframe.ONE_MINUTE, dataframe=dataframe,
+                Timeframe.M1: TimeframeData(
+                    timeframe=Timeframe.M1, dataframe=dataframe,
                     data_health=DataHealth.ACCEPTABLE, candles_count=1,
                     first_timestamp=now, last_timestamp=now,
                 )
