@@ -148,7 +148,7 @@ class OrionApplication:
         self._ensure_running()
         if self._pipeline is None:
             raise ApplicationError("Pipeline is not initialized.")
-            
+
         try:
             self._logger.info(f"Application running symbol: {symbol}")
             return self._pipeline.run_symbol(symbol=symbol, timeframes=timeframes, quantity=quantity)
@@ -165,8 +165,16 @@ class OrionApplication:
         try:
             symbol_list = list(symbols)
             self._logger.info(f"Application running symbol batch: {symbol_list}")
-            summary = self._pipeline.run_symbols(symbols=symbol_list, timeframes=timeframes, quantity=quantity)
-            self._logger.info(f"Application batch execution completed | Processed={summary.processed_symbols} | Successful={summary.successful_symbols}")
+            summary, _results = self._pipeline.run_symbols(
+                symbols=symbol_list,
+                timeframes=timeframes,
+                quantity=quantity,
+            )
+            self._logger.info(
+                "Application batch execution completed | "
+                f"Processed={summary.processed_symbols} | "
+                f"Successful={summary.successful_symbols}"
+            )
             return summary
         except Exception as e:
             self._logger.error(f"Application failed to run symbol batch: {e}")
@@ -176,6 +184,8 @@ class OrionApplication:
         """Safely shut down the application, reset container components, and flush states."""
         self._logger.info("Shutting down OrionApplication...")
         try:
+            if self._pipeline is not None:
+                self._pipeline.reset()
             if self._container is not None:
                 self._container.reset()
 
