@@ -40,8 +40,8 @@ class OrchestratorConfig:
 class PipelineStage(str, Enum):
     INITIALIZE = "INITIALIZE"
     DOWNLOAD = "DOWNLOAD"
-    STORE = "STORE"
     VALIDATION = "VALIDATION"
+    STORE = "STORE"
     INDICATORS = "INDICATORS"
     ANALYSIS = "ANALYSIS"
     PROFILE = "PROFILE"
@@ -97,7 +97,7 @@ class LoggerAdapter(logging.LoggerAdapter):
 
 
 class Orchestrator:
-    """Coordinates provider, market persistence and intelligence contracts."""
+    """Coordinates provider, market validation, persistence and intelligence contracts."""
 
     def __init__(
         self,
@@ -166,12 +166,14 @@ class Orchestrator:
             self._require_dataset(dataset)
             completed += 1
 
-            self._change_stage(PipelineStage.STORE)
-            self._storage.execute(dataset)
-            completed += 1
-
+            # Validation is deliberately completed before persistence.  Invalid
+            # provider output must never become durable market state.
             self._change_stage(PipelineStage.VALIDATION)
             validation = self._validation_engine.validate_dataset(dataset)
+            completed += 1
+
+            self._change_stage(PipelineStage.STORE)
+            self._storage.execute(dataset)
             completed += 1
 
             self._change_stage(PipelineStage.INDICATORS)
