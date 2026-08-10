@@ -5,14 +5,14 @@ import tempfile
 import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pandas as pd
 
 from core.dependency_container import ContainerConfiguration, DependencyContainer
 from enums import DataHealth, Timeframe
 from models.decision import DecisionResult
-from models.execution import ExecutionSide, ExecutionStatus
+from models.execution import ExecutionResult, ExecutionSide, ExecutionStatus
 from models.market import MarketDataset, MarketMetadata, TimeframeData
 
 
@@ -156,6 +156,28 @@ class TestPipelineExecutionE2E(unittest.TestCase):
         self.assertTrue(execution.order_id.startswith("PAPER-"))
         self.assertIs(report.execution, execution)
         self.assertTrue(report.is_complete)
+
+    def test_execution_failure_stops_before_report_boundary(self) -> None:
+        """Execution failure must not be converted into a successful Report stage."""
+        pipeline = self.container.build_pipeline()
+        execution_failure = ExecutionResult(
+            status=ExecutionStatus.FAILED,
+            message="forced execution failure",
+        )
+        report_builder = MagicMock()
+
+        with patch.object(pipeline._orchestrator, "run", return_value=MagicMock(execution_plan=MagicMock())), patch.object(
+            pipeline._execution_engine,
+            "execute",
+            return_value=execution_failure,
+        ), patch.object(pipeline._report_engine, "build_report", report_builder):
+            result = pipeline.run_symbol("BTCUSDT", [Timeframe.H1.value], quantity=1.0)
+
+        self.assertFalse(result.success)
+        self.assertEqual(result.failed_stage, "EXECUTION")
+        self.assertIs(result.execution_result, execution_failure)
+        self.assertIsNone(result.report_result)
+        report_builder.assert_not_called()
 
 
 if __name__ == "__main__":
