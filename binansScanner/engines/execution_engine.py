@@ -73,7 +73,11 @@ class PaperExecutionAdapter(ExecutionAdapter):
     """Local paper-trading adapter; never contacts a live exchange."""
 
     def validate(self, request: ExecutionRequest) -> bool:
-        return bool(request.symbol) and request.quantity > 0.0 and request.price >= 0.0
+        if not request.symbol or request.quantity <= 0.0:
+            return False
+        if request.side in (ExecutionSide.BUY, ExecutionSide.SELL):
+            return request.price > 0.0
+        return request.price >= 0.0
 
     def execute(self, request: ExecutionRequest) -> ExecutionResult:
         started = time.perf_counter()
