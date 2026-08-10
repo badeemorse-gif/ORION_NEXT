@@ -18,7 +18,7 @@ from datetime import datetime, timezone
 import pandas as pd
 
 from core.dependency_container import DependencyContainer
-from core.orchestrator import Orchestrator
+from core.execution_plan_builder import ExecutionPlanBuilder
 from engines.decision_engine import DecisionEngine
 from models.analysis import AnalysisResult
 from models.decision import DecisionResult
@@ -35,6 +35,7 @@ class TestDecisionExecutionBridge(unittest.TestCase):
         self.container = DependencyContainer()
         self.execution_engine = self.container.build_execution_engine()
         self.decision_engine = DecisionEngine()
+        self.plan_builder = ExecutionPlanBuilder()
 
         now = datetime.now(timezone.utc)
         dataframe = pd.DataFrame(
@@ -87,7 +88,7 @@ class TestDecisionExecutionBridge(unittest.TestCase):
         self.assertEqual(decision.decision, "FAVORABLE")
         self.assertEqual(decision.confidence, 92.0)
 
-        plan = Orchestrator._build_execution_plan(self.dataset, decision)
+        plan = self.plan_builder.build(self.dataset, decision)
         self.assertIsNotNone(plan)
         assert plan is not None
         self.assertEqual(plan.side, ExecutionSide.BUY)
@@ -120,7 +121,7 @@ class TestDecisionExecutionBridge(unittest.TestCase):
         self.assertEqual(decision.decision, "UNFAVORABLE")
         self.assertEqual(decision.confidence, 88.0)
 
-        plan = Orchestrator._build_execution_plan(self.dataset, decision)
+        plan = self.plan_builder.build(self.dataset, decision)
         self.assertIsNotNone(plan)
         assert plan is not None
         self.assertEqual(plan.side, ExecutionSide.SELL)
@@ -143,7 +144,7 @@ class TestDecisionExecutionBridge(unittest.TestCase):
             reasons=["NEUTRAL_OR_MIXED_CONDITIONS"],
         )
 
-        plan = Orchestrator._build_execution_plan(self.dataset, decision)
+        plan = self.plan_builder.build(self.dataset, decision)
         self.assertIsNotNone(plan)
         assert plan is not None
         self.assertEqual(plan.side, ExecutionSide.HOLD)
