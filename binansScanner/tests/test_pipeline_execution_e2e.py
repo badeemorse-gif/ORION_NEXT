@@ -37,6 +37,12 @@ class TestPipelineExecutionE2E(unittest.TestCase):
     @staticmethod
     def _dataset() -> MarketDataset:
         now = datetime.now(timezone.utc)
+        timestamps = pd.date_range(
+            end=pd.Timestamp(now),
+            periods=60,
+            freq="h",
+            tz="UTC",
+        )
         closes = [100_000.0 + float(index * 100.0) for index in range(60)]
         dataframe = pd.DataFrame(
             {
@@ -45,7 +51,8 @@ class TestPipelineExecutionE2E(unittest.TestCase):
                 "low": [value - 100.0 for value in closes],
                 "close": closes,
                 "volume": [1_000.0] * len(closes),
-            }
+            },
+            index=timestamps,
         )
         timeframe_data = TimeframeData(
             timeframe=Timeframe.H1,
