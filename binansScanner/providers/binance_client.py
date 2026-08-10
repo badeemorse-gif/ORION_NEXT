@@ -14,8 +14,10 @@ retry policies, and rate limiting via python-binance.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
+import warnings
 from typing import Any, Optional
 
 from binance.client import Client
@@ -101,12 +103,32 @@ class BinanceClient:
         self.testnet: bool = testnet
 
         try:
-            self._client: Client = Client(
-                api_key=self.api_key,
-                api_secret=self.api_secret,
-                requests_params={"timeout": self.timeout},
-                ping=False,
-            )
+            # python-binance's BaseClient still calls asyncio.get_event_loop()
+            # during synchronous Client construction. On Python 3.12 this emits
+            # a deprecation warning and can leave an auto-created loop unclosed.
+            # Provide a temporary loop only for construction, then close it.
+            loop_created_by_get_event_loop = False
+            with warnings.catch_warnings(record=True) as captured_warnings:
+                warnings.simplefilter("always", DeprecationWarning)
+                construction_loop = asyncio.get_event_loop()
+                loop_created_by_get_event_loop = any(
+                    isinstance(item.message, DeprecationWarning)
+                    and "There is no current event loop" in str(item.message)
+                    for item in captured_warnings
+                )
+
+            try:
+                self._client: Client = Client(
+                    api_key=self.api_key,
+                    api_secret=self.api_secret,
+                    requests_params={"timeout": self.timeout},
+                    ping=False,
+                )
+            finally:
+                if loop_created_by_get_event_loop:
+                    asyncio.set_event_loop(None)
+                    construction_loop.close()
+
             if self.testnet:
                 self._client.API_URL = "https://testnet.binance.vision/api"
         except Exception as e:
