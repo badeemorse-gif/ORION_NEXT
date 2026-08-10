@@ -10,7 +10,7 @@ from typing import Any, Iterable, Optional
 from core.orchestrator import Orchestrator, OrchestratorResult
 from engines.execution_engine import ExecutionEngine
 from engines.report_engine import ReportEngine
-from models.execution import ExecutionResult
+from models.execution import ExecutionResult, ExecutionStatus
 from models.report import ReportResult
 
 base_logger = logging.getLogger(__name__)
@@ -99,7 +99,16 @@ class Pipeline:
                 raise PipelineError("Orchestrator did not produce an ExecutionPlan.")
 
             failed_stage = "EXECUTION"
-            exec_res = self._execution_engine.execute(orch_res.execution_plan, quantity=quantity)
+            exec_res = self._execution_engine.execute(
+                orch_res.execution_plan,
+                quantity=quantity,
+            )
+            if not isinstance(exec_res, ExecutionResult):
+                raise PipelineError("ExecutionEngine returned an invalid ExecutionResult.")
+            if exec_res.status is ExecutionStatus.FAILED:
+                raise PipelineError(
+                    f"Execution failed: {exec_res.message or 'ExecutionEngine returned FAILED.'}"
+                )
 
             failed_stage = "REPORT"
             report_res = self._report_engine.build_report(
@@ -113,13 +122,13 @@ class Pipeline:
                     orch_res.statistics.elapsed_ms + exec_res.execution_time_ms
                 ),
             )
+            if not isinstance(report_res, ReportResult):
+                raise PipelineError("ReportEngine returned an invalid ReportResult.")
+
             success = True
             failed_stage = None
         except Exception as exc:
             error_message = str(exc)
-            # Orchestrator preserves its partial result in finally even when a
-            # stage raises. Keep that canonical diagnostic state in the
-            # PipelineItemResult instead of discarding it at the boundary.
             if orch_res is None:
                 orch_res = self._orchestrator.last_result()
             self._logger.error(
@@ -157,9 +166,10 @@ class Pipeline:
         successful = sum(1 for item in results if item.success)
         failed = processed - successful
         executed = sum(
-            1 for item in results
+            1
+            for item in results
             if item.execution_result is not None
-            and item.execution_result.status.value == "EXECUTED"
+            and item.execution_result.status is ExecutionStatus.EXECUTED
         )
         finished = datetime.now(timezone.utc)
         elapsed = (time.perf_counter() - perf) * 1000.0
