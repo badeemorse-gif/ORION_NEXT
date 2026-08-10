@@ -47,9 +47,9 @@ class TestDecisionExecutionBridge(unittest.TestCase):
             }
         )
         timeframe_data = TimeframeData(
-            timeframe=Timeframe.ONE_HOUR,
+            timeframe=Timeframe.H1,
             dataframe=dataframe,
-            data_health=DataHealth.HEALTHY,
+            data_health=DataHealth.GOOD,
             candles_count=1,
             first_timestamp=now,
             last_timestamp=now,
@@ -64,7 +64,7 @@ class TestDecisionExecutionBridge(unittest.TestCase):
         )
         self.dataset = MarketDataset(
             metadata=metadata,
-            timeframes={Timeframe.ONE_HOUR: timeframe_data},
+            timeframes={Timeframe.H1: timeframe_data},
         )
 
     def tearDown(self) -> None:
