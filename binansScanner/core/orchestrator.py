@@ -77,7 +77,7 @@ class OrchestratorResult:
     profile: Optional[ProfileResult] = None
     score: Optional[ScoreResult] = None
     decision: Optional[DecisionResult] = None
-    execution_payload: Optional[ExecutionPlan] = None
+    execution_plan: Optional[ExecutionPlan] = None
     statistics: PipelineStatistics = field(default_factory=PipelineStatistics)
 
 
@@ -170,8 +170,6 @@ class Orchestrator:
             self._storage.execute(dataset)
             completed += 1
 
-            # MarketDataset is the only contract available at this boundary.
-            # Validation must therefore happen before any downstream result exists.
             self._change_stage(PipelineStage.VALIDATION)
             validation = self._validation_engine.validate_dataset(dataset)
             completed += 1
@@ -226,7 +224,7 @@ class Orchestrator:
                 profile=profile,
                 score=score,
                 decision=decision,
-                execution_payload=self._build_execution_plan(dataset, decision),
+                execution_plan=self._build_execution_plan(dataset, decision),
                 statistics=stats,
             )
             self._logger.extra.update({"stage": self._current_stage.value, "elapsed_ms": f"{elapsed:.2f}ms"})
