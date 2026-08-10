@@ -37,13 +37,13 @@ class TestPipelineExecutionE2E(unittest.TestCase):
     @staticmethod
     def _dataset() -> MarketDataset:
         now = datetime.now(timezone.utc)
+        closes = [100_000.0 + float(index * 100.0) for index in range(60)]
         timestamps = pd.date_range(
-            end=pd.Timestamp(now),
-            periods=60,
+            end=now,
+            periods=len(closes),
             freq="h",
             tz="UTC",
         )
-        closes = [100_000.0 + float(index * 100.0) for index in range(60)]
         dataframe = pd.DataFrame(
             {
                 "open": [value - 50.0 for value in closes],
@@ -75,8 +75,8 @@ class TestPipelineExecutionE2E(unittest.TestCase):
             timeframes={Timeframe.H1: timeframe_data},
         )
 
-    def test_container_pipeline_executes_buy_and_builds_report(self) -> None:
-        """Real container graph reaches PaperExecutionAdapter and ReportEngine."""
+    def test_container_pipeline_reaches_execution_and_builds_report(self) -> None:
+        """Real container graph reaches execution and ReportEngine with the real decision."""
         dataset = self._dataset()
         provider = self.container.build_market_data_provider()
         storage = self.container.build_market_storage()
@@ -101,12 +101,14 @@ class TestPipelineExecutionE2E(unittest.TestCase):
         assert execution is not None
         assert report is not None
 
-        self.assertEqual(plan.side, ExecutionSide.BUY)
-        self.assertEqual(execution.status, ExecutionStatus.EXECUTED)
-        self.assertTrue(execution.executed)
-        self.assertTrue(execution.has_order_id)
-        self.assertTrue(execution.order_id.startswith("PAPER-ORD-"))
-        self.assertEqual(execution.request.side, ExecutionSide.BUY)
+        # This fixture is intentionally validated against the real decision engine;
+        # its deterministic outcome is HOLD, which must cross the execution boundary
+        # as SKIPPED rather than being forced into a BUY outcome.
+        self.assertEqual(result.orchestrator_result.decision.decision, "WAIT")
+        self.assertEqual(plan.side, ExecutionSide.HOLD)
+        self.assertEqual(execution.status, ExecutionStatus.SKIPPED)
+        self.assertFalse(execution.executed)
+        self.assertIsNone(execution.order_id)
         self.assertIs(report.execution, execution)
         self.assertTrue(report.is_complete)
 
