@@ -1,6 +1,6 @@
 # ORION — CONTROL INDEX
 
-الإصدار: 1.0
+الإصدار: 1.1
 الحالة: ACTIVE
 المشروع: ORION
 المستودع: badeemorse-gif/ORION_NEXT
@@ -144,6 +144,22 @@ ORION_ARCHITECTURE.md
 
 --------------------------------------------------
 
+ORION_ARCHITECTURE_FINDINGS.md
+
+النطاق:
+سجل الملاحظات والـFindings المعمارية الناتجة عن المراجعة المستمرة أثناء التطوير.
+
+تقرأ عند:
+- مراجعة معمارية.
+- مراجعة تطوير جديد.
+- التحقق من الملاحظات المفتوحة.
+- التأكد من عدم ضياع Finding سابقة.
+- تحديد ما إذا كان التطوير الحالي يحتاج إيقافًا أو يمكن أن يستمر.
+
+هذه الوثيقة لا توقف التطوير تلقائيًا، ولا تنشئ قرارًا معماريًا بذاتها.
+
+--------------------------------------------------
+
 ORION_ROADMAP.md
 
 النطاق:
@@ -206,6 +222,7 @@ ORION_KNOWN_PROBLEMS.md
 تعديل كود
 → EXECUTION RULES + CONTROL INDEX + PROJECT STATE
 → ARCHITECTURE
+→ ARCHITECTURE FINDINGS
 → الملفات المرتبطة
 → الاختبارات
 → الوثائق المرتبطة عند الحاجة
@@ -215,6 +232,7 @@ ORION_KNOWN_PROBLEMS.md
 → CONTROL INDEX
 → PROJECT STATE
 → ARCHITECTURE
+→ ARCHITECTURE FINDINGS
 → DECISIONS
 → ROADMAP
 → الملفات المرتبطة
@@ -240,7 +258,18 @@ ORION_KNOWN_PROBLEMS.md
 → EXECUTION RULES
 → CONTROL INDEX
 → جميع الوثائق المحتمل تأثيرها
+→ ARCHITECTURE FINDINGS عند وجود Finding معمارية
 → مراجعة موسعة
+
+مراجعة تطوير جديد
+→ EXECUTION RULES
+→ CONTROL INDEX
+→ PROJECT STATE عند الحاجة
+→ ARCHITECTURE
+→ ARCHITECTURE FINDINGS
+→ الملفات التي تغيرت
+→ الاختبارات
+→ الوثائق المرتبطة عند الحاجة
 
 ==================================================
 6. قاعدة البحث الشامل
@@ -252,7 +281,7 @@ ORION_KNOWN_PROBLEMS.md
 
 يتم البحث داخل الوثائق.
 
-لكن لا تتم قراءة جميع الوثائق بالكامل إلا عند الحاجة.
+لكن لا تتم قراءة جميع الوثائق بالكامل إلا عند الحاجة أو عند وجود تعارض/قرار كبير/مراجعة شاملة.
 
 ==================================================
 7. قاعدة المصدر الواحد
@@ -274,6 +303,9 @@ WORK PROTOCOL
 
 المعمارية:
 ARCHITECTURE
+
+الملاحظات المعمارية المفتوحة:
+ARCHITECTURE FINDINGS
 
 المراحل:
 ROADMAP
@@ -301,6 +333,12 @@ PROJECT CHARTER
 الوثائق الأخرى يمكن أن تشير إليها.
 
 لا يتم إنشاء نسخ مستقلة متعارضة.
+
+وجود Finding في ARCHITECTURE FINDINGS لا يعني أنها قرار معتمد.
+
+إذا تحولت Finding إلى قرار معماري، يكون ORION_DECISIONS.md هو المصدر المعتمد للقرار.
+
+إذا تحولت إلى مشكلة مؤكدة، يكون ORION_KNOWN_PROBLEMS.md هو سجل المشكلة الرسمي.
 
 ==================================================
 9. الاستمرارية
