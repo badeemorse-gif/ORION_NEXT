@@ -17,7 +17,6 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-import warnings
 from typing import Any, Optional
 
 from binance.client import Client
@@ -103,19 +102,17 @@ class BinanceClient:
         self.testnet: bool = testnet
 
         try:
-            # python-binance's BaseClient still calls asyncio.get_event_loop()
-            # during synchronous Client construction. On Python 3.12 this emits
-            # a deprecation warning and can leave an auto-created loop unclosed.
-            # Provide a temporary loop only for construction, then close it.
-            loop_created_by_get_event_loop = False
-            with warnings.catch_warnings(record=True) as captured_warnings:
-                warnings.simplefilter("always", DeprecationWarning)
-                construction_loop = asyncio.get_event_loop()
-                loop_created_by_get_event_loop = any(
-                    isinstance(item.message, DeprecationWarning)
-                    and "There is no current event loop" in str(item.message)
-                    for item in captured_warnings
-                )
+            # python-binance's BaseClient calls asyncio.get_event_loop() during
+            # synchronous Client construction. Python 3.12 no longer creates a
+            # loop implicitly, so provide a temporary loop when none is running.
+            try:
+                asyncio.get_running_loop()
+                construction_loop = None
+                owns_construction_loop = False
+            except RuntimeError:
+                construction_loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(construction_loop)
+                owns_construction_loop = True
 
             try:
                 self._client: Client = Client(
@@ -125,7 +122,7 @@ class BinanceClient:
                     ping=False,
                 )
             finally:
-                if loop_created_by_get_event_loop:
+                if owns_construction_loop and construction_loop is not None:
                     asyncio.set_event_loop(None)
                     construction_loop.close()
 
