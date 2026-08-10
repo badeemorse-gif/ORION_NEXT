@@ -48,8 +48,8 @@ class ApiService:
             self._report_exporter = report_exporter
         else:
             self._report_exporter = ReportExporter(
-                html_renderer=html_renderer or HtmlReportRenderer(logger=self._logger_instance),
-                json_renderer=json_renderer or JsonReportRenderer(logger=self._logger_instance),
+                html_renderer=html_renderer or HtmlReportRenderer(),
+                json_renderer=json_renderer or JsonReportRenderer(),
                 logger=self._logger_instance,
             )
 
