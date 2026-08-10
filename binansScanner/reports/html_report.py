@@ -1,7 +1,8 @@
-"""Canonical HTML report renderer for ORION ReportResult."""
+"""HTML report renderer with canonical ReportResult support."""
 from __future__ import annotations
 
 import html
+import json
 from dataclasses import fields, is_dataclass
 from datetime import datetime
 from enum import Enum
@@ -15,27 +16,62 @@ class HtmlReportRendererError(Exception):
 
 
 class HtmlReportRenderer:
-    """Render the canonical ReportResult without depending on legacy report models."""
+    """Render canonical ReportResult while allowing legacy reports during controlled migration."""
 
-    def render(self, report: ReportResult) -> str:
-        if not isinstance(report, ReportResult):
-            raise HtmlReportRendererError("render requires a ReportResult.")
+    def render(self, report: ReportResult | Any) -> str:
+        if report is None:
+            raise HtmlReportRendererError("render requires a report object.")
         try:
-            metadata = report.metadata
-            decision = self._value(getattr(report.decision, "decision", None), "WAIT")
-            score = self._value(
-                getattr(report.score, "total_score", None),
-                getattr(report.score, "score", "N/A"),
+            metadata = getattr(report, "metadata", None)
+            report_name = str(getattr(metadata, "report_name", "ORION Report"))
+            project_version = str(getattr(metadata, "project_version", ""))
+            execution_time = float(getattr(metadata, "execution_time_ms", 0.0) or 0.0)
+            generated_at = getattr(report, "generated_at", None)
+            symbol = getattr(report, "symbol", None)
+
+            if isinstance(report, ReportResult):
+                decision = self._value(getattr(report.decision, "decision", None), "WAIT")
+                score = self._value(
+                    getattr(report.score, "total_score", None),
+                    getattr(report.score, "score", "N/A"),
+                )
+                confidence = getattr(report.decision, "confidence", "N/A")
+                timeframes = self._extract_timeframes(report)
+                summary = report.summary
+                highlights = report.highlights
+                warnings = report.warnings
+            else:
+                symbols = list(getattr(report, "symbols", ()) or ())
+                first = symbols[0] if symbols else None
+                symbol = getattr(first, "symbol", "UNKNOWN") if first else "UNKNOWN"
+                decision = getattr(first, "decision", "WAIT") if first else "WAIT"
+                score = getattr(first, "score", "N/A") if first else "N/A"
+                confidence = getattr(first, "confidence", "N/A") if first else "N/A"
+                timeframes = ", ".join(str(item) for item in (getattr(first, "timeframes", ()) or ())) if first else "-"
+                summary_obj = getattr(report, "summary", None)
+                summary = tuple(
+                    f"Total symbols: {getattr(summary_obj, 'total_symbols', 0)}",
+                    f"Buy: {getattr(summary_obj, 'buy_count', 0)}",
+                    f"Sell: {getattr(summary_obj, 'sell_count', 0)}",
+                    f"Hold: {getattr(summary_obj, 'hold_count', 0)}",
+                ) if summary_obj else ()
+                highlights = ()
+                warnings = ()
+                if first:
+                    warnings = tuple(getattr(first, "details", {}).get("warnings", ()) or ())
+
+            generated_text = (
+                generated_at.isoformat()
+                if isinstance(generated_at, datetime)
+                else str(generated_at or getattr(metadata, "generated_at", ""))
             )
-            confidence = getattr(report.decision, "confidence", "N/A")
-            timeframes = self._extract_timeframes(report)
 
             sections = [
                 "<!DOCTYPE html>",
                 '<html lang="en">',
                 "<head>",
                 '<meta charset="UTF-8">',
-                f"<title>{html.escape(metadata.report_name)} - ORION</title>",
+                f"<title>{html.escape(report_name)} - ORION</title>",
                 "<style>",
                 "body{font-family:Arial,sans-serif;margin:0;padding:24px;background:#f4f6f9;color:#222}",
                 ".container{max-width:1100px;margin:auto;background:#fff;padding:28px;border-radius:8px}",
@@ -50,45 +86,43 @@ class HtmlReportRenderer:
                 "</head>",
                 "<body>",
                 '<div class="container">',
-                f"<h1>{html.escape(metadata.report_name)}</h1>",
+                f"<h1>{html.escape(report_name)}</h1>",
                 '<div class="meta">',
-                f"<div><strong>Symbol</strong><br>{html.escape(report.symbol)}</div>",
-                f"<div><strong>Version</strong><br>{html.escape(metadata.project_version)}</div>",
-                f"<div><strong>Generated</strong><br>{html.escape(report.generated_at.isoformat())}</div>",
-                f"<div><strong>Execution Time</strong><br>{metadata.execution_time_ms:.2f} ms</div>",
+                f"<div><strong>Symbol</strong><br>{html.escape(str(symbol or 'UNKNOWN'))}</div>",
+                f"<div><strong>Version</strong><br>{html.escape(project_version)}</div>",
+                f"<div><strong>Generated</strong><br>{html.escape(generated_text)}</div>",
+                f"<div><strong>Execution Time</strong><br>{execution_time:.2f} ms</div>",
                 "</div>",
                 '<div class="card"><h2>Decision</h2><table>',
                 f"<tr><th>Decision</th><td>{html.escape(str(decision))}</td></tr>",
                 f"<tr><th>Score</th><td>{html.escape(str(score))}</td></tr>",
                 f"<tr><th>Confidence</th><td>{html.escape(str(confidence))}</td></tr>",
-                f"<tr><th>Timeframes</th><td>{html.escape(timeframes)}</td></tr>",
+                f"<tr><th>Timeframes</th><td>{html.escape(timeframes or '-')}</td></tr>",
                 "</table></div>",
             ]
 
-            if report.summary:
+            if summary:
                 sections.extend([
                     '<div class="card"><h2>Summary</h2><ul>',
-                    *[f"<li>{html.escape(str(item))}</li>" for item in report.summary],
+                    *[f"<li>{html.escape(str(item))}</li>" for item in summary],
                     "</ul></div>",
                 ])
-
-            if report.highlights:
+            if highlights:
                 sections.extend([
                     '<div class="card"><h2>Highlights</h2><ul>',
-                    *[f"<li>{html.escape(str(item))}</li>" for item in report.highlights],
+                    *[f"<li>{html.escape(str(item))}</li>" for item in highlights],
                     "</ul></div>",
                 ])
-
-            if report.warnings:
+            if warnings:
                 sections.append('<div class="card"><h2>Warnings</h2>')
                 sections.extend(
                     f'<div class="warning">{html.escape(str(item))}</div>'
-                    for item in report.warnings
+                    for item in warnings
                 )
                 sections.append("</div>")
 
             sections.extend([
-                '<div class="card"><h2>Canonical Results</h2>',
+                '<div class="card"><h2>Report Data</h2>',
                 f"<pre>{html.escape(self._pretty_dump(report))}</pre>",
                 "</div>",
                 "</div>",
@@ -115,8 +149,8 @@ class HtmlReportRenderer:
                 return ", ".join(str(item) for item in value)
         return "-"
 
-    @classmethod
-    def _pretty_dump(cls, report: ReportResult) -> str:
+    @staticmethod
+    def _pretty_dump(report: Any) -> str:
         def normalize(value: Any) -> Any:
             if isinstance(value, Enum):
                 return value.value
@@ -133,7 +167,6 @@ class HtmlReportRenderer:
                 return {str(k): normalize(v) for k, v in value.items()}
             return value
 
-        import json
         return json.dumps(normalize(report), ensure_ascii=False, indent=2, default=str)
 
 
