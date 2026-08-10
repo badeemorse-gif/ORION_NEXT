@@ -1,6 +1,6 @@
 # ORION — PROJECT STATE
 
-الإصدار: 1.7
+الإصدار: 1.8
 الحالة: ACTIVE
 المشروع: ORION
 
@@ -22,7 +22,7 @@ PHASE 1 — CONTRACT STABILIZATION / RECONSTRUCTION
 الحالة:
 COMPLETED
 
-تم اعتماد بوابة Phase 1 بعد استيفاء التنفيذ، الاختبارات، المراجعة، Verification، ومراجعة Findings والتوثيق.
+تم اعتماد بوابة Phase 1 بعد استيفاء التنفيذ، الاختبارات، المراجعة، Verification، Findings، Report Architecture، والتوثيق.
 
 ==================================================
 2. الخطوة الحالية
@@ -30,13 +30,11 @@ COMPLETED
 
 إكمال وربط Core Intelligence فوق العقود والحدود المثبتة في Phase 1، مع الحفاظ على المسار الحالي وعدم إعادة فتح العقود المستقرة دون سبب معماري مثبت.
 
-لا يوجد أمر بالقفز إلى مراحل GUI أو Explosion Radar أو Trading Bot في الوقت الحالي.
+لا يوجد أمر حالي بالقفز إلى GUI أو Explosion Radar أو Trading Bot.
 
 ==================================================
-3. الحالة التنفيذية المثبتة
+3. المسار التنفيذي المثبت
 ==================================================
-
-المسار الحالي المثبت:
 
 Provider
 ↓
@@ -62,40 +60,49 @@ Execution
 ↓
 Report
 
-تم إثبات أن فشل Validation يمنع Storage، وأن فشل المرحلة يمنع المراحل اللاحقة ضمن الحدود المختبرة.
-
-تم تثبيت Decision → ExecutionPlan عبر:
-
-binansScanner\core\execution_plan_builder.py
-
-تم تثبيت Execution → Report boundary، بما في ذلك عدم بناء Report عند فشل Execution.
-
-تم تثبيت API transport contracts والمسارات الأساسية.
-
-تم تنظيف دورة حياة event loop الخاصة بإنشاء python-binance Client دون إبقاء event loop مؤقت مفتوحًا.
-
-تمت معالجة تحذير pandas-ta/Ichimoku المرتبط بـ day frequency deprecated دون تعديل المكتبة الخارجية، مع الحفاظ على canonical DatetimeIndex داخل ORION.
+تم إثبات حدود Fail-Fast ومسار ExecutionPlan، كما تم إثبات أن Execution failure لا يتحول إلى Report ناجح.
 
 ==================================================
-4. Result Contracts
+4. العقود الحالية
 ==================================================
 
 AnalysisResult  — STABLE
+ProfileResult   — STABLE / CONTEXT RESULT
 ScoreResult     — STABLE
 DecisionResult  — STABLE
 ExecutionPlan   — CANONICAL
+ExecutionResult — CANONICAL
 ReportResult    — CANONICAL / VERIFIED
-ProfileResult   — CANONICAL CONTRACT
 
-قرار ProfileResult:
-
-ProfileResult مستقل عن Score/Decision في Core Intelligence الحالي، ويستخدم كسياق سوقي للمستهلكين اللاحقين مثل Opportunity Engine.
+ProfileResult مستقل عن Score/Decision في Core Intelligence الحالي ويستخدم كسياق سوقي للمستهلكين اللاحقين، خصوصًا Opportunity Engine.
 
 ==================================================
-5. Verification الأخير المسجل
+5. Report Architecture
 ==================================================
 
-آخر Verification معتمد على GitHub Actions:
+المسار القانوني الحالي:
+
+models.report.ReportResult
+↓
+reports.json_report.JsonReportRenderer / reports.html_report.HtmlReportRenderer
+↓
+reports.report_exporter.ReportExporter
+
+تم التحقق من:
+
+- اكتمال ReportResult عند اكتمال النتائج upstream.
+- عدم اكتمال ReportResult عند غياب نتيجة upstream.
+- استهلاك renderers للعقد القانوني.
+- عبور ReportExporter لحد renderer.
+- عدم تحويل Execution failure إلى Report ناجح.
+
+أي مراجع تاريخية مثل engines.report_engine أو FullReport لا تعاد للمسار التنفيذي دون Architecture Review وDecision صريح.
+
+==================================================
+6. Verification الأخير
+==================================================
+
+آخر Verification معتمد:
 
 108 tests
 OK
@@ -105,20 +112,10 @@ VERIFICATION PASSED
 Python syntax compilation:
 PASSED
 
-تم التحقق من نجاح المسار بعد تنظيف التحذيرات الثلاثة المستهدفة، ولم تعد التحذيرات السابقة الخاصة بـ:
-
-- python-binance / asyncio event loop
-- pandas-ta / Ichimoku day frequency
-
-تظهر في Verification الخاص بالمشروع.
-
-مجموعة API السابقة:
-
-21 tests
-OK
+تم تنظيف التحذيرات التقنية المستهدفة الخاصة بدورة asyncio وday-frequency في pandas-ta، ولم تعد تظهر في Verification المعتمد.
 
 ==================================================
-6. Findings
+7. Findings
 ==================================================
 
 AF-001 — VERIFIED / CLOSED
@@ -129,73 +126,49 @@ AF-005 — VERIFIED / CLOSED
 AF-006 — DEFERRED TO PHASE 6
 AF-007 — VERIFIED / CLOSED
 
-لا يوجد Blocking Finding مفتوح يمنع الانتقال إلى Phase 2.
+لا يوجد Blocking Finding مفتوح يمنع Phase 2.
 
 المصدر التفصيلي:
 ORION_ARCHITECTURE_FINDINGS.md
 
 ==================================================
-7. Report Architecture
+8. التوثيق
 ==================================================
 
-ReportResult هو العقد القانوني للتقارير في المسار الحالي، وReportExporter والـrenderers يستهلكونه عبر حدود منفصلة.
+تم توحيد ملكية الوثائق وإزالة الوثائق التشغيلية المكررة التي كانت تؤدي وظائف متداخلة.
 
-المسار الحالي المثبت في الكود:
+تم دمج المبادئ التنفيذية المفيدة في WORK PROTOCOL وARCHITECTURE وROADMAP.
 
-models.report.ReportResult
-↓
-reports.json_report.JsonReportRenderer / reports.html_report.HtmlReportRenderer
-↓
-reports.report_exporter.ReportExporter
+الوثائق الملغاة كوثائق تشغيلية:
 
-تمت تغطية Report Architecture باختبارات العقد والبنية وE2E، بما في ذلك:
+- ORION_EXECUTION_METHOD.md
+- ORION_TARGET_ARCHITECTURE_IMPLEMENTATION_BASELINE.md
 
-- ReportResult مكتمل بنيويًا عند اكتمال النتائج upstream.
-- ReportResult غير مكتمل عند غياب نتيجة upstream.
-- HTML/JSON renderers تستهلك ReportResult القانوني.
-- ReportExporter يمر عبر renderer boundary.
-- Execution failure لا يتحول إلى Report ناجح.
-
-وعليه تعتبر Report Architecture مستقرة بما يكفي لتكون أساس الانتقال إلى Phase 2.
-
-لا توجد في main الحالية حاجة إلى إبقاء Report Engine بديل كمسار تنفيذي مستقل؛ أي مرجع تاريخي لمسارات engines.report_engine أو FullReport يجب التعامل معه كـlegacy documentation ولا يعاد إدخاله في المسار الحالي دون Architecture Review وDECISION صريح.
+ولا تؤثر عملية تنظيف الوثائق على الكود أو على مسار المطور الحالي.
 
 ==================================================
-8. المراحل القادمة
+9. المراحل القادمة
 ==================================================
 
-المرحلة الحالية:
+PHASE 2 — CORE INTELLIGENCE COMPLETION — CURRENT
 
-PHASE 2 — CORE INTELLIGENCE COMPLETION
+PHASE 3 — SCALPING OPPORTUNITY ENGINE — NEXT MAJOR TARGET
 
-ثم:
+ثم المراحل اللاحقة حسب ORION_ROADMAP.md وORION_FUTURE_ROADMAP.md.
 
-PHASE 3 — SCALPING OPPORTUNITY ENGINE
+الهدف التشغيلي الرئيسي يظل Scalping Opportunity Engine.
 
-وهو الهدف التشغيلي الرئيسي للمشروع.
+Explosion Radar ميزة مستقلة لاحقة.
 
-خارطة المراحل التنفيذية التفصيلية:
-ORION_ROADMAP.md
-
-خارطة المراحل المستقبلية الكبرى:
-ORION_FUTURE_ROADMAP.md
+Trading Bot يأتي بعد استقرار Core/Scalping والاختبارات والاعتماد المطلوب.
 
 ==================================================
-9. قاعدة عدم تكرار الحالة
+10. قاعدة هذا الملف
 ==================================================
 
-هذا الملف يحتوي **الحالة الحالية فقط**.
+هذا الملف يحتوي الحالة الحالية فقط.
 
-لا يعيد نسخ خارطة الطريق الكاملة أو الرؤية المستقبلية أو التاريخ التنفيذي.
-
-لذلك:
-
-- Roadmap للتخطيط المرحلي.
-- Future Roadmap للأهداف الكبرى.
-- Changelog للتاريخ التنفيذي.
-- Decisions للقرارات.
-- Findings للملاحظات المعمارية.
-- Known Problems للمشاكل المؤكدة.
+لا يعيد نسخ التاريخ الكامل أو خارطة المراحل الكاملة أو تفاصيل المعمارية.
 
 ==================================================
 END
