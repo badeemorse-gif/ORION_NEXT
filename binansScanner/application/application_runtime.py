@@ -3,78 +3,81 @@
 Badee Binance Scanner
 Architecture : ORION
 Module       : application.application_runtime
-Version      : 1.0.0
-Status       : ORION Production V1.0 INITIAL
+Version      : 1.1.0
+Status       : ORION Production V1.0
 ===============================================================================
 
-Application Runtime Coordinator responsible solely for managing the core execution
-lifecycle (initialization, execution routing, and shutdown) using components
-resolved exclusively from the DependencyContainer.
+Application Runtime Coordinator responsible for managing the application
+lifecycle through the canonical DependencyContainer and Pipeline boundaries.
+No service or execution component is constructed outside the composition root.
 ===============================================================================
 """
 
 from __future__ import annotations
 
-from typing import Optional
+from typing import Iterable, Optional
 
 from core.dependency_container import DependencyContainer
-from core.pipeline import Pipeline
+from core.pipeline import Pipeline, PipelineItemResult, PipelineSummary
 
-
-# =============================================================================
-# Application Runtime Coordinator
-# =============================================================================
 
 class ApplicationRuntime:
-    """
-    Runtime coordinator managing system lifecycle execution over the core pipeline
-    resolved via the DependencyContainer composition root.
-    """
+    """Runtime facade over the canonical container-owned application pipeline."""
 
     def __init__(self, container: DependencyContainer) -> None:
+        if container is None:
+            raise ValueError("DependencyContainer is required.")
         self._container = container
         self._pipeline: Optional[Pipeline] = None
 
-    # -------------------------------------------------------------------------
-    # Public Methods
-    # -------------------------------------------------------------------------
-
     def initialize(self) -> None:
-        """
-        Initializes the application runtime by building the pipeline from the container
-        if not already initialized.
-        """
+        """Resolve the canonical Pipeline exactly once from the container."""
         if self._pipeline is None:
             self._pipeline = self._container.build_pipeline()
 
     def pipeline(self) -> Pipeline:
-        """
-        Returns the active pipeline instance.
-        Raises RuntimeError if the runtime has not been initialized.
-        """
-        if self._pipeline is None:
-            raise RuntimeError("ApplicationRuntime has not been initialized. Call initialize() first.")
-        return self._pipeline
-
-    def run(self) -> None:
-        """
-        Initializes the runtime if necessary and triggers the runtime execution flow.
-        """
+        """Return the initialized canonical pipeline."""
         if self._pipeline is None:
             self.initialize()
-        # Placeholder for actual pipeline execution loop in subsequent integration phases
-        pass
+        assert self._pipeline is not None
+        return self._pipeline
+
+    def run_symbols(
+        self,
+        symbols: Iterable[str],
+        timeframes: list[str],
+        quantity: Optional[float] = None,
+    ) -> tuple[PipelineSummary, list[PipelineItemResult]]:
+        """Execute a symbol batch through the canonical application pipeline."""
+        return self.pipeline().run_symbols(symbols, timeframes, quantity)
+
+    def run_symbol(
+        self,
+        symbol: str,
+        timeframes: list[str],
+        quantity: Optional[float] = None,
+    ) -> PipelineItemResult:
+        """Execute one symbol through the canonical application pipeline."""
+        return self.pipeline().run_symbol(symbol, timeframes, quantity)
+
+    def summary(self) -> Optional[PipelineSummary]:
+        """Return the latest pipeline summary without rebuilding the application."""
+        return self.pipeline().statistics()
+
+    def reset(self) -> None:
+        """Clear application execution state while retaining container wiring."""
+        self.pipeline().reset()
+
+    def run(self) -> None:
+        """Compatibility lifecycle entrypoint; initialize without inventing inputs."""
+        self.initialize()
 
     def shutdown(self) -> None:
-        """
-        Performs cleanup and shuts down runtime resources.
-        """
-        pass
+        """Release runtime-owned references; container ownership remains external."""
+        self._pipeline = None
 
     def container(self) -> DependencyContainer:
-        """
-        Returns the managed DependencyContainer instance.
-        """
+        """Return the composition-root container managed by this runtime."""
         return self._container
 
 
