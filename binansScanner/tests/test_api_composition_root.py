@@ -7,6 +7,7 @@ from unittest.mock import Mock
 from api.api_router import ApiRouter
 from api.api_service import ApiService
 from core.dependency_container import DependencyContainer
+from core.pipeline import Pipeline
 from scheduler.scheduler_jobs import RegisteredJob
 from scheduler.scheduler_models import ScheduledJob, SchedulerState
 from scheduler.scheduler_service import SchedulerService
@@ -32,6 +33,14 @@ class TestApiCompositionRoot(unittest.TestCase):
         self.assertIsInstance(service, ApiService)
         self.assertIs(service._scheduler, scheduler)
         self.assertIs(service, self.container.build_api_service())
+
+    def test_api_service_reuses_container_pipeline(self) -> None:
+        pipeline = self.container.build_pipeline()
+        service = self.container.build_api_service()
+
+        self.assertIsInstance(pipeline, Pipeline)
+        self.assertIs(service._pipeline, pipeline)
+        self.assertIs(service._pipeline, self.container.build_pipeline())
 
     def test_api_router_reuses_container_api_service(self) -> None:
         service = self.container.build_api_service()
