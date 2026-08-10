@@ -13,6 +13,7 @@ from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Optional, Protocol
 
+from core.execution_plan_builder import ExecutionPlanBuilder
 from engines.analysis_engine import AnalysisEngine
 from engines.decision_engine import DecisionEngine
 from engines.indicator_engine import IndicatorEngine
@@ -21,7 +22,7 @@ from engines.score_engine import ScoreEngine
 from engines.validation_engine import ValidationEngine
 from models.analysis import AnalysisResult
 from models.decision import DecisionResult
-from models.execution import ExecutionPlan, ExecutionSide
+from models.execution import ExecutionPlan
 from models.market import MarketDataset
 from models.profile import ProfileResult
 from models.score import ScoreResult
@@ -110,6 +111,7 @@ class Orchestrator:
         decision_engine: DecisionEngine,
         validation_engine: ValidationEngine,
         config: OrchestratorConfig,
+        execution_plan_builder: Optional[ExecutionPlanBuilder] = None,
     ) -> None:
         dependencies = {
             "provider": provider,
@@ -135,6 +137,7 @@ class Orchestrator:
         self._decision_engine = decision_engine
         self._validation_engine = validation_engine
         self._config = config
+        self._execution_plan_builder = execution_plan_builder or ExecutionPlanBuilder()
         self._last_result: Optional[OrchestratorResult] = None
         self._current_stage = PipelineStage.INITIALIZE
         self._logger = LoggerAdapter(base_logger, {"symbol": "NONE", "stage": "INITIALIZE", "operation": "init"})
@@ -226,7 +229,7 @@ class Orchestrator:
                 profile=profile,
                 score=score,
                 decision=decision,
-                execution_plan=self._build_execution_plan(dataset, decision),
+                execution_plan=self._execution_plan_builder.build(dataset, decision),
                 statistics=stats,
             )
             self._logger.extra.update({"stage": self._current_stage.value, "elapsed_ms": f"{elapsed:.2f}ms"})
@@ -257,36 +260,6 @@ class Orchestrator:
             raise PipelineError("Provider returned an invalid MarketDataset.")
         if not dataset.timeframes:
             raise PipelineError("Provider returned a MarketDataset without timeframes.")
-
-    @staticmethod
-    def _build_execution_plan(
-        dataset: Optional[MarketDataset],
-        decision: Optional[DecisionResult],
-    ) -> Optional[ExecutionPlan]:
-        if dataset is None or decision is None:
-            return None
-
-        mapping = {
-            "FAVORABLE": ExecutionSide.BUY,
-            "UNFAVORABLE": ExecutionSide.SELL,
-            "WAIT": ExecutionSide.HOLD,
-        }
-        side = mapping.get(str(decision.decision).strip().upper(), ExecutionSide.NONE)
-        price = 0.0
-        for timeframe_data in dataset.timeframes.values():
-            dataframe = timeframe_data.dataframe
-            if dataframe is not None and not dataframe.empty and "close" in dataframe.columns:
-                price = float(dataframe["close"].iloc[-1])
-                break
-
-        return ExecutionPlan(
-            symbol=dataset.symbol,
-            side=side,
-            price=price,
-            quantity=1.0,
-            confidence=float(decision.confidence),
-            reason="; ".join(decision.reasons),
-        )
 
     def _change_stage(self, stage: PipelineStage) -> None:
         self._current_stage = stage
