@@ -1,6 +1,6 @@
 # ORION — ARCHITECTURE FINDINGS
 
-الإصدار: 1.1
+الإصدار: 1.2
 الحالة: ACTIVE
 المشروع: ORION
 المستودع الرسمي: badeemorse-gif/ORION_NEXT
@@ -91,7 +91,10 @@ CLOSED
 2026-08-08
 
 الحالة:
-FIXED — بانتظار Verification
+VERIFIED / CLOSED
+
+تاريخ التحقق:
+2026-08-11
 
 الأولوية:
 HIGH
@@ -113,11 +116,26 @@ VALIDATION
 ↓
 STORE valid dataset
 
-### ملاحظة Verification
+### دليل التنفيذ والتحقق
 
-ValidationEngine يعمل في STRICT_MODE ويطرح DatasetValidationError عند وجود أخطاء، لذلك لا يصل المسار إلى Storage عند فشل التحقق.
+تم إنشاء اختبار عقد صريح في:
 
-يبقى الإغلاق الرسمي بعد اختبار Verification مناسب.
+binansScanner/tests/test_orchestrator_validation_order.py
+
+ويثبت الاختبار أن:
+
+1. Dataset غير صالح يتم رفضه قبل Storage.
+2. storage.execute لا يتم استدعاؤه عند فشل Validation.
+3. Dataset صالح يصل إلى Storage بعد نجاح Validation.
+4. المسار يصل إلى FINISHED عند نجاح الدورة.
+
+### قرار المراجعة
+
+تم اعتبار Finding محلولة ومتحققة، ولذلك تم نقلها إلى:
+
+VERIFIED / CLOSED
+
+ولا يجب التعامل معها في المراجعات القادمة كـFinding مفتوحة، إلا إذا ظهر Regression جديد.
 
 --------------------------------------------------
 
