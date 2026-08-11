@@ -15,6 +15,7 @@ This test must remain independent from:
 
 from __future__ import annotations
 
+import math
 import unittest
 
 from engines.score_engine import InvalidScoreData, ScoreEngine
@@ -132,6 +133,27 @@ class TestScoreContract(unittest.TestCase):
     def test_score_rejects_strength_above_hundred(self) -> None:
         analysis = self._bullish_analysis()
         analysis.strength = 101.0
+
+        with self.assertRaises(InvalidScoreData):
+            ScoreEngine().calculate(analysis)
+
+    def test_score_rejects_nan_strength(self) -> None:
+        analysis = self._bullish_analysis()
+        analysis.strength = math.nan
+
+        with self.assertRaises(InvalidScoreData):
+            ScoreEngine().calculate(analysis)
+
+    def test_score_rejects_positive_infinity_strength(self) -> None:
+        analysis = self._bullish_analysis()
+        analysis.strength = math.inf
+
+        with self.assertRaises(InvalidScoreData):
+            ScoreEngine().calculate(analysis)
+
+    def test_score_rejects_negative_infinity_strength(self) -> None:
+        analysis = self._bullish_analysis()
+        analysis.strength = -math.inf
 
         with self.assertRaises(InvalidScoreData):
             ScoreEngine().calculate(analysis)
