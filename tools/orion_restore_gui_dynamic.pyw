@@ -4,7 +4,7 @@ import threading
 import tkinter as tk
 from tkinter import messagebox
 
-BASE_NAME = "orion_restore_gui_core.pyw"
+BASE_NAME = "orion_restore_gui.pyw"
 TARGET = os.path.join(os.path.dirname(__file__), BASE_NAME)
 spec = importlib.util.spec_from_file_location("orion_restore_base", TARGET)
 base = importlib.util.module_from_spec(spec)
@@ -129,9 +129,7 @@ def main():
         return
     root = tk.Tk()
     app = base.OrionRestoreApp(root)
-    app.source_label.configure(
-        text=f"GitHub → Git → Local  |  {app.branch}"
-    )
+    app.source_label.configure(text=f"GitHub → Git → Local  |  {app.branch}")
     root.after(250, app.refresh_branches)
     root.mainloop()
 
