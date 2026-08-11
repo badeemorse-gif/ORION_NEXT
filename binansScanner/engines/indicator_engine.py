@@ -22,6 +22,7 @@ import numpy as np
 import pandas as pd
 
 from enums import Timeframe
+from models.indicators import IndicatorResult
 from models.market import MarketDataset, TimeframeData
 from engines.indicator_calculator import IndicatorCalculator
 
@@ -75,6 +76,16 @@ class IndicatorEngine:
         try:
             calculated = self._calculator.apply_all(dataframe)
             self._calculator.validate_required_indicators(calculated)
+            calculated.attrs["indicator_result"] = IndicatorResult(
+                quality="SUFFICIENT",
+                failed_indicators=[],
+                calculated_indicators=[
+                    "ema_9", "ema_20", "ema_50", "ema_100", "ema_200",
+                    "adx_14", "rsi_14", "momentum_5", "momentum_10",
+                    "mfi_14", "atr_14",
+                ],
+                warnings=[],
+            )
         except Exception as exc:
             raise IndicatorEngineError(
                 f"Failed to calculate canonical indicators for timeframe {timeframe_label}: {exc}"
@@ -100,7 +111,9 @@ class IndicatorEngine:
             raise InvalidIndicatorData(
                 f"Cannot clear indicators because required market columns are missing: {missing}"
             )
-        timeframe_data.dataframe = dataframe[base_columns].copy()
+        cleaned = dataframe[base_columns].copy()
+        cleaned.attrs.pop("indicator_result", None)
+        timeframe_data.dataframe = cleaned
         return timeframe_data
 
     def _validate_dataframe(self, dataframe: pd.DataFrame, timeframe: str) -> None:

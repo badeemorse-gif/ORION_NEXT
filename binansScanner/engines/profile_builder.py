@@ -40,6 +40,7 @@ from typing import Any, Optional
 import numpy as np
 import pandas as pd
 
+from models.indicators import IndicatorResult
 from models.profile import (
     EMAAlignment,
     MarketCharacteristics,
@@ -53,6 +54,12 @@ from models.profile import (
 )
 
 logger = logging.getLogger(__name__)
+
+CRITICAL_PROFILE_INDICATORS: tuple[str, ...] = (
+    "ema_9", "ema_20", "ema_50", "ema_100", "ema_200",
+    "adx_14", "rsi_14", "momentum_5", "momentum_10",
+    "mfi_14", "atr_14",
+)
 
 # -----------------------------------------------------------------------------
 # Compatibility export
@@ -85,6 +92,7 @@ class ProfileBuilder:
         if df is None or df.empty:
             return MarketCharacteristics()
 
+        self._validate_intelligence_input(df)
         latest = df.iloc[-1]
 
         # ------------------------------------------------------------------
@@ -218,6 +226,50 @@ class ProfileBuilder:
             volume_score=volume_score,
             volatility_score=volatility_score,
         )
+
+    def _validate_intelligence_input(self, df: pd.DataFrame) -> None:
+        """Reject incomplete indicator intelligence before classification."""
+        missing = [
+            name
+            for name in CRITICAL_PROFILE_INDICATORS
+            if name not in df.columns
+        ]
+        if missing:
+            raise ValueError(
+                "Profile intelligence blocked: missing critical indicators: "
+                + ", ".join(missing)
+            )
+
+        metadata = df.attrs.get("indicator_result")
+        if metadata is not None:
+            if not isinstance(metadata, IndicatorResult):
+                raise ValueError(
+                    "Profile intelligence blocked: invalid indicator metadata."
+                )
+            if metadata.quality != "SUFFICIENT" or metadata.failed_indicators:
+                raise ValueError(
+                    "Profile intelligence blocked: indicator metadata reports "
+                    "failed or insufficient indicators."
+                )
+
+        latest = df.iloc[-1]
+        invalid = [
+            name
+            for name in CRITICAL_PROFILE_INDICATORS
+            if not np.isfinite(float(latest[name]))
+        ]
+        if invalid:
+            raise ValueError(
+                "Profile intelligence blocked: invalid critical indicators: "
+                + ", ".join(invalid)
+            )
+
+        if len(df) >= 5 and not np.isfinite(
+            df["ema_20"].tail(5).astype(float).to_numpy()
+        ).all():
+            raise ValueError(
+                "Profile intelligence blocked: invalid ema_20 slope history."
+            )
 
     # =========================================================================
     # Feature Extraction
