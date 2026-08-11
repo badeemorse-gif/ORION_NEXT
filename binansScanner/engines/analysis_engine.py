@@ -3,7 +3,7 @@
 Badee Binance Scanner
 Architecture : ORION
 Module       : engines.analysis_engine
-Version      : 3.1.0
+Version      : 3.2.0
 Status       : Canonical Analysis Contract
 ===============================================================================
 
@@ -34,6 +34,7 @@ from __future__ import annotations
 import logging
 from typing import Optional
 
+import numpy as np
 import pandas as pd
 
 from enums import Timeframe
@@ -123,6 +124,26 @@ class AnalysisEngine:
                 warnings=warnings,
             )
 
+        invalid_indicators = self._invalid_required_indicators(dataframe)
+        if invalid_indicators:
+            logger.warning(
+                "Invalid required indicators for %s: %s",
+                timeframe.value,
+                invalid_indicators,
+            )
+            warnings.append("INVALID_REQUIRED_INDICATORS")
+            signals.append("LOW_CONFIDENCE_DATA")
+
+            # NaN, Inf, and non-numeric required inputs are equally unsafe as
+            # missing indicators. Never allow partial/invalid intelligence to
+            # become directional output.
+            return AnalysisResult(
+                market_state="NEUTRAL",
+                strength=0.0,
+                signals=signals,
+                warnings=warnings,
+            )
+
         market_state = self._determine_market_state(dataframe, signals)
         strength = self._calculate_market_strength(dataframe, signals)
 
@@ -174,6 +195,24 @@ class AnalysisEngine:
             for indicator in self.REQUIRED_INDICATORS
             if indicator not in dataframe.columns
         ]
+
+    def _invalid_required_indicators(self, dataframe: pd.DataFrame) -> list[str]:
+        """Return required indicators whose latest value is not finite numeric data."""
+        latest = dataframe.iloc[-1]
+        invalid: list[str] = []
+
+        for indicator in self.REQUIRED_INDICATORS:
+            value = latest[indicator]
+            try:
+                numeric_value = float(value)
+            except (TypeError, ValueError):
+                invalid.append(indicator)
+                continue
+
+            if not np.isfinite(numeric_value):
+                invalid.append(indicator)
+
+        return invalid
 
     def _determine_market_state(
         self,
