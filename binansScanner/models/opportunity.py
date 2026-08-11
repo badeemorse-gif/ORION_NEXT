@@ -94,6 +94,7 @@ class Opportunity:
             and self.status is OpportunityStatus.ACTIVE
             and self.freshness is FreshnessStatus.FRESH
             and self.risk.state is RiskState.ACCEPTABLE
+            and not self.is_expired
         )
 
     @property
