@@ -1,0 +1,287 @@
+"""
+===============================================================================
+ORION
+Module : core.profile_intelligence
+Version: 1.0.0
+
+Profile Intelligence — Fail-Closed
+
+This module interprets the canonical ProfileResult without mutating it and
+without introducing a replacement Profile contract.
+
+Boundary
+--------
+ProfileResult
+    |
+    v
+ProfileIntelligence
+    |
+    v
+ProfileIntelligenceResult
+
+Safety rule
+-----------
+If the profile is missing, incomplete, malformed, blocked, or internally
+inconsistent, this layer MUST return a blocked neutral result. It must never
+invent a directional recommendation from incomplete profile information.
+===============================================================================
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from enum import Enum
+from math import isfinite
+from typing import Any, Optional
+
+from models.profile import (
+    EMAAlignment,
+    MarketPhaseType,
+    MomentumState,
+    ProfileResult,
+    RiskLevel,
+    TrendStrengthType,
+    TrendType,
+    VolatilityLevelType,
+    VolumeStrength,
+)
+
+
+class ProfileRecommendation(str, Enum):
+    """Canonical recommendation state produced by ProfileIntelligence."""
+
+    BULLISH = "Bullish"
+    BEARISH = "Bearish"
+    NEUTRAL = "Neutral"
+    BLOCKED = "Blocked"
+
+
+@dataclass(frozen=True, slots=True)
+class ProfileIntelligenceResult:
+    """Immutable result of ProfileIntelligence evaluation."""
+
+    recommendation: str
+    confidence: float
+    reasons: tuple[str, ...] = ()
+    blocked: bool = False
+
+    @property
+    def is_directional(self) -> bool:
+        return self.recommendation in {
+            ProfileRecommendation.BULLISH.value,
+            ProfileRecommendation.BEARISH.value,
+        }
+
+    @property
+    def is_valid(self) -> bool:
+        return (
+            self.recommendation in {
+                ProfileRecommendation.BULLISH.value,
+                ProfileRecommendation.BEARISH.value,
+                ProfileRecommendation.NEUTRAL.value,
+            }
+            and not self.blocked
+            and isfinite(self.confidence)
+            and 0.0 <= self.confidence <= 100.0
+        )
+
+
+class ProfileIntelligence:
+    """
+    Deterministic interpreter for the canonical ProfileResult.
+
+    This class deliberately does not mutate ProfileResult, MarketDataset, or
+    TimeframeProfile objects. It is also independent of Score and Decision;
+    those layers remain responsible for their own canonical contracts.
+    """
+
+    _VALID_TRENDS = {item.value for item in TrendType}
+    _VALID_MOMENTUM = {item.value for item in MomentumState}
+    _VALID_RISKS = {item.value for item in RiskLevel}
+    _VALID_EMA = {item.value for item in EMAAlignment}
+    _VALID_PHASES = {item.value for item in MarketPhaseType}
+    _VALID_TREND_STRENGTH = {item.value for item in TrendStrengthType}
+    _VALID_VOLATILITY = {item.value for item in VolatilityLevelType}
+    _VALID_VOLUME = {item.value for item in VolumeStrength}
+
+    _BULLISH_MOMENTUM = {
+        MomentumState.STRONG_BUY.value,
+        MomentumState.BUY.value,
+    }
+    _BEARISH_MOMENTUM = {
+        MomentumState.STRONG_SELL.value,
+        MomentumState.SELL.value,
+    }
+
+    def evaluate(
+        self,
+        profile: Optional[ProfileResult],
+    ) -> ProfileIntelligenceResult:
+        """Evaluate a profile and fail closed on every invalid boundary."""
+
+        invalid_reason = self._validate_profile(profile)
+        if invalid_reason is not None:
+            return self._blocked(invalid_reason)
+
+        assert profile is not None
+        market = profile.market
+
+        trend = market.trend
+        momentum = market.momentum
+        risk = market.risk_level
+
+        if risk == RiskLevel.EXTREME.value:
+            return ProfileIntelligenceResult(
+                recommendation=ProfileRecommendation.NEUTRAL.value,
+                confidence=0.0,
+                reasons=("Extreme market risk blocks directional profile intelligence.",),
+                blocked=True,
+            )
+
+        if (
+            trend == TrendType.BULLISH.value
+            and momentum in self._BULLISH_MOMENTUM
+        ):
+            return self._directional_result(
+                ProfileRecommendation.BULLISH.value,
+                profile,
+                "Trend and momentum are aligned bullishly.",
+            )
+
+        if (
+            trend == TrendType.BEARISH.value
+            and momentum in self._BEARISH_MOMENTUM
+        ):
+            return self._directional_result(
+                ProfileRecommendation.BEARISH.value,
+                profile,
+                "Trend and momentum are aligned bearishly.",
+            )
+
+        return ProfileIntelligenceResult(
+            recommendation=ProfileRecommendation.NEUTRAL.value,
+            confidence=self._safe_confidence(profile),
+            reasons=("Profile conditions do not support a validated directional recommendation.",),
+            blocked=False,
+        )
+
+    def analyze(
+        self,
+        profile: Optional[ProfileResult],
+    ) -> ProfileIntelligenceResult:
+        """Compatibility alias for the canonical evaluate() operation."""
+
+        return self.evaluate(profile)
+
+    def _directional_result(
+        self,
+        recommendation: str,
+        profile: ProfileResult,
+        reason: str,
+    ) -> ProfileIntelligenceResult:
+        confidence = self._safe_confidence(profile)
+
+        if confidence <= 0.0:
+            return self._blocked(
+                "Directional profile intelligence requires positive confidence."
+            )
+
+        return ProfileIntelligenceResult(
+            recommendation=recommendation,
+            confidence=confidence,
+            reasons=(reason,),
+            blocked=False,
+        )
+
+    def _safe_confidence(self, profile: ProfileResult) -> float:
+        values = (
+            profile.market.confidence,
+            profile.statistics.confidence_limit,
+        )
+
+        if any(not self._finite_number(value) for value in values):
+            return 0.0
+
+        confidence = min(values)
+        return min(max(float(confidence), 0.0), 100.0)
+
+    def _validate_profile(
+        self,
+        profile: Optional[ProfileResult],
+    ) -> Optional[str]:
+        if profile is None:
+            return "ProfileResult is missing; directional intelligence is blocked."
+
+        if not isinstance(profile, ProfileResult):
+            return "Profile intelligence requires the canonical ProfileResult contract."
+
+        if not profile.is_valid:
+            return "ProfileResult is not valid/tradeable; directional intelligence is blocked."
+
+        if not profile.timeframes:
+            return "ProfileResult contains no timeframe profiles."
+
+        market = profile.market
+        statistics = profile.statistics
+
+        if market is None or statistics is None:
+            return "ProfileResult contains incomplete canonical market/statistics data."
+
+        categorical_fields = (
+            ("trend", market.trend, self._VALID_TRENDS),
+            ("trend_strength", market.trend_strength, self._VALID_TREND_STRENGTH),
+            ("momentum", market.momentum, self._VALID_MOMENTUM),
+            ("volume_strength", market.volume_strength, self._VALID_VOLUME),
+            ("volatility_level", market.volatility_level, self._VALID_VOLATILITY),
+            ("ema_alignment", market.ema_alignment, self._VALID_EMA),
+            ("market_phase", market.market_phase, self._VALID_PHASES),
+            ("risk_level", market.risk_level, self._VALID_RISKS),
+        )
+
+        for field_name, value, valid_values in categorical_fields:
+            if value not in valid_values:
+                return f"ProfileResult contains invalid {field_name}: {value!r}."
+
+        numeric_fields = (
+            ("market.confidence", market.confidence, 0.0, 100.0),
+            ("market.trend_score", market.trend_score, 0.0, 100.0),
+            ("market.momentum_score", market.momentum_score, 0.0, 100.0),
+            ("market.volume_score", market.volume_score, 0.0, 100.0),
+            ("market.volatility_score", market.volatility_score, 0.0, 100.0),
+            ("statistics.confidence_limit", statistics.confidence_limit, 0.0, 100.0),
+            ("statistics.health_score", statistics.health_score, 0.0, 100.0),
+            ("statistics.completion_ratio", statistics.completion_ratio, 0.0, 1.0),
+        )
+
+        for field_name, value, lower, upper in numeric_fields:
+            if not self._finite_number(value):
+                return f"ProfileResult contains non-finite {field_name}."
+            if not lower <= float(value) <= upper:
+                return f"ProfileResult contains out-of-range {field_name}."
+
+        if profile.statistics.completion_ratio <= 0.0:
+            return "ProfileResult has no completed market-data coverage."
+
+        for timeframe in profile.timeframes:
+            if not getattr(timeframe, "timeframe", None):
+                return "ProfileResult contains a malformed timeframe profile."
+            if getattr(timeframe, "characteristics", None) is None:
+                return "ProfileResult contains a timeframe without characteristics."
+
+        return None
+
+    @staticmethod
+    def _finite_number(value: Any) -> bool:
+        try:
+            return isfinite(float(value))
+        except (TypeError, ValueError):
+            return False
+
+    @staticmethod
+    def _blocked(reason: str) -> ProfileIntelligenceResult:
+        return ProfileIntelligenceResult(
+            recommendation=ProfileRecommendation.BLOCKED.value,
+            confidence=0.0,
+            reasons=(reason,),
+            blocked=True,
+        )
