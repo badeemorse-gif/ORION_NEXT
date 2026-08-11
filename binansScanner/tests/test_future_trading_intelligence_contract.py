@@ -51,9 +51,7 @@ class TestOpportunityContract(unittest.TestCase):
         self.assertFalse(opportunity.is_eligible)
 
     def test_stale_opportunity_is_not_eligible(self) -> None:
-        opportunity = self._valid().__class__(
-            **{**self._valid().__dict__, "freshness": FreshnessStatus.STALE}
-        ) if False else Opportunity(
+        opportunity = Opportunity(
             symbol="BTCUSDT",
             timeframe="5m",
             direction=OpportunityDirection.LONG,
@@ -140,7 +138,7 @@ class TestExplosiveWatchlistContract(unittest.TestCase):
                     )
 
     def test_stale_candidate_is_not_monitorable(self) -> None:
-        candidate = self._valid().__class__(
+        candidate = ExplosiveWatchCandidate(
             symbol="ALTUSDT",
             timeframe_window="1h-12h",
             move_probability=72.0,
