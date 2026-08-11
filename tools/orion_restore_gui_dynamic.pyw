@@ -230,7 +230,7 @@ def restore_all(self, branches):
     if _git_value(self, ["rev-parse", "--is-inside-work-tree"]) != "true":
         raise RuntimeError("المجلد المحلي ليس مستودع Git صالحًا.")
     self._ui("[2/3] جلب جميع فروع GitHub دفعة واحدة...")
-    code, lines = _git(self, ["fetch", "--prune", base.REMOTE])
+    code, lines = _git(self, ["fetch", "--prune", base.REMOTE, "+refs/heads/*:refs/remotes/origin/*"])
     if code != 0:
         raise RuntimeError("فشل جلب الفروع من GitHub.\n" + ("\n".join(lines) or "Git fetch failed."))
     for line in lines:
