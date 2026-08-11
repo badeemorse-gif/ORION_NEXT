@@ -1,6 +1,6 @@
 # ORION Restore — ALL Branch Synchronization Contract
 
-الإصدار: 1.1
+الإصدار: 1.2
 الحالة: IMPLEMENTED — HARDENED
 
 ## الهدف
@@ -26,21 +26,24 @@ C:\Users\badee\Desktop\ORION_NEXT_ALL_BRANCHES\
 
 كل worktree يمثل snapshot مستقلًا للفرع المقابل.
 
+**مهم:** `ALL` لا يضع محتويات الفروع المختلفة داخل `C:\Users\badee\Desktop\ORION_NEXT` لأن ذلك سيخلط الفروع ويخالف عقد العزل. محتويات ALL الفعلية توجد في `ORION_NEXT_ALL_BRANCHES`, فرعًا بفرع.
+
 ## سلوك ALL
 
 1. يكتشف الفروع الحالية مباشرة من GitHub باستخدام `git ls-remote --heads`.
 2. يعرض بدء المزامنة لكل فرع قبل تنفيذ أوامر Git الخاصة به.
 3. يجلب جميع الفروع دفعة واحدة عبر `git fetch --prune origin` بدل تنفيذ `fetch` شبكة مستقل لكل فرع؛ الهدف تقليل زمن المزامنة ومنع الانتظار المتكرر.
 4. ينشئ worktree مستقلًا للفرع إذا لم يكن موجودًا.
-5. إذا كان worktree موجودًا ومسجلًا لدى Git، يعاد ضبطه إلى `origin/<branch>` ثم ينظف حالته.
-6. يتم تنظيف tracked/untracked/ignored state داخل worktree الخاص بالفرع فقط.
-7. يتم تحديث submodules داخل worktree الخاص بالفرع فقط.
-8. يتم التحقق من:
-   - تطابق `HEAD` مع `origin/<branch>`.
-   - عدم وجود tracked differences.
-   - عدم وجود untracked/ignored leftovers.
-9. يتم تسجيل آخر commit لكل فرع في حالة المزامنة المحلية.
-10. يبقى `C:\Users\badee\Desktop\ORION_NEXT` كما هو أثناء `ALL` ولا يتم تحويله من فرع إلى آخر.
+5. إذا كان worktree موجودًا ومسجلًا لدى Git، يتم تنظيف حالته أولًا ثم إعادة تحميله إلى `origin/<branch>`.
+6. يتم تعطيل sparse-checkout داخل Worktree الخاص بـALL قبل التحميل حتى لا تمنع إعدادات sparse القديمة ظهور ملفات الفرع.
+7. يتم تنفيذ `reset --hard` ثم `checkout --force` للـtarget ref لضمان materialization فعلي لكل شجرة الفرع.
+8. يتم تنظيف tracked/untracked/ignored state داخل worktree الخاص بالفرع فقط.
+9. يتم تحديث submodules داخل worktree الخاص بالفرع فقط.
+10. يتم التحقق من وجود المسارات المتتبعة فعليًا على القرص، وليس مجرد تطابق الـcommit.
+11. يتم التحقق أيضًا من عدم وجود tracked differences وعدم وجود untracked/ignored leftovers.
+12. يتم تسجيل آخر commit لكل فرع في حالة المزامنة المحلية.
+13. عند نجاح ALL يتم فتح مجلد `ORION_NEXT_ALL_BRANCHES` تلقائيًا في Windows لتسهيل رؤية المحتوى الذي تمت مزامنته فعليًا.
+14. يبقى `C:\Users\badee\Desktop\ORION_NEXT` كما هو أثناء `ALL` ولا يتم تحويله من فرع إلى آخر.
 
 ## حماية من التعليق
 
@@ -54,6 +57,8 @@ C:\Users\badee\Desktop\ORION_NEXT_ALL_BRANCHES\
 
 إذا وجد البرنامج مجلدًا يحمل اسم worktree المتوقع لكنه **ليس worktree مسجلًا لدى Git**، تتوقف عملية `ALL` ولا تحذف المجلد؛ وذلك لمنع فقد أي ملفات محلية غير معروفة.
 
+أما Worktree المسجل والتابع لـALL، فيُعامل كمساحة مزامنة تملكها الأداة: يتم تنظيفه وإعادة materialization وفق الفرع المستهدف.
+
 كما أن أسماء worktrees المشتقة من أسماء الفروع تُعالج بطريقة آمنة لنظام Windows مع hash قصير عند الحاجة لمنع تصادم أسماء فرعين مختلفين.
 
 ## الوضع الفردي
@@ -62,10 +67,10 @@ C:\Users\badee\Desktop\ORION_NEXT_ALL_BRANCHES\
 
 ## النتيجة المعتمدة
 
-`ALL` = **Discover + Batch Fetch + Isolated Worktree Restore + Exact Verification لكل فرع**.
+`ALL` = **Discover + Batch Fetch + Isolated Worktree Restore + Full Materialization + Exact Physical Verification لكل فرع**.
 
 ولا يعني `ALL` دمج الفروع أو نسخها فوق مجلد واحد.
 
 ## مبدأ الاعتماد
 
-لا نعلن نجاح ALL إلا بعد ظهور `EXACT MATCH` لكل فرع من الفروع المكتشفة. إذا فشل فرع واحد، تتوقف العملية وتظهر المشكلة بوضوح بدل إعلان نجاح جزئي.
+لا نعلن نجاح ALL إلا بعد ظهور `EXACT MATCH` لكل فرع من الفروع المكتشفة، وبعد التأكد من أن المسارات المتتبعة موجودة فعليًا على القرص. إذا فشل فرع واحد، تتوقف العملية وتظهر المشكلة بوضوح بدل إعلان نجاح جزئي.
