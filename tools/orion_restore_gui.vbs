@@ -1,6 +1,6 @@
 Option Explicit
 
-Dim shell, fso, scriptDir, pyw, scriptPath, cmd, rc
+Dim shell, fso, scriptDir, pyw, scriptPath, cmd, rc, branchArg
 
 Set shell = CreateObject("WScript.Shell")
 Set fso = CreateObject("Scripting.FileSystemObject")
@@ -34,7 +34,15 @@ End If
 
 On Error GoTo 0
 
+branchArg = ""
+If WScript.Arguments.Count > 0 Then
+    branchArg = Trim(WScript.Arguments(0))
+End If
+
 cmd = """" & pyw & """ """ & scriptPath & """"
+If branchArg <> "" Then
+    cmd = cmd & " """ & branchArg & """"
+End If
 shell.Run cmd, 0, False
 
 Set shell = Nothing
