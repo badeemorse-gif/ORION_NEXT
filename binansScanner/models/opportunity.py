@@ -45,6 +45,9 @@ class Opportunity:
     The contract carries evidence and validity state, but does not decide
     whether an order should be submitted. Missing optional market estimates
     remain explicit rather than being replaced by synthetic defaults.
+
+    ``expected_move_pct`` is expressed as a percentage of the reference price
+    used by the future opportunity engine.
     """
 
     symbol: str
@@ -56,7 +59,7 @@ class Opportunity:
 
     entry_candidate: Optional[float] = None
     invalidation: Optional[float] = None
-    expected_move: Optional[float] = None
+    expected_move_pct: Optional[float] = None
 
     supporting_evidence: tuple[str, ...] = ()
     market_context: tuple[str, ...] = ()
@@ -83,7 +86,7 @@ class Opportunity:
         for name, value in (
             ("entry_candidate", self.entry_candidate),
             ("invalidation", self.invalidation),
-            ("expected_move", self.expected_move),
+            ("expected_move_pct", self.expected_move_pct),
         ):
             if value is not None:
                 _finite(value, name)
