@@ -18,6 +18,7 @@ The engine must:
     - preserve analysis warnings;
     - preserve relevant reasons/signals;
     - reject invalid inputs;
+    - reject non-finite score values;
     - produce deterministic decision states.
 
 ===============================================================================
@@ -25,6 +26,7 @@ The engine must:
 
 from __future__ import annotations
 
+import math
 import unittest
 
 from engines.decision_engine import (
@@ -331,6 +333,60 @@ class TestDecisionContract(unittest.TestCase):
                 score,
             )
 
+    def test_score_nan_is_rejected(self) -> None:
+        analysis = AnalysisResult(
+            market_state="BULLISH",
+            strength=80.0,
+            signals=[],
+            warnings=[],
+        )
+
+        score = ScoreResult(
+            score=math.nan,
+            category="STRONG_BULLISH",
+            factors=[],
+            warnings=[],
+        )
+
+        with self.assertRaises(InvalidScoreData):
+            self.engine.decide(analysis, score)
+
+    def test_score_positive_infinity_is_rejected(self) -> None:
+        analysis = AnalysisResult(
+            market_state="BULLISH",
+            strength=80.0,
+            signals=[],
+            warnings=[],
+        )
+
+        score = ScoreResult(
+            score=math.inf,
+            category="STRONG_BULLISH",
+            factors=[],
+            warnings=[],
+        )
+
+        with self.assertRaises(InvalidScoreData):
+            self.engine.decide(analysis, score)
+
+    def test_score_negative_infinity_is_rejected(self) -> None:
+        analysis = AnalysisResult(
+            market_state="BEARISH",
+            strength=80.0,
+            signals=[],
+            warnings=[],
+        )
+
+        score = ScoreResult(
+            score=-math.inf,
+            category="STRONG_BEARISH",
+            factors=[],
+            warnings=[],
+        )
+
+        with self.assertRaises(InvalidScoreData):
+            self.engine.decide(analysis, score)
+
     def test_invalid_market_state_is_rejected(self) -> None:
         analysis = AnalysisResult(
             market_state="INVALID",
@@ -415,6 +471,7 @@ class TestDecisionContract(unittest.TestCase):
             result.confidence,
             100.0,
         )
+        self.assertTrue(math.isfinite(result.confidence))
 
 
 if __name__ == "__main__":
