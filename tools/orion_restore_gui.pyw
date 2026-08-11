@@ -206,15 +206,19 @@ class OrionRestoreApp:
             raise RuntimeError("\n".join(lines) or "Git command failed.")
         return lines[-1].strip() if lines else ""
 
-    def _stats(self, local_commit, remote_commit):
+    def _stats(self, target_commit):
+        """Count tracked changes required to make the current tree match target."""
         code, lines = self._git([
-            "diff", "--name-status", "--find-renames",
-            local_commit, remote_commit
+            "diff", "--name-status", "--find-renames", target_commit
         ])
         if code != 0:
             raise RuntimeError("\n".join(lines) or "تعذر حساب إحصائيات الملفات.")
-        added = sum(1 for line in lines if line.startswith("A"))
-        removed = sum(1 for line in lines if line.startswith("D"))
+
+        # `git diff <commit>` compares that commit with the current working
+        # tree. The direction is target -> local, so A/D are inverted here to
+        # describe the action required on Local to reach the target.
+        added = sum(1 for line in lines if line.startswith("D"))
+        removed = sum(1 for line in lines if line.startswith("A"))
         updated = len(lines) - added - removed
         return len(lines), added, updated, removed
 
@@ -268,9 +272,9 @@ class OrionRestoreApp:
             self._ui(f"Local commit : {local_commit}")
             self._ui(f"GitHub commit: {remote_commit}")
 
-            total, added, updated, removed = self._stats(local_commit, remote_commit)
+            total, added, updated, removed = self._stats(remote_commit)
             extras = self._extra_preview()
-            self._ui(f"Tracked diff: {total} | Added: {added} | Updated: {updated} | Removed: {removed}")
+            self._ui(f"Tracked changes needed: {total} | Added: {added} | Updated: {updated} | Removed: {removed}")
             self._ui(f"Extra local paths to remove: {len(extras)}")
             for line in extras[:100]:
                 self._ui(f"  {line}")
