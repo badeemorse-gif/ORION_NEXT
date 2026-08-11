@@ -145,25 +145,20 @@ class TestIndicatorContract(unittest.TestCase):
     def test_profile_critical_nan_is_rejected_at_indicator_boundary(
         self,
     ) -> None:
-        timeframe_data = TimeframeData(
-            timeframe=Timeframe.H1,
-            dataframe=self._build_dataframe(rows=10),
-            data_health=DataHealth.GOOD,
-            candles_count=10,
-            first_timestamp=(
-                self._build_dataframe(rows=10)
-                .index[0]
-                .to_pydatetime()
-            ),
-            last_timestamp=(
-                self._build_dataframe(rows=10)
-                .index[-1]
-                .to_pydatetime()
-            ),
-        )
+        class BrokenCalculator(IndicatorCalculator):
+            """Inject invalid critical output after normal calculation."""
+
+            def apply_all(self, df: pd.DataFrame) -> pd.DataFrame:
+                calculated = super().apply_all(df)
+                calculated["ema_200"] = np.nan
+                return calculated
+
+        timeframe_data = self._build_timeframe_data()
 
         with self.assertRaises(IndicatorEngineError) as context:
-            IndicatorEngine().calculate_timeframe(
+            IndicatorEngine(
+                calculator=BrokenCalculator()
+            ).calculate_timeframe(
                 timeframe_data,
                 symbol="BTCUSDT",
             )
