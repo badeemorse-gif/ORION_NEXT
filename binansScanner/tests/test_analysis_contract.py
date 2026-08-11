@@ -3,7 +3,7 @@
 Badee Binance Scanner
 Architecture : ORION
 Module       : tests.test_analysis_contract
-Version      : 1.0.2
+Version      : 1.1.0
 ===============================================================================
 
 Canonical Analysis Contract tests.
@@ -123,6 +123,31 @@ class TestAnalysisContract(unittest.TestCase):
         result = AnalysisEngine().analyze(dataset)
         self.assertEqual(result.market_state, "NEUTRAL")
         self.assertEqual(result.strength, 0.0)
+
+    def test_nan_required_indicator_fails_closed(self) -> None:
+        dataframe = self._build_dataframe()
+        dataframe.loc[dataframe.index[-1], "rsi_14"] = np.nan
+        result = AnalysisEngine().analyze(self._build_dataset(dataframe))
+        self.assertEqual(result.market_state, "NEUTRAL")
+        self.assertEqual(result.strength, 0.0)
+        self.assertIn("INVALID_REQUIRED_INDICATORS", result.warnings)
+        self.assertIn("LOW_CONFIDENCE_DATA", result.signals)
+
+    def test_infinite_required_indicator_fails_closed(self) -> None:
+        dataframe = self._build_dataframe()
+        dataframe.loc[dataframe.index[-1], "adx_14"] = np.inf
+        result = AnalysisEngine().analyze(self._build_dataset(dataframe))
+        self.assertEqual(result.market_state, "NEUTRAL")
+        self.assertEqual(result.strength, 0.0)
+        self.assertIn("INVALID_REQUIRED_INDICATORS", result.warnings)
+
+    def test_non_numeric_required_indicator_fails_closed(self) -> None:
+        dataframe = self._build_dataframe()
+        dataframe.loc[dataframe.index[-1], "momentum_5"] = "invalid"
+        result = AnalysisEngine().analyze(self._build_dataset(dataframe))
+        self.assertEqual(result.market_state, "NEUTRAL")
+        self.assertEqual(result.strength, 0.0)
+        self.assertIn("INVALID_REQUIRED_INDICATORS", result.warnings)
 
     def test_empty_dataset_is_safe(self) -> None:
         metadata = MarketMetadata(
