@@ -15,6 +15,7 @@ normalized numerical scores and categories without direct data-frame access.
 from __future__ import annotations
 
 import logging
+import math
 from dataclasses import dataclass
 from typing import Any, Optional
 
@@ -250,6 +251,11 @@ class ScoreEngine:
     ) -> None:
         """
         Validate analysis result properties and bounds.
+
+        Fail-closed boundary: non-finite strength must never reach scoring.
+        In particular, NaN bypasses ordinary range comparisons and could
+        otherwise contaminate normalization/classification into a false
+        directional score.
         """
         if analysis.market_state not in {
             "BULLISH",
@@ -261,7 +267,21 @@ class ScoreEngine:
                 f"({analysis.market_state}) in AnalysisResult."
             )
 
-        if analysis.strength < 0.0 or analysis.strength > 100.0:
+        try:
+            strength = float(analysis.strength)
+        except (TypeError, ValueError) as exc:
+            raise InvalidScoreData(
+                f"Invalid strength value ({analysis.strength}) in AnalysisResult. "
+                "Expected a finite number from 0 to 100."
+            ) from exc
+
+        if not math.isfinite(strength):
+            raise InvalidScoreData(
+                f"Invalid strength value ({analysis.strength}) in AnalysisResult. "
+                "Expected a finite number from 0 to 100."
+            )
+
+        if strength < 0.0 or strength > 100.0:
             raise InvalidScoreData(
                 f"Invalid strength value "
                 f"({analysis.strength}) in AnalysisResult. "
