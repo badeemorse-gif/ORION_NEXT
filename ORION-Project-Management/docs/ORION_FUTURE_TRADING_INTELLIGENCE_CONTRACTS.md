@@ -1,6 +1,6 @@
 # ORION — FUTURE TRADING INTELLIGENCE CONTRACTS
 
-الإصدار: 1.0
+الإصدار: 1.1
 الحالة: DESIGN BASELINE — NOT WIRED
 
 ## 1. الغرض
@@ -55,9 +55,13 @@
 - estimated time window
 - status / expiry
 
+`is_monitorable` بوابة عقدية محافظة فقط: MONITOR + FRESH + complete evidence package. وهي لا تعني أن الحركة ستحدث، ولا تنتج أمر تداول.
+
 لا يجوز أن تؤثر نتيجة Explosive Watchlist في ترتيب أو صلاحية Scalping Opportunities، ولا تدخل Score أو Decision الحالي.
 
 ## 4. Trading Bot boundary
+
+العقد المستقبلي لبوابة البوت هو `models.trading_readiness.TradingReadiness`.
 
 الطبقة المستقبلية يجب أن تبقى منفصلة عن ORION Intelligence:
 
@@ -65,15 +69,23 @@ ORION Intelligence
 ↓
 Opportunity
 ↓
-Future Risk / Validation Gate
+TradingReadiness
 ↓
 Bot Decision
 ↓
 Order Execution
 
-العقود الحالية لا تحتوي أوامر Binance ولا مفاتيح API ولا live-trading wiring.
+`TradingReadiness` بوابة معلوماتية **fail-closed**. لا تحتوي أوامر Binance ولا مفاتيح API ولا live-trading wiring.
 
-قبل السماح لبوت مستقبلي بالتنفيذ يجب أن تكون intelligence مكتملة وغير منتهية، والمخاطر مقبولة، والسياق صالحًا. أي فشل في هذه الشروط يجب أن يمنع التنفيذ بدل تحويل نقص المعلومات إلى قرار تداول.
+لا تكون البوابة `eligible` إلا إذا تحققت جميع الشروط الإلزامية:
+
+- intelligence complete
+- confidence acceptable
+- opportunity fresh
+- risk acceptable
+- market conditions valid
+
+أي شرط غير متحقق يمنع الأهلية. وجود `Opportunity` وحده لا يمنح صلاحية تنفيذ.
 
 ## 5. Dependencies المؤجلة
 
@@ -85,14 +97,30 @@ Order Execution
 
 العقود تختبر:
 
+### Opportunity
+
 - valid opportunity
 - incomplete intelligence
 - stale / expired opportunity
 - invalid confidence / non-finite values
-- valid explosive candidate
-- incomplete explosive candidate
-- stale explosive candidate
+
+### Explosive Watchlist
+
+- valid probabilistic candidate
+- incomplete candidate
+- stale / expired candidate
 - invalid probabilistic values
+
+### TradingReadiness
+
+- all gates valid → eligible
+- incomplete intelligence → blocked
+- low confidence → blocked
+- stale opportunity → blocked
+- unacceptable risk → blocked
+- invalid market conditions → blocked
+- non-boolean gate → rejected
+- naive evaluation timestamp → rejected
 
 الاختبارات تثبت سلامة العقد فقط ولا تدعي صحة استراتيجية تداول لم تُبنَ بعد.
 
