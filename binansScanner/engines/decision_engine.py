@@ -15,6 +15,7 @@ insights into structured analytical decision statuses without order execution.
 from __future__ import annotations
 
 import logging
+import math
 from typing import Any, Optional
 
 from models.analysis import AnalysisResult
@@ -172,11 +173,27 @@ class DecisionEngine:
     def _validate_inputs(self, analysis: AnalysisResult, score: ScoreResult) -> None:
         """
         Validates the structure and property bounds of input results.
+
+        Fail-closed boundary: ScoreResult.score must be finite before it can
+        influence decision category or confidence. NaN is especially dangerous
+        because ordinary range comparisons do not reject it.
         """
         if analysis.market_state not in {"BULLISH", "BEARISH", "NEUTRAL"}:
             raise InvalidDecisionData(f"Invalid market_state value ({analysis.market_state}) in AnalysisResult.")
 
-        if score.score < -100.0 or score.score > 100.0:
+        try:
+            score_value = float(score.score)
+        except (TypeError, ValueError) as exc:
+            raise InvalidScoreData(
+                f"Invalid score value ({score.score}) in ScoreResult. Expected a finite number from -100 to 100."
+            ) from exc
+
+        if not math.isfinite(score_value):
+            raise InvalidScoreData(
+                f"Invalid score value ({score.score}) in ScoreResult. Expected a finite number from -100 to 100."
+            )
+
+        if score_value < -100.0 or score_value > 100.0:
             raise InvalidScoreData(f"Invalid score value ({score.score}) in ScoreResult. Expected -100 to 100.")
 
     def _calculate_confidence(self, score_value: float) -> float:
