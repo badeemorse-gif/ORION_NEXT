@@ -219,9 +219,9 @@ def _sync_one_worktree(self, branch_name, index, total, registered):
             except RuntimeError:
                 existing_file_count = -1
             if existing_file_count >= 0:
-                before = (existing_file_count, 0, 0, 0, 0)
+                before = (0, 0, 0, 0, 0)
                 already_exact = True
-                self._ui(f"[{index}/{total}] {branch_name}: مطابق بالفعل — تخطي reset/clean | Files: {existing_file_count}")
+                self._ui(f"[{index}/{total}] {branch_name}: مطابق بالفعل — تخطي reset/clean | Files on disk: {existing_file_count}")
         if not already_exact:
             before = _preview_changes(self, worktree, target_ref)
             code, lines = _git_at(self, worktree, ["reset", "--hard", target_ref])
@@ -272,7 +272,7 @@ def _sync_one_worktree(self, branch_name, index, total, registered):
 
     return {
         "branch": branch_name, "worktree": worktree, "commit": remote_commit,
-        "files": file_count, "added": before[1], "updated": before[2],
+        "files": before[0] + before[4], "added": before[1], "updated": before[2],
         "removed": before[3], "extra": before[4],
     }
 
@@ -312,7 +312,7 @@ def restore_all(self, branches):
     self.root.after(0, self.removed_var.set, str(total_removed))
     self._ui("=" * 72)
     self._ui(f"ALL SYNC COMPLETED — {len(results)}/{len(branches)} branches EXACT MATCH ✓")
-    self._ui(f"إجمالي الملفات الموجودة فعليًا داخل Worktrees: {total_files}")
+    self._ui(f"إجمالي الملفات التي تمت مزامنتها في هذه العملية: {total_files}")
     self._ui("كل فرع محفوظ في Worktree مستقل؛ لا يوجد خلط بين الفروع.")
     self._ui("PROJECT_ROOT لم يتم تبديله أو الكتابة فوقه أثناء ALL.")
     self._ui("=" * 72)
