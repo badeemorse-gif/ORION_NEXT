@@ -10,6 +10,7 @@ PROJECT_ROOT = r"C:\Users\badee\Desktop\ORION_NEXT"
 REMOTE = "origin"
 BRANCHES = (
     "main",
+    "orion-canonical-pipeline-boundary",
     "phase2/core-intelligence-hardening",
 )
 DEFAULT_BRANCH = "phase2/core-intelligence-hardening"
