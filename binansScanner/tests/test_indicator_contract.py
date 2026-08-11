@@ -3,7 +3,7 @@
 Badee Binance Scanner
 Architecture : ORION
 Module       : tests.test_indicator_contract
-Version      : 1.0.0
+Version      : 1.1.0
 ===============================================================================
 
 Canonical indicator contract tests.
@@ -20,7 +20,11 @@ import pandas as pd
 
 from enums import DataHealth, Timeframe
 from engines.indicator_calculator import IndicatorCalculator
-from engines.indicator_engine import IndicatorEngine
+from engines.indicator_engine import (
+    IndicatorEngine,
+    IndicatorEngineError,
+    PROFILE_CRITICAL_INDICATORS,
+)
 from models.market import (
     MarketDataset,
     MarketMetadata,
@@ -101,6 +105,72 @@ class TestIndicatorContract(unittest.TestCase):
 
         calculator.validate_required_indicators(
             dataframe
+        )
+
+    def test_profile_critical_indicator_metadata_is_truthful(
+        self,
+    ) -> None:
+        timeframe_data = self._build_timeframe_data()
+
+        result = IndicatorEngine().calculate_timeframe(
+            timeframe_data,
+            symbol="BTCUSDT",
+        )
+
+        metadata = result.dataframe.attrs.get(
+            "indicator_result"
+        )
+
+        self.assertIsNotNone(metadata)
+        self.assertEqual(
+            metadata.quality,
+            "SUFFICIENT",
+        )
+        self.assertEqual(
+            metadata.failed_indicators,
+            [],
+        )
+        self.assertEqual(
+            metadata.calculated_indicators,
+            list(PROFILE_CRITICAL_INDICATORS),
+        )
+
+        for indicator in PROFILE_CRITICAL_INDICATORS:
+            self.assertTrue(
+                np.isfinite(
+                    float(result.dataframe.iloc[-1][indicator])
+                )
+            )
+
+    def test_profile_critical_nan_is_rejected_at_indicator_boundary(
+        self,
+    ) -> None:
+        timeframe_data = TimeframeData(
+            timeframe=Timeframe.H1,
+            dataframe=self._build_dataframe(rows=10),
+            data_health=DataHealth.GOOD,
+            candles_count=10,
+            first_timestamp=(
+                self._build_dataframe(rows=10)
+                .index[0]
+                .to_pydatetime()
+            ),
+            last_timestamp=(
+                self._build_dataframe(rows=10)
+                .index[-1]
+                .to_pydatetime()
+            ),
+        )
+
+        with self.assertRaises(IndicatorEngineError) as context:
+            IndicatorEngine().calculate_timeframe(
+                timeframe_data,
+                symbol="BTCUSDT",
+            )
+
+        self.assertIn(
+            "Profile-critical indicators are invalid",
+            str(context.exception),
         )
 
     def test_indicator_engine_does_not_add_runtime_state(
