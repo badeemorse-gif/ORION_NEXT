@@ -1,7 +1,7 @@
 """
 ORION
 Module : models.trading_readiness
-Version: 2.0.0
+Version: 2.0.1
 
 Future bot-readiness boundary.
 
@@ -34,6 +34,16 @@ class TradingReadiness:
     evaluated_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
     def __post_init__(self) -> None:
+        for name in (
+            "intelligence_complete",
+            "confidence_acceptable",
+            "opportunity_fresh",
+            "risk_acceptable",
+            "market_conditions_valid",
+        ):
+            if not isinstance(getattr(self, name), bool):
+                raise ValueError(f"{name} must be bool")
+
         if self.evaluated_at.tzinfo is None or self.evaluated_at.utcoffset() is None:
             raise ValueError("evaluated_at must be timezone-aware")
         object.__setattr__(self, "reasons", tuple(str(reason) for reason in self.reasons))
