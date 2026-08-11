@@ -19,7 +19,7 @@ jobs:
         run: |
           if [ "${{ github.event.head_commit.message }}" != "ci: apply profile fail-closed patch" ]; then exit 0; fi
           python -m pip install -r binansScanner/requirements.txt numpy pandas pandas-ta python-binance
-          git apply .github/profile-gap.patch
+          git apply --recount .github/profile-gap.patch
           rm .github/profile-gap.patch .github/workflows/one-shot-profile-gap.yml
           python -m compileall -q binansScanner
           cd binansScanner
