@@ -38,7 +38,7 @@ class TestPipelineExecutionE2E(unittest.TestCase):
     @staticmethod
     def _dataset() -> MarketDataset:
         now = datetime.now(timezone.utc)
-        closes = [100_000.0 + float(index * 100.0) for index in range(60)]
+        closes = [100_000.0 + float(index * 100.0) for index in range(250)]
         timestamps = pd.date_range(
             end=now,
             periods=len(closes),

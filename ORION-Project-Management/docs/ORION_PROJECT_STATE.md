@@ -1,6 +1,6 @@
 # ORION — PROJECT STATE
 
-الإصدار: 1.8
+الإصدار: 1.9
 الحالة: ACTIVE
 المشروع: ORION
 
@@ -29,6 +29,8 @@ COMPLETED
 ==================================================
 
 إكمال وربط Core Intelligence فوق العقود والحدود المثبتة في Phase 1، مع الحفاظ على المسار الحالي وعدم إعادة فتح العقود المستقرة دون سبب معماري مثبت.
+
+تم إغلاق Gap: Profile Intelligence Fail-Closed قبل استئناف Core Intelligence Hardening.
 
 لا يوجد أمر حالي بالقفز إلى GUI أو Explosion Radar أو Trading Bot.
 
@@ -61,6 +63,8 @@ Execution
 Report
 
 تم إثبات حدود Fail-Fast ومسار ExecutionPlan، كما تم إثبات أن Execution failure لا يتحول إلى Report ناجح.
+
+تم أيضًا تثبيت Profile كـ Intelligence Gate: إذا كانت المؤشرات الحرجة ناقصة أو غير صالحة أو metadata الخاصة بها فاشلة، لا يسمح الـProfile بالمرور إلى Score/Decision.
 
 ==================================================
 4. العقود الحالية
@@ -104,7 +108,7 @@ reports.report_exporter.ReportExporter
 
 آخر Verification معتمد:
 
-108 tests
+113 tests
 OK
 
 VERIFICATION PASSED
@@ -112,7 +116,16 @@ VERIFICATION PASSED
 Python syntax compilation:
 PASSED
 
-تم تنظيف التحذيرات التقنية المستهدفة الخاصة بدورة asyncio وday-frequency في pandas-ta، ولم تعد تظهر في Verification المعتمد.
+تم التحقق من Profile Intelligence Fail-Closed للحالات:
+
+- Missing Critical Indicator — CLOSED
+- NaN Critical Indicator — CLOSED
+- Failed Indicator Metadata — CLOSED
+- Valid Complete Indicators — CLOSED
+
+كما تم التحقق من أن Profile غير القابل للتداول يتوقف عند حد PROFILE ولا يصل إلى Score/Decision.
+
+تم تسجيل تحذير pandas-ta الخاص بـ day-frequency كـ Technical Cleanup غير Blocking.
 
 ==================================================
 7. Findings
@@ -125,6 +138,7 @@ AF-004 — VERIFIED / CLOSED
 AF-005 — VERIFIED / CLOSED
 AF-006 — DEFERRED TO PHASE 6
 AF-007 — VERIFIED / CLOSED
+AF-008 — VERIFIED / CLOSED — Profile Intelligence Fail-Closed
 
 لا يوجد Blocking Finding مفتوح يمنع Phase 2.
 
@@ -139,6 +153,8 @@ ORION_ARCHITECTURE_FINDINGS.md
 
 تم دمج المبادئ التنفيذية المفيدة في WORK PROTOCOL وARCHITECTURE وROADMAP.
 
+تم تحديث حالة Profile Intelligence Fail-Closed إلى CLOSED بعد تنفيذ التعديل وإضافة Contract Tests ونجاح Verification.
+
 الوثائق الملغاة كوثائق تشغيلية:
 
 - ORION_EXECUTION_METHOD.md
@@ -151,6 +167,10 @@ ORION_ARCHITECTURE_FINDINGS.md
 ==================================================
 
 PHASE 2 — CORE INTELLIGENCE COMPLETION — CURRENT
+
+الخطوة التالية المباشرة:
+
+CORE INTELLIGENCE HARDENING
 
 PHASE 3 — SCALPING OPPORTUNITY ENGINE — NEXT MAJOR TARGET
 
