@@ -44,11 +44,22 @@ def _safe_branch_dir(branch_name):
     return dynamic._safe_branch_dir(branch_name)
 
 
-def _target_files(self, worktree, target_ref):
-    code, lines = _git_at(self, worktree, ["ls-tree", "-r", "--name-only", target_ref])
+def _target_entries(self, worktree, target_ref):
+    """Return target tree entries as (mode, path), including submodule gitlinks."""
+    code, lines = _git_at(self, worktree, ["ls-tree", "-r", target_ref])
     if code != 0:
         raise RuntimeError("تعذر قراءة قائمة ملفات commit الهدف.\n" + ("\n".join(lines) or ""))
-    return [line.strip() for line in lines if line.strip()]
+    entries = []
+    for line in lines:
+        parts = line.split("\t", 1)
+        if len(parts) != 2:
+            continue
+        meta, rel = parts
+        mode = meta.split(" ", 1)[0]
+        rel = rel.strip()
+        if rel:
+            entries.append((mode, rel))
+    return entries
 
 
 def _materialize_full_tree(self, worktree, target_ref):
@@ -68,20 +79,26 @@ def _materialize_full_tree(self, worktree, target_ref):
 
 
 def _verify_full_materialization(self, worktree, target_ref):
-    expected = _target_files(self, worktree, target_ref)
+    entries = _target_entries(self, worktree, target_ref)
     missing = []
-    for rel in expected:
+    for mode, rel in entries:
         path = os.path.join(worktree, rel.replace("/", os.sep))
-        if not os.path.isfile(path) and not os.path.islink(path):
+        if mode == "160000":
+            present = os.path.isdir(path)
+        elif mode == "120000":
+            present = os.path.islink(path)
+        else:
+            present = os.path.isfile(path)
+        if not present:
             missing.append(rel)
             if len(missing) >= 30:
                 break
     if missing:
         raise RuntimeError(
-            "تم ضبط commit الفرع لكن بعض الملفات لم تُكتب فعليًا على القرص.\n"
+            "تم ضبط commit الفرع لكن بعض المسارات لم تُكتب فعليًا على القرص.\n"
             + "\n".join(missing)
         )
-    return len(expected)
+    return len(entries)
 
 
 def _sync_one_worktree(self, branch_name, index, total, registered):
@@ -207,7 +224,7 @@ def restore_all(self, branches):
 
     self._ui("=" * 76)
     self._ui(f"ALL SYNC COMPLETED — {len(results)}/{len(branches)} branches EXACT MATCH ✓")
-    self._ui(f"إجمالي الملفات الموجودة فعليًا داخل Worktrees: {total_files}")
+    self._ui(f"إجمالي الملفات/المسارات الموجودة فعليًا داخل Worktrees: {total_files}")
     self._ui(f"مكان المحتوى الكامل لكل الفروع: {ALL_WORKTREE_ROOT}")
     self._ui("كل فرع محفوظ منفصلًا؛ لا يوجد خلط بين فرع وآخر.")
     self._ui("PROJECT_ROOT لم يتم تبديله أو الكتابة فوقه أثناء ALL.")
