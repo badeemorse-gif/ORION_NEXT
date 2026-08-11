@@ -6,10 +6,10 @@ Set shell = CreateObject("WScript.Shell")
 Set fso = CreateObject("Scripting.FileSystemObject")
 
 scriptDir = fso.GetParentFolderName(WScript.ScriptFullName)
-scriptPath = scriptDir & "\orion_restore_gui.pyw"
+scriptPath = scriptDir & "\orion_restore_gui_dynamic.pyw"
 
 If Not fso.FileExists(scriptPath) Then
-    MsgBox "ORION Restore file not found:" & vbCrLf & scriptPath, vbCritical, "ORION Restore"
+    MsgBox "ORION Restore dynamic file not found:" & vbCrLf & scriptPath, vbCritical, "ORION Restore"
     WScript.Quit 1
 End If
 
