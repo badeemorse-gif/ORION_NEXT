@@ -6,6 +6,7 @@ No dependency on Core, MarketDataset, AnalysisResult, or DecisionResult.
 from __future__ import annotations
 
 import logging
+import math
 import time
 import uuid
 from abc import ABC, abstractmethod
@@ -73,7 +74,15 @@ class PaperExecutionAdapter(ExecutionAdapter):
     """Local paper-trading adapter; never contacts a live exchange."""
 
     def validate(self, request: ExecutionRequest) -> bool:
-        if not request.symbol or request.quantity <= 0.0:
+        """Fail closed on malformed numeric execution inputs."""
+        if not request.symbol:
+            return False
+        if not all(
+            math.isfinite(float(value))
+            for value in (request.price, request.quantity, request.confidence)
+        ):
+            return False
+        if request.quantity <= 0.0:
             return False
         if request.side in (ExecutionSide.BUY, ExecutionSide.SELL):
             return request.price > 0.0
