@@ -11,6 +11,7 @@ from models.opportunity import (
     OpportunityStatus,
     RiskState,
 )
+from models.trading_readiness import TradingReadiness
 
 
 class TestOpportunityContract(unittest.TestCase):
@@ -116,6 +117,7 @@ class TestExplosiveWatchlistContract(unittest.TestCase):
         candidate = self._valid()
         self.assertTrue(candidate.is_complete)
         self.assertTrue(candidate.is_monitorable)
+        self.assertFalse(candidate.is_expired)
 
     def test_ineligible_candidate_is_not_monitorable(self) -> None:
         candidate = ExplosiveWatchCandidate(
@@ -151,6 +153,63 @@ class TestExplosiveWatchlistContract(unittest.TestCase):
         )
         self.assertTrue(candidate.is_complete)
         self.assertFalse(candidate.is_monitorable)
+
+    def test_expired_candidate_is_not_monitorable(self) -> None:
+        now = datetime.now(timezone.utc)
+        candidate = ExplosiveWatchCandidate(
+            symbol="ALTUSDT",
+            timeframe_window="1h-12h",
+            move_probability=72.0,
+            readiness_score=81.0,
+            confidence=74.0,
+            freshness=FreshnessStatus.FRESH,
+            supporting_signals=("compression",),
+            invalidation_conditions=("structure breakdown",),
+            status=WatchlistStatus.MONITOR,
+            generated_at=now - timedelta(hours=2),
+            expires_at=now - timedelta(minutes=1),
+        )
+        self.assertTrue(candidate.is_expired)
+        self.assertFalse(candidate.is_monitorable)
+
+
+class TestTradingReadinessContract(unittest.TestCase):
+    def _ready(self, **overrides) -> TradingReadiness:
+        values = dict(
+            intelligence_complete=True,
+            confidence_acceptable=True,
+            opportunity_fresh=True,
+            risk_acceptable=True,
+            market_conditions_valid=True,
+        )
+        values.update(overrides)
+        return TradingReadiness(**values)
+
+    def test_complete_valid_state_is_eligible(self) -> None:
+        self.assertTrue(self._ready().eligible)
+
+    def test_incomplete_intelligence_blocks_eligibility(self) -> None:
+        self.assertFalse(self._ready(intelligence_complete=False).eligible)
+
+    def test_low_confidence_blocks_eligibility(self) -> None:
+        self.assertFalse(self._ready(confidence_acceptable=False).eligible)
+
+    def test_stale_opportunity_blocks_eligibility(self) -> None:
+        self.assertFalse(self._ready(opportunity_fresh=False).eligible)
+
+    def test_unacceptable_risk_blocks_eligibility(self) -> None:
+        self.assertFalse(self._ready(risk_acceptable=False).eligible)
+
+    def test_invalid_market_conditions_block_eligibility(self) -> None:
+        self.assertFalse(self._ready(market_conditions_valid=False).eligible)
+
+    def test_non_boolean_gate_is_rejected(self) -> None:
+        with self.assertRaises(ValueError):
+            self._ready(intelligence_complete="true")
+
+    def test_naive_evaluated_at_is_rejected(self) -> None:
+        with self.assertRaises(ValueError):
+            self._ready(evaluated_at=datetime(2026, 8, 11, 12, 0))
 
 
 if __name__ == "__main__":
