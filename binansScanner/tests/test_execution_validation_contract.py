@@ -40,8 +40,11 @@ class TestExecutionValidationContract(unittest.TestCase):
         self.assertFalse(self.adapter.validate(self._request(quantity=math.inf)))
 
     def test_non_finite_confidence_is_rejected(self) -> None:
-        self.assertFalse(self.adapter.validate(self._request(confidence=math.nan)))
-        self.assertFalse(self.adapter.validate(self._request(confidence=math.inf)))
+        for confidence in (math.nan, math.inf, -math.inf):
+            with self.subTest(confidence=confidence):
+                request = self._request(confidence=confidence)
+                self.assertFalse(self.adapter.validate(request))
+                self.assertEqual(request.confidence, confidence)
 
 
 if __name__ == "__main__":
