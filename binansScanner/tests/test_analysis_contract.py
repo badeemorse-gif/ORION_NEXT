@@ -3,7 +3,7 @@
 Badee Binance Scanner
 Architecture : ORION
 Module       : tests.test_analysis_contract
-Version      : 1.1.0
+Version      : 1.1.1
 ===============================================================================
 
 Canonical Analysis Contract tests.
@@ -143,6 +143,7 @@ class TestAnalysisContract(unittest.TestCase):
 
     def test_non_numeric_required_indicator_fails_closed(self) -> None:
         dataframe = self._build_dataframe()
+        dataframe["momentum_5"] = dataframe["momentum_5"].astype(object)
         dataframe.loc[dataframe.index[-1], "momentum_5"] = "invalid"
         result = AnalysisEngine().analyze(self._build_dataset(dataframe))
         self.assertEqual(result.market_state, "NEUTRAL")
