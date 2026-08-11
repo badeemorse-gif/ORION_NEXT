@@ -1,6 +1,6 @@
 # ORION — FUTURE TRADING INTELLIGENCE CONTRACTS
 
-الإصدار: 1.1
+الإصدار: 1.2
 الحالة: DESIGN BASELINE — NOT WIRED
 
 ## 1. الغرض
@@ -35,7 +35,21 @@
 
 `is_eligible` بوابة عقدية محافظة فقط: ACTIVE + FRESH + ACCEPTABLE risk + complete intelligence. وهي ليست قرار شراء/بيع ولا ExecutionPlan.
 
-## 3. Explosive Watchlist
+## 3. Opportunity Evaluation boundary
+
+العقد المستقبلي هو `models.opportunity_evaluation.OpportunityEvaluation`.
+
+يمثل نتيجة تقييم مرشح Opportunity من محرك مستقبلي، وليس استراتيجية ترتيب أو قرار تنفيذ.
+
+القاعدة الحرجة:
+
+> لا يمكن لمحرك مستقبلي أن يعلن Opportunity كـ`ACCEPTED` إذا كانت `Opportunity.is_eligible` = false.
+
+أما المرشح المرفوض فيجب أن يحمل سببًا واحدًا على الأقل حتى تبقى نتيجة الاستبعاد قابلة للتفسير.
+
+هذا العقد لا يفرض ranking formula أو threshold رقميًا؛ تلك القرارات مؤجلة إلى Intelligence Engine بعد توفر الأدلة والـbacktesting المناسبة.
+
+## 4. Explosive Watchlist
 
 العقد المستقبلي هو `models.explosive_watchlist.ExplosiveWatchCandidate`.
 
@@ -59,7 +73,7 @@
 
 لا يجوز أن تؤثر نتيجة Explosive Watchlist في ترتيب أو صلاحية Scalping Opportunities، ولا تدخل Score أو Decision الحالي.
 
-## 4. Trading Bot boundary
+## 5. Trading Bot boundary
 
 العقد المستقبلي لبوابة البوت هو `models.trading_readiness.TradingReadiness`.
 
@@ -87,13 +101,13 @@ Order Execution
 
 أي شرط غير متحقق يمنع الأهلية. وجود `Opportunity` وحده لا يمنح صلاحية تنفيذ.
 
-## 5. Dependencies المؤجلة
+## 6. Dependencies المؤجلة
 
 لا يُفترض الآن شكل thresholds أو ranking formula أو signal weights أو estimated time model؛ هذه تحتاج أدلة Core Intelligence وبيانات تاريخية/backtesting مناسبة.
 
 لا يتم ربط هذه العقود بالـpipeline الحالي حتى تُغلق Phase 2 وتثبت المدخلات التي يحتاجها Opportunity Engine فعليًا.
 
-## 6. الاختبارات
+## 7. الاختبارات
 
 العقود تختبر:
 
@@ -103,6 +117,14 @@ Order Execution
 - incomplete intelligence
 - stale / expired opportunity
 - invalid confidence / non-finite values
+
+### Opportunity Evaluation
+
+- eligible opportunity → accepted
+- ineligible opportunity → cannot be accepted
+- rejected evaluation → requires reason
+- rejection reason is preserved
+- naive evaluation timestamp → rejected
 
 ### Explosive Watchlist
 
@@ -124,6 +146,6 @@ Order Execution
 
 الاختبارات تثبت سلامة العقد فقط ولا تدعي صحة استراتيجية تداول لم تُبنَ بعد.
 
-## 7. قاعدة الاستقلال
+## 8. قاعدة الاستقلال
 
 أي تطوير لاحق لهذه الطبقات يجب أن يستهلك العقود الحالية دون إعادة تصميم العقود المستقرة في Core إلا بقرار معماري مستقل.
