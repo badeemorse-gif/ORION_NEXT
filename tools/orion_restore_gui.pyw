@@ -1,13 +1,13 @@
 import os
+import re
+import io
+import tarfile
+import time
+import hashlib
 import subprocess
 import threading
 import tkinter as tk
 from tkinter import messagebox, scrolledtext
-import hashlib
-import tarfile
-import io
-import re
-import time
 
 PROJECT_ROOT = r"C:\Users\badee\Desktop\ORION_NEXT"
 REMOTE = "origin"
@@ -18,42 +18,23 @@ GIT_TIMEOUT = 120
 def run_git(args, cwd=PROJECT_ROOT, timeout=GIT_TIMEOUT, binary=False):
     flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
     if binary:
-        p = subprocess.Popen(
-            ["git", *args], cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            creationflags=flags
-        )
+        p = subprocess.Popen(["git", *args], cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, creationflags=flags)
         try:
             out, err = p.communicate(timeout=timeout)
         except subprocess.TimeoutExpired:
-            try:
-                p.kill()
-                p.communicate(timeout=5)
-            except Exception:
-                pass
+            p.kill()
+            p.communicate()
             raise RuntimeError(f"Git timeout: {' '.join(args)}")
         return p.returncode, out, err
-
-    p = subprocess.Popen(
-        ["git", *args], cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-        text=True, encoding="utf-8", errors="replace", creationflags=flags
-    )
+    p = subprocess.Popen(["git", *args], cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                         text=True, encoding="utf-8", errors="replace", creationflags=flags)
     try:
         out, _ = p.communicate(timeout=timeout)
     except subprocess.TimeoutExpired:
-        try:
-            p.kill()
-            p.communicate(timeout=5)
-        except Exception:
-            pass
+        p.kill()
+        p.communicate()
         raise RuntimeError(f"Git timeout after {timeout}s: {' '.join(args)}")
     return p.returncode, [x.rstrip() for x in (out or "").splitlines() if x.rstrip()]
-
-
-def git_value(args):
-    code, lines = run_git(args)
-    if code:
-        raise RuntimeError("\n".join(lines) or f"Git failed: {' '.join(args)}")
-    return lines[-1].strip() if lines else ""
 
 
 def safe_branch_name(name):
@@ -72,11 +53,8 @@ def discover_branches():
     result = []
     for line in lines:
         parts = line.split("\t", 1)
-        if len(parts) != 2:
-            continue
-        ref = parts[1].strip()
-        if ref.startswith("refs/heads/"):
-            branch = ref[len("refs/heads/"):]
+        if len(parts) == 2 and parts[1].startswith("refs/heads/"):
+            branch = parts[1][len("refs/heads/"):].strip()
             if branch and branch not in result:
                 result.append(branch)
     if not result:
@@ -93,51 +71,47 @@ def sha256_file(path):
 
 
 def local_manifest(root):
-    manifest = {}
+    result = {}
     if not os.path.isdir(root):
-        return manifest
-    for base, dirs, files in os.walk(root):
+        return result
+    for base, dirs, files in os.walk(root, topdown=True):
         dirs[:] = [d for d in dirs if d != ".git"]
         for name in files:
             full = os.path.join(base, name)
             rel = os.path.relpath(full, root).replace(os.sep, "/")
             try:
-                manifest[rel] = ("file", os.path.getsize(full), sha256_file(full))
+                result[rel] = ("file", os.path.getsize(full), sha256_file(full))
             except OSError:
                 pass
         for name in dirs:
             full = os.path.join(base, name)
-            rel = os.path.relpath(full, root).replace(os.sep, "/")
             if os.path.islink(full):
+                rel = os.path.relpath(full, root).replace(os.sep, "/")
                 try:
-                    manifest[rel] = ("link", os.readlink(full))
+                    result[rel] = ("link", os.readlink(full))
                 except OSError:
                     pass
-    return manifest
+    return result
 
 
-def read_archive_manifest(ref):
+def archive_manifest(ref):
     code, archive, err = run_git(["archive", "--format=tar", ref], binary=True)
     if code:
         msg = err.decode("utf-8", "replace") if err else ""
         raise RuntimeError(f"git archive failed for {ref}: {msg}")
-
     manifest = {}
-    tf = tarfile.open(fileobj=io.BytesIO(archive), mode="r:")
-    for m in tf.getmembers():
-        rel = m.name.replace("\\", "/").lstrip("./")
-        if not rel:
-            continue
-        if m.isdir():
-            manifest[rel] = ("dir",)
-        elif m.issym():
-            manifest[rel] = ("link", m.linkname)
-        elif m.isfile():
-            data = tf.extractfile(m).read()
-            manifest[rel] = ("file", len(data), hashlib.sha256(data).hexdigest())
-        else:
-            manifest[rel] = ("special",)
-    tf.close()
+    with tarfile.open(fileobj=io.BytesIO(archive), mode="r:") as tf:
+        for m in tf.getmembers():
+            rel = m.name.replace("\\", "/").lstrip("./")
+            if not rel:
+                continue
+            if m.isdir():
+                manifest[rel] = ("dir",)
+            elif m.issym():
+                manifest[rel] = ("link", m.linkname)
+            elif m.isfile():
+                data = tf.extractfile(m).read()
+                manifest[rel] = ("file", len(data), hashlib.sha256(data).hexdigest())
     return archive, manifest
 
 
@@ -149,77 +123,137 @@ def safe_target(root, rel):
     return full
 
 
+def remove_any(path):
+    """Remove file, symlink, or directory recursively; return number of files removed."""
+    if not os.path.lexists(path):
+        return 0
+    if os.path.islink(path) or os.path.isfile(path):
+        os.remove(path)
+        return 1
+    if os.path.isdir(path):
+        count = 0
+        for name in os.listdir(path):
+            count += remove_any(os.path.join(path, name))
+        os.rmdir(path)
+        return count
+    os.remove(path)
+    return 1
+
+
+def ensure_directory(path):
+    """Make path a directory, replacing a conflicting file/symlink."""
+    if os.path.lexists(path) and not os.path.isdir(path):
+        remove_any(path)
+    os.makedirs(path, exist_ok=True)
+
+
+def ensure_parent_directory(path, root):
+    """Ensure every parent component is a directory inside the branch mirror."""
+    root_abs = os.path.abspath(root)
+    parent = os.path.abspath(os.path.dirname(path))
+    while parent != root_abs:
+        if os.path.lexists(parent) and not os.path.isdir(parent):
+            remove_any(parent)
+        parent = os.path.dirname(parent)
+        if not parent or os.path.commonpath([root_abs, parent]) != root_abs:
+            break
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+
+
 def materialize_archive(archive, root, target_manifest, old_manifest):
-    os.makedirs(root, exist_ok=True)
+    ensure_directory(root)
     added = updated = removed = 0
 
-    # Exact mirror inside this branch folder only: remove paths absent from GitHub.
+    # Remove stale paths first. This makes every branch directory an exact mirror.
     for rel in old_manifest:
         if rel not in target_manifest:
             full = safe_target(root, rel)
-            if os.path.isfile(full) or os.path.islink(full):
-                try:
-                    os.remove(full)
-                    removed += 1
-                except OSError:
-                    pass
-
-    tf = tarfile.open(fileobj=io.BytesIO(archive), mode="r:")
-    for m in tf.getmembers():
-        rel = m.name.replace("\\", "/").lstrip("./")
-        if not rel:
-            continue
-        full = safe_target(root, rel)
-
-        if m.isdir():
-            os.makedirs(full, exist_ok=True)
-            continue
-
-        os.makedirs(os.path.dirname(full), exist_ok=True)
-
-        if m.issym():
-            old = old_manifest.get(rel)
-            if old == ("link", m.linkname):
-                continue
-            if os.path.lexists(full):
-                try:
-                    os.remove(full)
-                except OSError:
-                    pass
             try:
-                os.symlink(m.linkname, full)
+                removed += remove_any(full)
             except OSError:
-                # Windows may deny symlink creation. Preserve the link target text
-                # rather than making the whole ALL operation fail.
-                with open(full, "w", encoding="utf-8") as f:
-                    f.write(m.linkname)
-            if old:
+                pass
+
+    # Resolve file<->directory collisions left by older broken runs.
+    # This is the direct fix for WinError 5 on paths such as GitHub.orion_tmp -> GitHub.
+    for rel, target_sig in target_manifest.items():
+        full = safe_target(root, rel)
+        kind = target_sig[0]
+        if kind == "dir":
+            ensure_directory(full)
+        elif kind in ("file", "link"):
+            if os.path.isdir(full) and not os.path.islink(full):
+                try:
+                    remove_any(full)
+                except OSError:
+                    pass
+            ensure_parent_directory(full, root)
+
+    with tarfile.open(fileobj=io.BytesIO(archive), mode="r:") as tf:
+        for m in tf.getmembers():
+            rel = m.name.replace("\\", "/").lstrip("./")
+            if not rel:
+                continue
+            full = safe_target(root, rel)
+
+            if m.isdir():
+                ensure_directory(full)
+                continue
+
+            if m.issym():
+                old = old_manifest.get(rel)
+                if old == ("link", m.linkname):
+                    continue
+                if os.path.lexists(full):
+                    remove_any(full)
+                ensure_parent_directory(full, root)
+                try:
+                    os.symlink(m.linkname, full)
+                except OSError:
+                    with open(full, "w", encoding="utf-8") as f:
+                        f.write(m.linkname)
+                if old:
+                    updated += 1
+                else:
+                    added += 1
+                continue
+
+            if not m.isfile():
+                continue
+
+            data = tf.extractfile(m).read()
+            new_sig = ("file", len(data), hashlib.sha256(data).hexdigest())
+            if old_manifest.get(rel) == new_sig and os.path.isfile(full):
+                continue
+
+            existed = os.path.lexists(full)
+            if os.path.isdir(full) and not os.path.islink(full):
+                remove_any(full)
+                existed = True
+
+            ensure_parent_directory(full, root)
+            tmp = full + ".orion_tmp"
+            if os.path.lexists(tmp):
+                remove_any(tmp)
+
+            with open(tmp, "wb") as f:
+                f.write(data)
+
+            try:
+                os.replace(tmp, full)
+            except OSError as exc:
+                # Deterministic retry if another stale directory appeared at the target.
+                if os.path.isdir(full) and not os.path.islink(full):
+                    remove_any(full)
+                    os.replace(tmp, full)
+                else:
+                    raise RuntimeError(f"تعذر استبدال الملف:\n{full}\n{exc}") from exc
+
+            if existed:
                 updated += 1
             else:
                 added += 1
-            continue
 
-        if not m.isfile():
-            continue
-
-        data = tf.extractfile(m).read()
-        new_sig = ("file", len(data), hashlib.sha256(data).hexdigest())
-        if old_manifest.get(rel) == new_sig:
-            continue
-
-        existed = os.path.lexists(full)
-        tmp = full + ".orion_tmp"
-        with open(tmp, "wb") as f:
-            f.write(data)
-        os.replace(tmp, full)
-        if existed:
-            updated += 1
-        else:
-            added += 1
-
-    tf.close()
-
-    # Remove now-empty directories that are no longer needed.
+    # Remove empty directories that are no longer part of the branch.
     for base, dirs, files in os.walk(root, topdown=False):
         if base != root and not dirs and not files:
             try:
@@ -239,7 +273,7 @@ class OrionAllRestore:
         self.root.configure(bg="#101820")
         self.running = False
         self.branches = []
-        self.status = tk.StringVar(value="جاهز")
+        self.status = tk.StringVar(value="جاري اكتشاف الفروع...")
         self.total_files = tk.StringVar(value="0")
         self.total_added = tk.StringVar(value="0")
         self.total_updated = tk.StringVar(value="0")
@@ -269,7 +303,8 @@ class OrionAllRestore:
 
         cards = tk.Frame(self.root, bg="#101820")
         cards.pack(fill="x", padx=24, pady=3)
-        self.branch_count_label = None
+        self.branch_count_label = tk.Label(cards, text="0", bg="#182538", fg="#2eaadc",
+                                           font=("Segoe UI", 16, "bold"))
         for i, (title, var, color) in enumerate([
             ("BRANCHES", None, "#2eaadc"),
             ("FILES", self.total_files, "#2eaadc"),
@@ -283,8 +318,6 @@ class OrionAllRestore:
             tk.Label(c, text=title, bg="#182538", fg="#9aa8b2",
                      font=("Segoe UI", 8, "bold")).pack(anchor="w", padx=8, pady=(6, 0))
             if title == "BRANCHES":
-                self.branch_count_label = tk.Label(c, text="0", bg="#182538", fg=color,
-                                                   font=("Segoe UI", 16, "bold"))
                 self.branch_count_label.pack(anchor="w", padx=8, pady=(0, 6))
             else:
                 tk.Label(c, textvariable=var, bg="#182538", fg=color,
@@ -297,19 +330,16 @@ class OrionAllRestore:
         )
         self.button.pack(pady=(9, 6))
 
-        tk.Label(
-            self.root,
-            text="كل فرع يُحفظ في مجلد مستقل. لا توجد Worktrees ولا تبديل للفرع الرئيسي.",
-            bg="#101820", fg="#e0a52e", font=("Segoe UI", 8)
-        ).pack()
+        tk.Label(self.root,
+                 text="كل فرع يُحفظ في مجلد مستقل. لا توجد Worktrees ولا تبديل للفرع الرئيسي.",
+                 bg="#101820", fg="#e0a52e", font=("Segoe UI", 8)).pack()
 
         tk.Label(self.root, text="سجل المزامنة", bg="#101820", fg="#9aa8b2",
                  font=("Segoe UI", 9, "bold")).pack(anchor="w", padx=24, pady=(8, 3))
         self.output = scrolledtext.ScrolledText(
             self.root, height=13, bg="#0b1116", fg="#d9e1e6",
             insertbackground="white", font=("Consolas", 9), relief="flat", bd=0,
-            wrap="word"
-        )
+            wrap="word")
         self.output.pack(fill="both", expand=True, padx=24, pady=(0, 14))
 
     def _row(self, parent, label, value):
@@ -337,7 +367,8 @@ class OrionAllRestore:
                 branches = discover_branches()
                 self.branches = branches
                 self.root.after(0, self.branch_count_label.configure, {"text": str(len(branches))})
-                self.write(f"تم اكتشاف {len(branches)} فرعًا من GitHub.")
+                self.ui(f"تم اكتشاف {len(branches)} فرعًا من GitHub.")
+                self.set_status("جاهز للمزامنة", "#3fc36b")
             except Exception as exc:
                 self.set_status("تعذر اكتشاف الفروع", "#e05252")
                 self.ui(str(exc))
@@ -361,21 +392,17 @@ class OrionAllRestore:
             self.set_status("جاري جلب جميع الفروع...", "#2eaadc")
             self.ui("=" * 68)
             self.ui("ORION ALL SYNC — FAST ARCHIVE MODE")
-            self.ui("لا يتم إنشاء Git Worktree؛ يتم نقل محتوى كل branch مباشرة إلى مجلده المستقل.")
+            self.ui("جلب Git مرة واحدة ثم materialization مباشر لكل فرع، بدون Worktrees.")
 
-            code, lines = run_git([
-                "fetch", "--prune", REMOTE,
-                "+refs/heads/*:refs/remotes/origin/*"
-            ])
+            code, lines = run_git(["fetch", "--prune", REMOTE,
+                                   "+refs/heads/*:refs/remotes/origin/*"])
             if code:
                 raise RuntimeError("\n".join(lines) or "فشل git fetch.")
-            for line in lines:
-                self.ui(line)
 
             branches = discover_branches()
             self.branches = branches
             self.root.after(0, self.branch_count_label.configure, {"text": str(len(branches))})
-            os.makedirs(ALL_ROOT, exist_ok=True)
+            ensure_directory(ALL_ROOT)
 
             grand = {"files": 0, "added": 0, "updated": 0, "removed": 0}
             for i, branch in enumerate(branches, 1):
@@ -383,20 +410,19 @@ class OrionAllRestore:
                 ref = f"{REMOTE}/{branch}"
                 dest = os.path.join(ALL_ROOT, safe_branch_name(branch))
                 self.ui(f"[{i}/{len(branches)}] {branch}")
-                self.ui(f"    الهدف: {dest}")
 
-                archive, target = read_archive_manifest(ref)
+                archive, target = archive_manifest(ref)
                 old = local_manifest(dest)
                 added, updated, removed = materialize_archive(archive, dest, target, old)
-                files = sum(1 for x in target.values() if x[0] in ("file", "link", "special"))
+                files = sum(1 for x in target.values() if x[0] in ("file", "link"))
 
                 grand["files"] += files
                 grand["added"] += added
                 grand["updated"] += updated
                 grand["removed"] += removed
-                self.ui(
-                    f"    ✓ Files: {files} | Added: {added} | Updated: {updated} | Removed: {removed}"
-                )
+
+                self.ui(f"    ✓ Files: {files} | Added: {added} | Updated: {updated} | Removed: {removed}")
+                self.ui(f"    ✓ تم نقل/تحديث المحتوى فعليًا إلى: {dest}")
                 self.root.after(0, self.total_files.set, str(grand["files"]))
                 self.root.after(0, self.total_added.set, str(grand["added"]))
                 self.root.after(0, self.total_updated.set, str(grand["updated"]))
@@ -406,21 +432,17 @@ class OrionAllRestore:
             self.ui("=" * 68)
             self.ui(f"ALL COMPLETED ✓ — {len(branches)} branches synchronized.")
             self.ui(f"Total branch-files: {grand['files']}")
-            self.ui(
-                f"Transferred: +{grand['added']} added | ~{grand['updated']} updated | -{grand['removed']} removed"
-            )
+            self.ui(f"Transferred: +{grand['added']} added | ~{grand['updated']} updated | -{grand['removed']} removed")
             self.ui(f"Destination: {ALL_ROOT}")
             self.ui(f"Elapsed: {elapsed:.1f}s")
             self.set_status(f"تمت مزامنة {len(branches)} فرعًا بنجاح ✓", "#3fc36b")
-            self.root.after(
-                0, messagebox.showinfo, "ORION RESTORE",
-                f"تمت مزامنة جميع الفروع بنجاح.\n\n"
-                f"الفروع: {len(branches)}\n"
-                f"Added: {grand['added']}\n"
-                f"Updated: {grand['updated']}\n"
-                f"Removed: {grand['removed']}\n\n"
-                f"المجلد: {ALL_ROOT}"
-            )
+            self.root.after(0, messagebox.showinfo, "ORION RESTORE",
+                            f"تمت مزامنة جميع الفروع بنجاح.\n\n"
+                            f"الفروع: {len(branches)}\n"
+                            f"Added: {grand['added']}\n"
+                            f"Updated: {grand['updated']}\n"
+                            f"Removed: {grand['removed']}\n\n"
+                            f"المجلد: {ALL_ROOT}")
         except Exception as exc:
             self.ui("=" * 68)
             self.ui("ERROR — لم تكتمل المزامنة.")
@@ -428,7 +450,8 @@ class OrionAllRestore:
             self.set_status("فشلت المزامنة", "#e05252")
             self.root.after(0, messagebox.showerror, "ORION RESTORE", str(exc))
         finally:
-            self.root.after(0, self.button.configure, {"state": "normal", "text": "⬇  مزامنة ALL — جميع الفروع"})
+            self.root.after(0, self.button.configure,
+                            {"state": "normal", "text": "⬇  مزامنة ALL — جميع الفروع"})
             self.running = False
 
 
