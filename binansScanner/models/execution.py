@@ -30,6 +30,7 @@ The models here describe execution intent and execution outcome only.
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
@@ -110,10 +111,14 @@ class ExecutionPlan:
         """
         Enforce structural domain bounds.
 
-        Business decision rules remain outside this model.
+        Business decision rules remain outside this model. Non-finite
+        confidence values are preserved so the execution boundary can
+        reject them instead of silently converting them into valid values.
         """
 
-        confidence = min(max(float(self.confidence), 0.0), 100.0)
+        confidence = float(self.confidence)
+        if math.isfinite(confidence):
+            confidence = min(max(confidence, 0.0), 100.0)
         price = max(float(self.price), 0.0)
         quantity = max(float(self.quantity), 0.0)
 
@@ -157,7 +162,9 @@ class ExecutionRequest:
     )
 
     def __post_init__(self) -> None:
-        confidence = min(max(float(self.confidence), 0.0), 100.0)
+        confidence = float(self.confidence)
+        if math.isfinite(confidence):
+            confidence = min(max(confidence, 0.0), 100.0)
         price = max(float(self.price), 0.0)
         quantity = max(float(self.quantity), 0.0)
 
