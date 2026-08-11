@@ -1,0 +1,6 @@
+# ORION_NEXT verification/test dependencies
+# Runtime dependencies remain in requirements.txt.
+numpy
+pandas
+pandas-ta
+python-binance
