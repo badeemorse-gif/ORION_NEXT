@@ -83,6 +83,7 @@ class ExplosiveWatchCandidate:
             self.is_complete
             and self.status is WatchlistStatus.MONITOR
             and self.freshness is FreshnessStatus.FRESH
+            and not self.is_expired
         )
 
     @property
