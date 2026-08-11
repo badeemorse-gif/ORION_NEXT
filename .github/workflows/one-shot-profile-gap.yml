@@ -1,0 +1,32 @@
+name: ORION one-shot Profile Fail-Closed
+on:
+  push:
+    branches:
+      - phase2/core-intelligence-hardening
+permissions:
+  contents: write
+jobs:
+  apply-gap:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Apply patch and verify
+        run: |
+          if [ "${{ github.event.head_commit.message }}" != "ci: apply profile fail-closed patch" ]; then exit 0; fi
+          python -m pip install -r binansScanner/requirements.txt numpy pandas pandas-ta python-binance
+          git apply .github/profile-gap.patch
+          rm .github/profile-gap.patch .github/workflows/one-shot-profile-gap.yml
+          python -m compileall -q binansScanner
+          cd binansScanner
+          python -m unittest discover -s tests -p 'test_*.py' -v
+          cd ..
+          git config user.name 'ORION Developer'
+          git config user.email 'orion-developer@users.noreply.github.com'
+          git add binansScanner .github
+          git commit -m 'feat: close profile intelligence fail-closed gap'
+          git push origin phase2/core-intelligence-hardening
