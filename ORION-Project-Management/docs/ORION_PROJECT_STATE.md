@@ -1,6 +1,6 @@
 # ORION — PROJECT STATE
 
-الإصدار: 1.9
+الإصدار: 2.0
 الحالة: ACTIVE
 المشروع: ORION
 
@@ -31,6 +31,8 @@ COMPLETED
 إكمال وربط Core Intelligence فوق العقود والحدود المثبتة في Phase 1، مع الحفاظ على المسار الحالي وعدم إعادة فتح العقود المستقرة دون سبب معماري مثبت.
 
 تم إغلاق Gap: Profile Intelligence Fail-Closed قبل استئناف Core Intelligence Hardening.
+
+تم تنفيذ أول Hardening بعد الـGap في ScoreEngine: الحالة NEUTRAL لا يجوز أن تتحول إلى اتجاه BULLISH بسبب قيمة strength وحدها.
 
 لا يوجد أمر حالي بالقفز إلى GUI أو Explosion Radar أو Trading Bot.
 
@@ -106,9 +108,9 @@ reports.report_exporter.ReportExporter
 6. Verification الأخير
 ==================================================
 
-آخر Verification معتمد:
+آخر Verification محلي معتمد قبل آخر Hardening:
 
-113 tests
+124 tests
 OK
 
 VERIFICATION PASSED
@@ -124,6 +126,10 @@ PASSED
 - Valid Complete Indicators — CLOSED
 
 كما تم التحقق من أن Profile غير القابل للتداول يتوقف عند حد PROFILE ولا يصل إلى Score/Decision.
+
+تم أيضًا إضافة Hardening لعقد Score: NEUTRAL + strength مرتفع لا ينتج اتجاهًا صعوديًا من strength وحدها.
+
+ملاحظة: بعد هذا الـHardening يجب إعادة تشغيل verify.py محليًا لتثبيت Verification الجديد قبل اعتماد النتيجة النهائية.
 
 تم تسجيل تحذير pandas-ta الخاص بـ day-frequency كـ Technical Cleanup غير Blocking.
 
@@ -168,9 +174,11 @@ ORION_ARCHITECTURE_FINDINGS.md
 
 PHASE 2 — CORE INTELLIGENCE COMPLETION — CURRENT
 
-الخطوة التالية المباشرة:
+الخطوة الحالية:
 
 CORE INTELLIGENCE HARDENING
+
+تم تنفيذ Hardening أولي في ScoreEngine، والخطوة التالية بعد Verification هي مواصلة فحص علاقات Analysis / Profile / Score / Decision بحثًا عن أي تحويل دلالي غير آمن، مع تعديل مباشر عند ثبوت الخلل.
 
 PHASE 3 — SCALPING OPPORTUNITY ENGINE — NEXT MAJOR TARGET
 

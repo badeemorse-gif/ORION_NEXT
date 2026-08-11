@@ -1,6 +1,6 @@
 # ORION — سجل التغييرات
 
-الإصدار: 2.3
+الإصدار: 2.4
 الحالة: ACTIVE
 المشروع: ORION
 المستودع الرسمي: badeemorse-gif/ORION_NEXT
@@ -446,7 +446,46 @@ CHANGE-016 — Consolidate ORION Documentation Sources
 ADR-016
 
 ==================================================
-18. قاعدة التاريخ
+18. CORE INTELLIGENCE HARDENING — Neutral Score Direction
+==================================================
+
+CHANGE-017 — منع تحويل NEUTRAL إلى BULLISH بسبب strength
+
+التاريخ: 2026-08-11
+المرحلة: PHASE 2 — CORE INTELLIGENCE COMPLETION
+الحالة: IMPLEMENTED / AWAITING LOCAL VERIFICATION
+
+تم اكتشاف خلل دلالي في ScoreEngine: قيمة strength هي magnitude وليست اتجاهًا مستقلًا، لكن الكود السابق كان يعامل كل حالة غير BEARISH كأنها BULLISH.
+
+النتيجة المحتملة كانت تحويل:
+
+market_state = NEUTRAL
+strength = 100
+
+إلى Score إيجابي وتصنيف BULLISH رغم أن Analysis أعلن صراحةً حالة NEUTRAL.
+
+تم التصحيح بحيث:
+
+BULLISH → strength contributes directionally positive.
+BEARISH → strength contributes directionally negative.
+NEUTRAL → strength contributes zero directional score.
+
+تمت إضافة Contract Test:
+
+test_neutral_analysis_strength_does_not_create_direction
+
+الملفات المتأثرة:
+- binansScanner/engines/score_engine.py
+- binansScanner/tests/test_score_contract.py
+
+Commit:
+9539dbb587b4caf7dd1ce131b2be3f2767ac4de0
+
+Verification المطلوبة:
+Python syntax compilation + full unittest suite + verify.py
+
+==================================================
+19. قاعدة التاريخ
 ==================================================
 
 السجل تاريخي.
@@ -460,7 +499,7 @@ ADR-016
 - يربط بالقرار الجديد عند الحاجة.
 
 ==================================================
-19. قاعدة Commit
+20. قاعدة Commit
 ==================================================
 
 يتم تسجيل Commit عند توفره فقط.
@@ -468,7 +507,7 @@ ADR-016
 لا يتم اختلاق Commit أو افتراض وجوده.
 
 ==================================================
-20. الحالة الحالية
+21. الحالة الحالية
 ==================================================
 
 المرحلة الحالية:
