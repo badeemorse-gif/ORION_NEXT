@@ -45,59 +45,106 @@ def _safe_branch_dir(branch_name):
 
 
 def _target_entries(self, worktree, target_ref):
-    """Return target tree entries as (mode, path), including submodule gitlinks."""
+    """Return target tree entries as (mode, object_id, path)."""
     code, lines = _git_at(self, worktree, ["ls-tree", "-r", target_ref])
     if code != 0:
-        raise RuntimeError("تعذر قراءة قائمة ملفات commit الهدف.\n" + ("\n".join(lines) or ""))
+        raise RuntimeError(
+            "تعذر قراءة قائمة ملفات commit الهدف.\n" + ("\n".join(lines) or "")
+        )
     entries = []
     for line in lines:
         parts = line.split("\t", 1)
         if len(parts) != 2:
             continue
         meta, rel = parts
-        mode = meta.split(" ", 1)[0]
+        meta_parts = meta.split(" ", 2)
+        if len(meta_parts) != 3:
+            continue
+        mode, _kind, object_id = meta_parts
         rel = rel.strip()
         if rel:
-            entries.append((mode, rel))
+            entries.append((mode, object_id, rel))
     return entries
 
 
+def _disable_sparse_checkout(self, worktree):
+    """Remove sparse-checkout restrictions from this ALL worktree only."""
+    code, lines = _git_at(self, worktree, ["sparse-checkout", "disable"])
+    if code != 0:
+        text = "\n".join(lines)
+        # Older/non-sparse Git worktrees can report that sparse checkout is
+        # already disabled. That state is safe and should not block ALL.
+        lowered = text.lower()
+        if "not a sparse checkout" not in lowered and "sparse-checkout is not enabled" not in lowered:
+            raise RuntimeError(
+                "تعذر تعطيل sparse-checkout داخل Worktree الخاص بالفرع.\n" + text
+            )
+
+
 def _materialize_full_tree(self, worktree, target_ref):
-    """Force a complete checkout without changing persistent sparse-checkout config."""
+    """Materialize the complete target tree, even if a worktree was sparse."""
+    # Remove local untracked/ignored blockers before checkout. This is safe
+    # because ALL worktrees are created and owned by this utility.
+    code, lines = _git_at(self, worktree, ["clean", "-fdx"])
+    if code != 0:
+        raise RuntimeError(
+            "فشل تنظيف Worktree قبل التحميل الكامل.\n" + ("\n".join(lines) or "")
+        )
+
+    _disable_sparse_checkout(self, worktree)
+
+    code, lines = _git_at(self, worktree, ["reset", "--hard", target_ref])
+    if code != 0:
+        raise RuntimeError(
+            "فشل تحميل كامل ملفات الفرع داخل Worktree.\n" + ("\n".join(lines) or "")
+        )
+
+    # A second checkout forces the working tree to materialize every path
+    # represented by the target tree after sparse-checkout has been disabled.
     code, lines = _git_at(
-        self, worktree,
-        ["-c", "core.sparseCheckout=false", "reset", "--hard", target_ref],
+        self, worktree, ["checkout", "--force", target_ref, "--", "."]
     )
     if code != 0:
-        raise RuntimeError("فشل تحميل كامل ملفات الفرع داخل Worktree.\n" + ("\n".join(lines) or ""))
-    code, lines = _git_at(
-        self, worktree,
-        ["-c", "core.sparseCheckout=false", "checkout", "--force", target_ref, "--", "."],
-    )
-    if code != 0:
-        raise RuntimeError("فشل استكمال تحميل ملفات الفرع داخل Worktree.\n" + ("\n".join(lines) or ""))
+        raise RuntimeError(
+            "فشل استكمال تحميل ملفات الفرع داخل Worktree.\n" + ("\n".join(lines) or "")
+        )
 
 
 def _verify_full_materialization(self, worktree, target_ref):
+    """Verify physical materialization, not only commit equality."""
     entries = _target_entries(self, worktree, target_ref)
     missing = []
-    for mode, rel in entries:
+
+    for mode, _object_id, rel in entries:
         path = os.path.join(worktree, rel.replace("/", os.sep))
         if mode == "160000":
+            # Git submodules are gitlinks in the superproject and are expected
+            # to materialize as directories after `submodule update`.
             present = os.path.isdir(path)
         elif mode == "120000":
             present = os.path.islink(path)
         else:
             present = os.path.isfile(path)
+
         if not present:
             missing.append(rel)
             if len(missing) >= 30:
                 break
+
     if missing:
         raise RuntimeError(
             "تم ضبط commit الفرع لكن بعض المسارات لم تُكتب فعليًا على القرص.\n"
             + "\n".join(missing)
         )
+
+    # HEAD/tree equality is required in addition to physical existence.
+    code, diff_lines = _git_at(self, worktree, ["diff", "--quiet", target_ref, "HEAD"])
+    if code != 0:
+        raise RuntimeError(
+            "ملفات Worktree لا تطابق GitHub رغم اكتمال وجود المسارات على القرص.\n"
+            + "\n".join(diff_lines[:30])
+        )
+
     return len(entries)
 
 
@@ -124,32 +171,34 @@ def _sync_one_worktree(self, branch_name, index, total, registered):
         )
         if code != 0:
             raise RuntimeError(
-                f"فشل إنشاء Worktree للفرع {branch_name}.\n" + ("\n".join(lines) or "")
+                f"فشل إنشاء Worktree للفرع {branch_name}.\n"
+                + ("\n".join(lines) or "")
             )
         registered.add(worktree_norm)
 
-    # ALL always materializes the complete target tree. This deliberately
-    # avoids the individual-branch zero-change shortcut.
+    # ALL intentionally does NOT use the single-branch zero-change shortcut.
+    # Every branch gets a real materialization pass so a previously incomplete
+    # worktree can never be reported as successful merely because HEAD matches.
     _materialize_full_tree(self, worktree, target_ref)
 
-    code, lines = _git_at(self, worktree, ["clean", "-fdx"])
+    code, lines = _git_at(
+        self, worktree, ["submodule", "update", "--init", "--recursive"]
+    )
     if code != 0:
         raise RuntimeError(
-            f"فشل تنظيف الملفات الزائدة للفرع {branch_name}.\n" + ("\n".join(lines) or "")
+            f"فشل تحديث submodules للفرع {branch_name}.\n"
+            + ("\n".join(lines) or "")
         )
 
-    code, lines = _git_at(self, worktree, ["submodule", "update", "--init", "--recursive"])
-    if code != 0:
-        raise RuntimeError(
-            f"فشل تحديث submodules للفرع {branch_name}.\n" + ("\n".join(lines) or "")
-        )
     for args, label in [
         (["submodule", "foreach", "--recursive", "git", "reset", "--hard"], "تنظيف تغييرات submodules"),
         (["submodule", "foreach", "--recursive", "git", "clean", "-fdx"], "تنظيف ملفات submodules"),
     ]:
         code, lines = _git_at(self, worktree, args)
         if code != 0:
-            raise RuntimeError(f"فشل {label} للفرع {branch_name}.")
+            raise RuntimeError(
+                f"فشل {label} للفرع {branch_name}.\n" + ("\n".join(lines) or "")
+            )
 
     final_commit = _git_at_value(self, worktree, ["rev-parse", "HEAD"])
     if final_commit != target_commit:
@@ -159,7 +208,10 @@ def _sync_one_worktree(self, branch_name, index, total, registered):
         )
 
     file_count = _verify_full_materialization(self, worktree, target_ref)
-    code, status_lines = _git_at(self, worktree, ["status", "--porcelain", "--ignored"])
+
+    code, status_lines = _git_at(
+        self, worktree, ["status", "--porcelain", "--ignored"]
+    )
     if code != 0 or status_lines:
         raise RuntimeError(
             f"بقيت حالة محلية في Worktree للفرع {branch_name}; لم نعلن التطابق.\n"
@@ -170,6 +222,7 @@ def _sync_one_worktree(self, branch_name, index, total, registered):
         f"[{index}/{total}] {branch_name}: EXACT MATCH ✓ | "
         f"Commit {final_commit[:12]} | Files materialized: {file_count}"
     )
+
     return {
         "branch": branch_name,
         "worktree": worktree,
@@ -200,7 +253,10 @@ def restore_all(self, branches):
         ["fetch", "--prune", base.REMOTE, "+refs/heads/*:refs/remotes/origin/*"],
     )
     if code != 0:
-        raise RuntimeError("فشل جلب الفروع من GitHub.\n" + ("\n".join(lines) or "Git fetch failed."))
+        raise RuntimeError(
+            "فشل جلب الفروع من GitHub.\n"
+            + ("\n".join(lines) or "Git fetch failed.")
+        )
     for line in lines:
         self._ui(line)
 
@@ -208,7 +264,9 @@ def restore_all(self, branches):
     registered = _registered_worktrees(self)
     results = []
     for index, branch_name in enumerate(branches, 1):
-        results.append(_sync_one_worktree(self, branch_name, index, len(branches), registered))
+        results.append(
+            _sync_one_worktree(self, branch_name, index, len(branches), registered)
+        )
 
     commits = {item["branch"]: item["commit"] for item in results}
     self._save_all_sync_state(commits)
@@ -223,12 +281,24 @@ def restore_all(self, branches):
     self.root.after(0, self.removed_var.set, str(total_removed))
 
     self._ui("=" * 76)
-    self._ui(f"ALL SYNC COMPLETED — {len(results)}/{len(branches)} branches EXACT MATCH ✓")
-    self._ui(f"إجمالي الملفات/المسارات الموجودة فعليًا داخل Worktrees: {total_files}")
+    self._ui(
+        f"ALL SYNC COMPLETED — {len(results)}/{len(branches)} branches EXACT MATCH ✓"
+    )
+    self._ui(
+        f"إجمالي الملفات/المسارات الموجودة فعليًا داخل Worktrees: {total_files}"
+    )
     self._ui(f"مكان المحتوى الكامل لكل الفروع: {ALL_WORKTREE_ROOT}")
     self._ui("كل فرع محفوظ منفصلًا؛ لا يوجد خلط بين فرع وآخر.")
     self._ui("PROJECT_ROOT لم يتم تبديله أو الكتابة فوقه أثناء ALL.")
     self._ui("=" * 76)
+
+    # Make the actual ALL destination visible immediately after success.
+    if os.name == "nt":
+        try:
+            os.startfile(ALL_WORKTREE_ROOT)
+        except OSError:
+            pass
+
     self.root.after(
         0,
         self._finish_all,
