@@ -1,36 +1,37 @@
 Option Explicit
 
-Dim shell, fso, toolsDir, scriptPath, cmd, rc
+' The only Windows launcher. It starts the adjacent tested .pyw directly;
+' there is no wrapper/import layer.
+Dim shell, fso, toolsDir, scriptPath, command, testArgument
 Set shell = CreateObject("WScript.Shell")
 Set fso = CreateObject("Scripting.FileSystemObject")
 
 toolsDir = fso.GetParentFolderName(WScript.ScriptFullName)
 scriptPath = fso.BuildPath(toolsDir, "orion_restore_gui.pyw")
-
 If Not fso.FileExists(scriptPath) Then
-    MsgBox "ملف ORION Restore غير موجود:" & vbCrLf & scriptPath, vbCritical, "ORION Restore"
+    MsgBox "ORION Restore file is missing:" & vbCrLf & scriptPath, vbCritical, "ORION Restore"
     WScript.Quit 1
 End If
 
+testArgument = ""
+If shell.Environment("PROCESS")("ORION_RESTORE_LAUNCH_TEST") = "1" Then testArgument = " --launch-smoke-test"
 shell.CurrentDirectory = toolsDir
 
 On Error Resume Next
 Err.Clear
-cmd = "pythonw.exe " & Chr(34) & scriptPath & Chr(34)
-rc = shell.Run(cmd, 1, False)
-
+command = "pythonw.exe " & Chr(34) & scriptPath & Chr(34) & testArgument
+shell.Run command, 0, False
 If Err.Number <> 0 Then
     Err.Clear
-    rc = shell.Run(Chr(34) & scriptPath & Chr(34), 1, False)
+    command = "pyw.exe " & Chr(34) & scriptPath & Chr(34) & testArgument
+    shell.Run command, 0, False
 End If
-
 If Err.Number <> 0 Then
-    MsgBox "تعذر تشغيل ORION Restore." & vbCrLf & _
-           "تأكد أن Python مثبت وأن ملفات .pyw مرتبطة بـ Python." & vbCrLf & vbCrLf & _
+    MsgBox "ORION Restore could not start." & vbCrLf & _
+           "Install Python for Windows (including pythonw.exe), then run this launcher again." & vbCrLf & vbCrLf & _
            scriptPath, vbCritical, "ORION Restore"
     WScript.Quit 1
 End If
-
 On Error GoTo 0
 Set fso = Nothing
 Set shell = Nothing
