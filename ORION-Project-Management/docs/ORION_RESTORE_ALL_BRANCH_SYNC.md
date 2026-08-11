@@ -147,3 +147,50 @@ tools/
 **Discover all branches → Batch Fetch → Archive each branch → Compare SHA-256 → Transfer only required files → Remove obsolete files → Resolve Windows path-type collisions → Show per-branch statistics.**
 
 ولا يعلن البرنامج نجاح المزامنة إلا بعد اكتمال materialization الفعلي لكل الفروع المكتشفة.
+
+## MAIN — official primary project mirror
+
+أضيفت إلى نفس الأداة وظيفة ثانية مستقلة باسم `MAIN`، مع تجميد مسار `ALL` وعدم إعادة تصميمه.
+
+`MAIN` = **official primary project mirror**:
+
+```text
+GitHub / origin/main → PROJECT_ROOT
+C:\Users\badee\Desktop\ORION_NEXT
+```
+
+أما `ALL` فيظل:
+
+```text
+GitHub / all branches → ALL_ROOT/<branch>
+C:\Users\badee\Desktop\ORION_NEXT_ALL_BRANCHES\<branch>
+```
+
+### قواعد MAIN
+
+1. يستخدم `git fetch --prune origin main` دون checkout أو تغيير للفرع الحالي.
+2. يقرأ snapshot الرسمي بواسطة `git archive origin/main`.
+3. يقارن المحتوى باستخدام نفس SHA-256/manifest mechanism المستخدم في Restore.
+4. ينقل الملفات الجديدة ويحدّث الملفات المتغيرة فقط.
+5. يحذف فقط الملفات المحلية التي هي **tracked** في الـcheckout أو كانت قد اعتمدت سابقًا كملفات رسمية لـMAIN ولم تعد موجودة في `origin/main`.
+6. لا ينفذ `clean -fdx` ولا يحذف untracked content تلقائيًا.
+7. عند وجود file/directory collision يتوقف بدل حذف محتوى untracked حفاظًا على ملفات المستخدم.
+8. بعد materialization يتم تنفيذ verification فعلي، ولا يظهر `MAIN SUCCESS` قبل نجاحه.
+9. `BRANCHES` في MAIN = `1`، و`FILES / ADDED / UPDATED / REMOVED` تعرض نتائج MAIN نفسها.
+
+يتم الاحتفاظ بملف حالة صغير خارج `PROJECT_ROOT` باسم `ORION_NEXT_MAIN_STATE.json` لتذكر الملفات التي سبق أن كانت جزءًا من snapshot الرسمي لـMAIN؛ هذا يمنع بقاء ملف أضيف إلى main ثم حُذف منه في تشغيل لاحق، مع استمرار حماية الملفات untracked التي لم تكن جزءًا من MAIN.
+
+### الفصل بين MAIN وALL
+
+- MAIN هو المسار الوحيد المسموح له بالكتابة داخل `PROJECT_ROOT`.
+- ALL لا يزال ممنوعًا من الكتابة داخل `PROJECT_ROOT`.
+- MAIN لا يستخدم `ALL_ROOT`.
+- ALL لا يستخدم `PROJECT_ROOT` كوجهة.
+- لا يوجد `git worktree` في أي من المسارين.
+
+وبذلك أصبح التصميم النهائي:
+
+**MAIN = official primary project mirror**  
+**ALL = isolated mirrors of every branch**
+
+مع بقاء baseline نجاح ALL كما هو، وإضافة MAIN كمسار مستقل فقط.

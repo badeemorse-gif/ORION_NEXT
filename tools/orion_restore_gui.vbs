@@ -1,13 +1,12 @@
 Option Explicit
 
-' The only Windows launcher. It starts the adjacent tested .pyw directly;
-' there is no wrapper/import layer.
+' The Windows launcher for the combined MAIN + ALL ORION Restore UI.
 Dim shell, fso, toolsDir, scriptPath, command, testArgument
 Set shell = CreateObject("WScript.Shell")
 Set fso = CreateObject("Scripting.FileSystemObject")
 
 toolsDir = fso.GetParentFolderName(WScript.ScriptFullName)
-scriptPath = fso.BuildPath(toolsDir, "orion_restore_gui.pyw")
+scriptPath = fso.BuildPath(toolsDir, "orion_restore_main_gui.pyw")
 If Not fso.FileExists(scriptPath) Then
     MsgBox "ORION Restore file is missing:" & vbCrLf & scriptPath, vbCritical, "ORION Restore"
     WScript.Quit 1
