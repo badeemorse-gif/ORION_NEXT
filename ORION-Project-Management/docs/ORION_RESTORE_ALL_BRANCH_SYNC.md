@@ -1,6 +1,6 @@
 # ORION Restore — ALL Branch Synchronization Contract
 
-الإصدار: 2.0
+الإصدار: 2.1
 الحالة: REBUILT — FAST ALL-ONLY SYNCHRONIZER
 
 ## الهدف
@@ -46,6 +46,25 @@ ALL ليست عملية استكشاف أو فحص فقط.
 - الإبقاء على الملفات المطابقة دون إعادة كتابتها لتقليل الزمن والـI/O.
 
 وبالتالي فإن كل مجلد فرع يصبح **Exact Mirror** لمحتوى GitHub لذلك الفرع.
+
+## إصلاح Windows المعتمد
+
+تمت إضافة حماية صريحة ضد تعارض **file/directory** الناتج عن تشغيلات ALL القديمة أو التشغيلات التي انقطعت أثناء النقل.
+
+إذا كان GitHub يحتوي على ملف باسم معين بينما توجد محليًا مجلد بنفس الاسم، يتم حذف التعارض داخل **مجلد الفرع المستقل فقط** ثم إنشاء الملف الصحيح.
+
+وبالعكس، إذا كان GitHub يتطلب مجلدًا بينما توجد محليًا نسخة ملف بنفس الاسم، تتم إزالة التعارض ثم إنشاء المجلد.
+
+كما يتم حذف أي ملف مؤقت متبقٍ باسم `.orion_tmp` قبل الكتابة، مع إعادة محاولة `os.replace` مرة واحدة فقط عند وجود تعارض مجلد متبقي.
+
+هذا يمنع خطأ Windows:
+
+```text
+[WinError 5] Access is denied
+...\\GitHub.orion_tmp -> ...\\GitHub
+```
+
+ولا يغيّر هذا الإصلاح أي شيء خارج مجلد الفرع الجاري مزامنته.
 
 ## لماذا هذا أسرع وأكثر ثباتًا؟
 
@@ -125,6 +144,6 @@ tools/
 
 `ALL` =
 
-**Discover all branches → Batch Fetch → Archive each branch → Compare SHA-256 → Transfer only required files → Remove obsolete files → Show per-branch statistics.**
+**Discover all branches → Batch Fetch → Archive each branch → Compare SHA-256 → Transfer only required files → Remove obsolete files → Resolve Windows path-type collisions → Show per-branch statistics.**
 
 ولا يعلن البرنامج نجاح المزامنة إلا بعد اكتمال materialization الفعلي لكل الفروع المكتشفة.
