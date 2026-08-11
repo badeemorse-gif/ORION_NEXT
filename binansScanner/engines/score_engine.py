@@ -162,7 +162,10 @@ class ScoreEngine:
             #   50  ->    0
             #   100 -> +100
             #
-            # The market_state determines the directional interpretation.
+            # Direction comes exclusively from the market state. A NEUTRAL
+            # market state therefore contributes no directional strength; its
+            # magnitude must never be interpreted as bullish merely because it
+            # is not explicitly bearish.
             strength_val = max(
                 0.0,
                 min(100.0, analysis.strength),
@@ -175,11 +178,13 @@ class ScoreEngine:
                     -abs(centered_strength)
                     * self.weights.STRENGTH
                 )
-            else:
+            elif analysis.market_state == "BULLISH":
                 strength_contribution = (
                     centered_strength
                     * self.weights.STRENGTH
                 )
+            else:
+                strength_contribution = 0.0
 
             # 3. Signals Modifier Contributions
             signal_modifier = 0.0

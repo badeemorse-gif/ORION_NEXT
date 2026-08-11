@@ -98,6 +98,19 @@ class TestScoreContract(unittest.TestCase):
             },
         )
 
+    def test_neutral_analysis_strength_does_not_create_direction(self) -> None:
+        analysis = AnalysisResult(
+            market_state="NEUTRAL",
+            strength=100.0,
+            signals=[],
+            warnings=[],
+        )
+
+        result = ScoreEngine().calculate(analysis)
+
+        self.assertEqual(result.score, 0.0)
+        self.assertEqual(result.category, "NEUTRAL")
+
     def test_score_preserves_analysis_factors(self) -> None:
         analysis = self._bullish_analysis()
         result = ScoreEngine().calculate(analysis)
