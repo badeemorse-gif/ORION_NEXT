@@ -134,6 +134,10 @@ class TestTradingReadinessContract(unittest.TestCase):
         readiness = TradingReadiness(True, True, True, True, False)
         self.assertFalse(readiness.eligible)
 
+    def test_non_boolean_gate_is_rejected(self):
+        with self.assertRaises(ValueError):
+            TradingReadiness("true", True, True, True, True)
+
 
 if __name__ == "__main__":
     unittest.main()
