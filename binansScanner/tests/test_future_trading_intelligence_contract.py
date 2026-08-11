@@ -27,7 +27,7 @@ class TestFutureTradingOpportunityContract(unittest.TestCase):
             risk=OpportunityRisk.MEDIUM,
             entry_candidate=100.0,
             invalidation=98.0,
-            expected_move=1.5,
+            expected_move_pct=1.5,
             supporting_evidence=("trend aligned",),
             market_context=("liquid",),
             observed_at=now,
@@ -43,10 +43,14 @@ class TestFutureTradingOpportunityContract(unittest.TestCase):
         self.assertTrue(opportunity.is_fresh(at=datetime(2026, 8, 11, 12, 5, tzinfo=UTC)))
 
     def test_incomplete_optional_intelligence_remains_explicit(self):
-        opportunity = self._opportunity(entry_candidate=None, invalidation=None, expected_move=None)
+        opportunity = self._opportunity(
+            entry_candidate=None,
+            invalidation=None,
+            expected_move_pct=None,
+        )
         self.assertIsNone(opportunity.entry_candidate)
         self.assertIsNone(opportunity.invalidation)
-        self.assertIsNone(opportunity.expected_move)
+        self.assertIsNone(opportunity.expected_move_pct)
 
     def test_invalid_confidence_is_rejected(self):
         with self.assertRaises(ValueError):
