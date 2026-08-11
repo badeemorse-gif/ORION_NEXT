@@ -168,6 +168,25 @@ def _preview_changes(self, worktree, target_ref):
     return len(lines), added, updated, removed, len(extras)
 
 
+def _verify_materialized_files(self, worktree):
+    code, lines = _git_at(self, worktree, ["ls-files"])
+    if code != 0:
+        raise RuntimeError("تعذر قراءة قائمة الملفات المتتبعة داخل Worktree.")
+    missing = []
+    for rel in lines:
+        path = os.path.join(worktree, rel.replace("/", os.sep))
+        if not os.path.lexists(path):
+            missing.append(rel)
+            if len(missing) >= 20:
+                break
+    if missing:
+        raise RuntimeError(
+            "Worktree تم إنشاؤه لكن بعض الملفات المتتبعة غير موجودة فعليًا على القرص.\n"
+            + "\n".join(missing)
+        )
+    return len(lines)
+
+
 def _sync_one_worktree(self, branch_name, index, total, registered):
     target_ref = f"{base.REMOTE}/{branch_name}"
     worktree = _safe_branch_dir(branch_name)
@@ -176,8 +195,12 @@ def _sync_one_worktree(self, branch_name, index, total, registered):
 
     self._ui(f"[{index}/{total}] {branch_name}: بدء المزامنة → {worktree}")
     if exists and worktree_norm not in registered:
-        raise RuntimeError(f"مسار ALL موجود لكنه ليس Git worktree مُسجلاً:\n{worktree}\nلن يتم لمس هذا المسار منعًا لفقد أي ملفات محلية.")
+        raise RuntimeError(
+            f"مسار ALL موجود لكنه ليس Git worktree مُسجلاً:\n{worktree}\n"
+            "لن يتم لمس هذا المسار منعًا لفقد أي ملفات محلية."
+        )
 
+    already_exact = False
     if not exists:
         os.makedirs(os.path.dirname(worktree), exist_ok=True)
         code, lines = _git(self, ["worktree", "add", "--detach", worktree, target_ref])
@@ -186,38 +209,72 @@ def _sync_one_worktree(self, branch_name, index, total, registered):
         before = (0, 0, 0, 0, 0)
         registered.add(worktree_norm)
     else:
-        before = _preview_changes(self, worktree, target_ref)
-        code, lines = _git_at(self, worktree, ["reset", "--hard", target_ref])
+        current_commit = _git_at_value(self, worktree, ["rev-parse", "HEAD"])
+        code, status_lines = _git_at(self, worktree, ["status", "--porcelain", "--ignored"])
         if code != 0:
-            raise RuntimeError(f"فشل ضبط worktree للفرع {branch_name}.\n" + ("\n".join(lines) or ""))
-        code, lines = _git_at(self, worktree, ["clean", "-fdx"])
-        if code != 0:
-            raise RuntimeError(f"فشل تنظيف worktree للفرع {branch_name}.\n" + ("\n".join(lines) or ""))
+            raise RuntimeError(f"تعذر قراءة حالة Worktree للفرع {branch_name}.")
+        if current_commit == _git_value(self, ["rev-parse", "--verify", target_ref]) and not status_lines:
+            try:
+                existing_file_count = _verify_materialized_files(self, worktree)
+            except RuntimeError:
+                existing_file_count = -1
+            if existing_file_count >= 0:
+                before = (existing_file_count, 0, 0, 0, 0)
+                already_exact = True
+                self._ui(f"[{index}/{total}] {branch_name}: مطابق بالفعل — تخطي reset/clean | Files: {existing_file_count}")
+        if not already_exact:
+            before = _preview_changes(self, worktree, target_ref)
+            code, lines = _git_at(self, worktree, ["reset", "--hard", target_ref])
+            if code != 0:
+                raise RuntimeError(f"فشل ضبط worktree للفرع {branch_name}.\n" + ("\n".join(lines) or ""))
+            code, lines = _git_at(self, worktree, ["clean", "-fdx"])
+            if code != 0:
+                raise RuntimeError(f"فشل تنظيف worktree للفرع {branch_name}.\n" + ("\n".join(lines) or ""))
 
-    code, lines = _git_at(self, worktree, ["submodule", "update", "--init", "--recursive"])
-    if code != 0:
-        raise RuntimeError(f"فشل تحديث submodules للفرع {branch_name}.\n" + ("\n".join(lines) or ""))
-    for args, label in [
-        (["submodule", "foreach", "--recursive", "git", "reset", "--hard"], "تنظيف تغييرات submodules"),
-        (["submodule", "foreach", "--recursive", "git", "clean", "-fdx"], "تنظيف ملفات submodules"),
-    ]:
-        code, lines = _git_at(self, worktree, args)
+    if not already_exact:
+        code, lines = _git_at(self, worktree, ["submodule", "update", "--init", "--recursive"])
         if code != 0:
-            raise RuntimeError(f"فشل {label} للفرع {branch_name}.")
+            raise RuntimeError(f"فشل تحديث submodules للفرع {branch_name}.\n" + ("\n".join(lines) or ""))
+        for args, label in [
+            (["submodule", "foreach", "--recursive", "git", "reset", "--hard"], "تنظيف تغييرات submodules"),
+            (["submodule", "foreach", "--recursive", "git", "clean", "-fdx"], "تنظيف ملفات submodules"),
+        ]:
+            code, lines = _git_at(self, worktree, args)
+            if code != 0:
+                raise RuntimeError(f"فشل {label} للفرع {branch_name}.")
 
     final_commit = _git_at_value(self, worktree, ["rev-parse", "HEAD"])
     remote_commit = _git_value(self, ["rev-parse", "--verify", target_ref])
     if final_commit != remote_commit:
-        raise RuntimeError(f"الـ commit النهائي للفرع {branch_name} لا يطابق GitHub.\nLocal: {final_commit}\nGitHub: {remote_commit}")
-    code, _ = _git_at(self, worktree, ["diff", "--quiet", target_ref, "HEAD"])
-    if code != 0:
-        raise RuntimeError(f"ملفات worktree للفرع {branch_name} لا تطابق GitHub.")
+        raise RuntimeError(
+            f"الـ commit النهائي للفرع {branch_name} لا يطابق GitHub.\n"
+            f"Local: {final_commit}\nGitHub: {remote_commit}"
+        )
+
+    file_count = _verify_materialized_files(self, worktree)
     code, status_lines = _git_at(self, worktree, ["status", "--porcelain", "--ignored"])
     if code != 0 or status_lines:
-        raise RuntimeError(f"بقيت حالة محلية في worktree للفرع {branch_name}; لم نعلن التطابق.\n" + "\n".join(status_lines[:50]))
+        raise RuntimeError(
+            f"بقيت حالة محلية في worktree للفرع {branch_name}; لم نعلن التطابق.\n"
+            + "\n".join(status_lines[:50])
+        )
 
-    self._ui(f"[{index}/{total}] {branch_name}: EXACT MATCH ✓ | Commit {final_commit[:12]}")
-    return {"branch": branch_name, "worktree": worktree, "commit": remote_commit, "files": before[0], "added": before[1], "updated": before[2], "removed": before[3], "extra": before[4]}
+    self._ui(
+        f"[{index}/{total}] {branch_name}: EXACT MATCH ✓ | "
+        f"Commit {final_commit[:12]} | Files materialized: {file_count}"
+    )
+
+    if not exists:
+        return {
+            "branch": branch_name, "worktree": worktree, "commit": remote_commit,
+            "files": file_count, "added": file_count, "updated": 0, "removed": 0, "extra": 0,
+        }
+
+    return {
+        "branch": branch_name, "worktree": worktree, "commit": remote_commit,
+        "files": file_count, "added": before[1], "updated": before[2],
+        "removed": before[3], "extra": before[4],
+    }
 
 
 def restore_all(self, branches):
@@ -229,12 +286,14 @@ def restore_all(self, branches):
     self._ui("[1/3] فحص المستودع المحلي...")
     if _git_value(self, ["rev-parse", "--is-inside-work-tree"]) != "true":
         raise RuntimeError("المجلد المحلي ليس مستودع Git صالحًا.")
+
     self._ui("[2/3] جلب جميع فروع GitHub دفعة واحدة...")
     code, lines = _git(self, ["fetch", "--prune", base.REMOTE, "+refs/heads/*:refs/remotes/origin/*"])
     if code != 0:
         raise RuntimeError("فشل جلب الفروع من GitHub.\n" + ("\n".join(lines) or "Git fetch failed."))
     for line in lines:
         self._ui(line)
+
     self._ui("[3/3] مزامنة كل فرع في Worktree مستقل...")
     registered = _registered_worktrees(self)
     results = []
@@ -247,12 +306,13 @@ def restore_all(self, branches):
     total_added = sum(item["added"] for item in results)
     total_updated = sum(item["updated"] for item in results)
     total_removed = sum(item["removed"] + item["extra"] for item in results)
-    self.root.after(0, self.files_var.set, str(total_files + total_removed))
+    self.root.after(0, self.files_var.set, str(total_files))
     self.root.after(0, self.added_var.set, str(total_added))
     self.root.after(0, self.updated_var.set, str(total_updated))
     self.root.after(0, self.removed_var.set, str(total_removed))
     self._ui("=" * 72)
     self._ui(f"ALL SYNC COMPLETED — {len(results)}/{len(branches)} branches EXACT MATCH ✓")
+    self._ui(f"إجمالي الملفات الموجودة فعليًا داخل Worktrees: {total_files}")
     self._ui("كل فرع محفوظ في Worktree مستقل؛ لا يوجد خلط بين الفروع.")
     self._ui("PROJECT_ROOT لم يتم تبديله أو الكتابة فوقه أثناء ALL.")
     self._ui("=" * 72)
@@ -305,5 +365,7 @@ base.OrionRestoreApp._finish_all = finish_all
 if __name__ == "__main__":
     root = tk.Tk()
     app = base.OrionRestoreApp(root)
-    app.source_label.configure(text=("GitHub → Git → Local  |  ALL" if app.branch == ALL_BRANCH else f"GitHub → Git → Local  |  {app.branch}"))
+    app.source_label.configure(
+        text=("GitHub → Git → Local  |  ALL" if app.branch == ALL_BRANCH else f"GitHub → Git → Local  |  {app.branch}")
+    )
     root.mainloop()
