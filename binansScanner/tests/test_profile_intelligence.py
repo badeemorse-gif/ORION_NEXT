@@ -25,6 +25,8 @@ class TestProfileIntelligence(unittest.TestCase):
         completion_ratio=1.0,
         timeframes=True,
         is_tradeable=True,
+        timeframe_characteristics=None,
+        missing_candles=0,
     ) -> ProfileResult:
         market = MarketCharacteristics(
             trend=trend,
@@ -42,7 +44,7 @@ class TestProfileIntelligence(unittest.TestCase):
             confidence_limit=confidence,
             completion_ratio=completion_ratio,
             total_candles=100,
-            missing_candles=0,
+            missing_candles=missing_candles,
         )
 
         profiles = ()
@@ -50,10 +52,13 @@ class TestProfileIntelligence(unittest.TestCase):
             profiles = (
                 TimeframeProfile(
                     timeframe="1h",
-                    characteristics=market,
+                    characteristics=(
+                        timeframe_characteristics or market
+                    ),
                     candles_count=100,
                     first_timestamp=datetime(2026, 1, 1, tzinfo=timezone.utc),
                     last_timestamp=datetime(2026, 1, 2, tzinfo=timezone.utc),
+                    missing_candles=missing_candles,
                 ),
             )
 
@@ -115,7 +120,7 @@ class TestProfileIntelligence(unittest.TestCase):
         self.assertEqual(result.recommendation, ProfileRecommendation.BLOCKED.value)
         self.assertEqual(result.confidence, 0.0)
         self.assertTrue(result.blocked)
-        self.assertIn("invalid trend", result.reasons[0])
+        self.assertIn("invalid market trend", result.reasons[0])
 
     def test_mixed_valid_profile_is_neutral_not_directional(self):
         profile = self._profile(trend="Bullish", momentum="Neutral")
@@ -140,6 +145,47 @@ class TestProfileIntelligence(unittest.TestCase):
         self.assertTrue(result.blocked)
         self.assertEqual(result.confidence, 0.0)
         self.assertFalse(result.is_directional)
+
+    def test_malformed_timeframe_characteristics_fail_closed(self):
+        malformed = MarketCharacteristics(
+            trend="NOT_A_TREND",
+            momentum="Buy",
+            risk_level="Medium",
+            confidence=80.0,
+        )
+        profile = self._profile(timeframe_characteristics=malformed)
+
+        result = self.intelligence.evaluate(profile)
+
+        self.assertEqual(result.recommendation, ProfileRecommendation.BLOCKED.value)
+        self.assertTrue(result.blocked)
+        self.assertFalse(result.is_directional)
+        self.assertIn("timeframe 1h trend", result.reasons[0])
+
+    def test_non_finite_timeframe_confidence_fails_closed(self):
+        malformed = MarketCharacteristics(
+            trend="Bullish",
+            momentum="Buy",
+            risk_level="Medium",
+            confidence=float("nan"),
+        )
+        profile = self._profile(timeframe_characteristics=malformed)
+
+        result = self.intelligence.evaluate(profile)
+
+        self.assertEqual(result.recommendation, ProfileRecommendation.BLOCKED.value)
+        self.assertTrue(result.blocked)
+        self.assertEqual(result.confidence, 0.0)
+        self.assertIn("non-finite timeframe 1h confidence", result.reasons[0])
+
+    def test_impossible_timeframe_coverage_fails_closed(self):
+        profile = self._profile(missing_candles=101)
+
+        result = self.intelligence.evaluate(profile)
+
+        self.assertEqual(result.recommendation, ProfileRecommendation.BLOCKED.value)
+        self.assertTrue(result.blocked)
+        self.assertIn("impossible candle coverage", result.reasons[0])
 
 
 if __name__ == "__main__":
