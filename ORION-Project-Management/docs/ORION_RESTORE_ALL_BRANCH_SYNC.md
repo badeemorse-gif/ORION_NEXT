@@ -1,24 +1,18 @@
-# ORION Restore — ALL Branch Synchronization Contract
+# ORION Restore — MAIN + ALL Synchronization Contract
 
-الإصدار: 2.3
-الحالة: MAIN + FAST ISOLATED ALL + INDEPENDENT MAIN PARITY VERIFIER
+الإصدار: 2.4
+الحالة: MAIN + FAST ISOLATED ALL + INDEPENDENT MAIN PARITY VERIFIER + MAIN DEVELOPMENT ISOLATION
 
 ## الهدف
 
-أداة ORION Restore تحتوي الآن على مسارين مستقلين:
+أداة ORION Restore تحتوي على مسارين مستقلين:
 
-- `MAIN` = نسخة مطابقة رسميًا لـ `origin/main` داخل المشروع الرئيسي.
-- `ALL` = نسخ معزولة لجميع الفروع داخل `ORION_NEXT_ALL_BRANCHES`.
+- `MAIN` = exact mirror لمحتوى `origin/main` داخل مجلد MAIN مستقل.
+- `ALL` = exact mirrors لجميع الفروع داخل `ORION_NEXT_ALL_BRANCHES`.
 
-لا يوجد أي تداخل بين المسارين.
+لا يجوز لأي مسار أن يكتب فوق Working Tree الخاص بالتطوير.
 
-## MAIN — exact mirror
-
-`MAIN` هو المسار الوحيد المسموح له بالكتابة داخل:
-
-```text
-C:\Users\badee\Desktop\ORION_NEXT
-```
+## MAIN — exact isolated mirror
 
 المصدر:
 
@@ -26,138 +20,157 @@ C:\Users\badee\Desktop\ORION_NEXT
 GitHub / origin/main
 ```
 
-النتيجة المطلوبة هي **Exact Mirror**:
-
-> كل مسار موجود في `origin/main` يجب أن يكون موجودًا محليًا بالمحتوى نفسه، وكل مسار غير موجود في `origin/main` يجب ألا يبقى محليًا، باستثناء `.git` لأنه بيانات Git الداخلية الخاصة بالمستودع.
-
-يستخدم MAIN:
-
-1. `git fetch --prune origin main` دون checkout أو تغيير الفرع الحالي.
-2. `git archive origin/main` لبناء snapshot رسمي مستقل عن working tree.
-3. manifest محليًا مع استثناء `.git` فقط.
-4. SHA-256 لمحتوى الملفات.
-5. نقل الملفات الجديدة وتحديث المتغيرة فقط.
-6. حذف كل المسارات الزائدة محليًا.
-7. معالجة collisions بين file/directory/symlink.
-8. verification كامل بعد materialization.
-
-لا يظهر `MAIN SUCCESS` إلا إذا كان:
+مصدر Git هو مستودع المشروع الرئيسي:
 
 ```text
-LOCAL_MANIFEST (excluding .git)
+PROJECT_ROOT
+```
+
+لكن `PROJECT_ROOT` **مصدر قراءة فقط بالنسبة إلى MAIN materialization**.
+
+وجهة MAIN الرسمية هي:
+
+```text
+C:\Users\badee\Desktop\ORION_NEXT_MAIN
+```
+
+أو ما يعادلها ديناميكيًا:
+
+```text
+Path(PROJECT_ROOT).parent / "ORION_NEXT_MAIN"
+```
+
+### القاعدة الحاكمة
+
+> MAIN يجب أن يكون نسخة مطابقة 100% لـ `origin/main`، لكن عملية MAIN ممنوعة من تعديل أو حذف أو استبدال أي ملف داخل `PROJECT_ROOT`.
+
+وبالتالي لا توجد مفاضلة بين الدقة والأمان:
+
+```text
+origin/main
+     ↓
+Git archive snapshot
+     ↓
+ORION_NEXT_MAIN
+     ↓
+Exact parity verification
+```
+
+بينما:
+
+```text
+PROJECT_ROOT
+     ↑
+Git source / development checkout
+     │
+     └── لا يتم تنظيفه أو materialize داخله بواسطة MAIN
+```
+
+## MAIN — قواعد التنفيذ
+
+1. `git fetch --prune origin main` من `PROJECT_ROOT` دون checkout أو تغيير الفرع الحالي.
+2. `git archive origin/main` لبناء snapshot رسمي.
+3. حساب manifest للمجلد `ORION_NEXT_MAIN`.
+4. مقارنة المسارات والمحتوى باستخدام SHA-256.
+5. إضافة Missing.
+6. تحديث Different.
+7. حذف Extra داخل `ORION_NEXT_MAIN` فقط.
+8. معالجة file/directory/symlink collisions داخل وجهة MAIN فقط.
+9. التحقق النهائي قبل إعلان النجاح.
+10. أي محاولة لتوجيه MAIN إلى `PROJECT_ROOT` تُرفض صراحة.
+
+لا يظهر `MAIN SUCCESS` إلا عند:
+
+```text
+MAIN_LOCAL_MANIFEST
         ==
 ORIGIN_MAIN_ARCHIVE_MANIFEST
 ```
 
-أي اختلاف يمنع النجاح.
-
 ## Independent parity verification
 
-أضيفت أداة مستقلة للغرض الوحيد التالي:
+الأداة:
 
 ```text
 tools/orion_main_sync_verify.py
 ```
 
-هذه الأداة **Read-Only** ولا تعدّل المشروع. تقوم بـ:
-
-1. `git fetch --prune origin main`.
-2. تحديد commit الهدف من `origin/main`.
-3. بناء archive snapshot من `git archive origin/main`.
-4. حساب manifest محلي مستقل مع استثناء `.git` فقط.
-5. مقارنة كل المسارات والبصمات SHA-256.
-6. إظهار `RESULT: EXACT MATCH` فقط عند التطابق الكامل.
-7. إظهار `FAILED` مع المسارات الناقصة أو الزائدة أو المختلفة عند وجود أي خلل.
-
-وبذلك أصبح لدينا مستويان مستقلان من الحماية:
+Read-only، وتتحقق من:
 
 ```text
-Sync MAIN
-    ↓
-Materialize
-    ↓
-Internal exact verification
-    ↓
-MAIN SUCCESS
-
-ثم عند الحاجة للتحقق المستقل:
-
-orion_main_sync_verify.py
-    ↓
 Fresh fetch
     ↓
-Fresh archive
+origin/main commit
     ↓
-Fresh local manifest
+git archive
+    ↓
+Expected manifest
+    ↓
+ORION_NEXT_MAIN manifest
+    ↓
+Missing / Extra / Different
     ↓
 EXACT MATCH / FAILED
 ```
 
-هذا يمنع اعتمادنا على عداد الملفات أو commit hash وحدهما، ويجعل السؤال "هل النقل تم طبق الأصل؟" قابلًا للإجابة آليًا ببصمة محتوى كاملة.
+ولا تدخل `PROJECT_ROOT` ضمن الـwritable MAIN mirror.
+
+## MAIN — حماية التطوير
+
+هذه الحماية Contract وليست سلوكًا اختياريًا.
+
+إذا كان المطور يعمل على:
+
+```text
+modified files
+untracked files
+test files
+local experiments
+```
+
+فـMAIN Sync لا يلمسها إطلاقًا لأنها موجودة خارج `ORION_NEXT_MAIN`.
+
+هذا يحل تعارض المزامنة مع الاختبارات دون إضعاف مفهوم Exact Mirror.
 
 ## ALL — التصميم المعتمد
 
-تم تثبيت تصميم ALL الحالي بعد نجاح اختبارات المزامنة.
+`ALL` يبقى مسارًا مستقلًا ولا يتغير بسبب إصلاح MAIN.
 
-التصميم **لا يستخدم `git worktree` نهائيًا**.
+يتم:
 
-بدلًا من ذلك:
-
-1. `git fetch --prune origin +refs/heads/*:refs/remotes/origin/*` يتم مرة واحدة لجلب جميع الفروع.
-2. لكل فرع يتم استخدام `git archive origin/<branch>` لاستخراج snapshot كامل للفرع.
-3. يتم وضع المحتوى مباشرة داخل مجلد مستقل للفرع تحت:
+1. `git fetch --prune origin +refs/heads/*:refs/remotes/origin/*` مرة واحدة.
+2. `git archive origin/<branch>` لكل فرع.
+3. materialization داخل:
 
 ```text
-C:\Users\badee\Desktop\ORION_NEXT_ALL_BRANCHES\
-    main\
-    future__opportunity-evaluation-contract__...
-    phase2__core-intelligence-hardening__...
-    ops__...
+ORION_NEXT_ALL_BRANCHES/<safe-branch-name>
 ```
 
-4. لا يتم تبديل `PROJECT_ROOT` إلى أي فرع أثناء ALL.
-5. لا يتم تنفيذ `reset --hard` أو `clean -fdx` أو `worktree add` داخل المشروع الرئيسي.
+4. لا يتم تبديل `PROJECT_ROOT`.
+5. لا يتم استخدام `reset --hard` أو `clean -fdx` أو `git worktree` داخل المشروع الرئيسي.
+6. كل مجلد فرع هو exact mirror لمحتوى ذلك الفرع.
 
-## ALL — المزامنة الفعلية
-
-لكل فرع يتم:
-
-- قراءة snapshot الفعلي من GitHub عبر `git archive`.
-- مقارنة المحتوى الموجود محليًا مع snapshot الهدف باستخدام SHA-256.
-- نقل الملفات الجديدة فعليًا.
-- تحديث الملفات التي تغير محتواها فعليًا.
-- حذف الملفات التي لم تعد موجودة في الفرع الهدف.
-- الإبقاء على الملفات المطابقة دون إعادة كتابتها لتقليل الزمن والـI/O.
-
-وبالتالي فإن كل مجلد فرع يصبح **Exact Mirror** لمحتوى GitHub لذلك الفرع.
-
-## ALL — الحماية والعزل
-
-كل فرع له مجلد مستقل.
-
-لا يجوز أن يكتب فرع في مجلد فرع آخر، ولا أن يكتب ALL فوق:
-
-```text
-C:\Users\badee\Desktop\ORION_NEXT
-```
-
-## MAIN وALL — الفصل النهائي
+## الفصل النهائي
 
 ```text
 MAIN:
-GitHub/main → PROJECT_ROOT
+origin/main → ORION_NEXT_MAIN
 
 ALL:
-GitHub/all branches → ALL_ROOT/<branch>
+origin/<all branches> → ORION_NEXT_ALL_BRANCHES/<branch>
+
+DEVELOPMENT:
+PROJECT_ROOT
 ```
 
-القواعد:
+والقواعد:
 
-- MAIN لا يستخدم `ALL_ROOT`.
-- ALL لا يستخدم `PROJECT_ROOT` كوجهة.
-- MAIN لا يغير أو يعيد تصميم محرك ALL.
-- ALL لا يكتب فوق المشروع الرئيسي.
-- لا يوجد `git worktree` في أي من المسارين.
+- MAIN لا يكتب `PROJECT_ROOT`.
+- ALL لا يكتب `PROJECT_ROOT` كوجهة.
+- MAIN لا يكتب `ALL_ROOT`.
+- ALL لا يكتب `MAIN_ROOT`.
+- إصلاح MAIN لا يغير محرك ALL.
+- التطوير والاختبارات تبقى داخل `PROJECT_ROOT` دون تدخل من أدوات materialization.
 
 ## إحصائيات الشاشة
 
@@ -173,21 +186,19 @@ GitHub/all branches → ALL_ROOT/<branch>
 
 ```text
 BRANCHES = 1
-FILES    = عدد ملفات origin/main
-ADDED    = الملفات التي أضيفت محليًا
-UPDATED  = الملفات التي اختلف محتواها وتم تحديثها
-REMOVED  = الملفات الزائدة محليًا التي أزيلت لتحقيق التطابق
+FILES    = ملفات origin/main
+ADDED    = الملفات المضافة إلى MAIN mirror
+UPDATED  = الملفات التي تغير محتواها
+REMOVED  = الملفات الزائدة المحذوفة من MAIN mirror
 ```
 
-## الأدوات
-
-التصميم النهائي للأداة:
+## أدوات MAIN + ALL
 
 ```text
 tools/
     orion_restore_gui.pyw       # محرك ALL المجمد
     orion_restore_main_gui.pyw  # واجهة MAIN + ALL
-    orion_main_sync_verify.py   # مستقل: exact parity verification
+    orion_main_sync_verify.py   # مستقل: exact MAIN parity verification
     orion_restore_gui.vbs       # Windows launcher
 ```
 
@@ -195,14 +206,10 @@ tools/
 
 `MAIN` =
 
-**Fetch origin/main → Archive snapshot → Compare SHA-256 → Add new files → Update changed files → Remove all extra local paths → Verify exact manifest → SUCCESS**
+**Fetch origin/main → Archive snapshot → Materialize فقط داخل ORION_NEXT_MAIN → Remove Extra → Update Different → Add Missing → Verify exact parity → SUCCESS**
 
-والتحقق المستقل =
+`ALL` =
 
-**Fresh fetch → Fresh archive snapshot → Fresh local manifest → EXACT MATCH / FAILED**
+**Discover branches → Batch Fetch → Archive each branch → Materialize داخل ALL_ROOT/<branch> → Compare SHA-256 → Reconcile Missing/Extra/Different → Verify → Statistics**.
 
-و`ALL` =
-
-**Discover all branches → Batch Fetch → Archive each branch → Compare SHA-256 → Transfer only required files → Remove obsolete files → Resolve Windows path-type collisions → Show per-branch statistics**.
-
-يظل نجاح ALL baseline محميًا، ويظل MAIN هو المسار الوحيد الذي يجوز له تحديث `PROJECT_ROOT`.
+**ممنوع العودة إلى التصميم القديم الذي كان يجعل MAIN يكتب مباشرة داخل `PROJECT_ROOT`.**
