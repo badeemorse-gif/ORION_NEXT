@@ -47,6 +47,9 @@
 - كل عنصر يجب أن يكون `Opportunity` صالحًا.
 - لا يسمح بتكرار نفس `(symbol, timeframe, direction)` داخل المجموعة.
 - ترتيب المرشحين محفوظ كما وصل إلى العقد.
+- المدخلات تُلتقط داخل `tuple` غير قابل للتعديل، ولا تتأثر بأي تعديل لاحق على sequence المصدر.
+- الـCandidateSet نفسه immutable.
+- اختلاف `direction` يجعل الهوية مختلفة؛ لذلك يمكن أن يحتوي العقد على LONG وSHORT لنفس `(symbol, timeframe)`.
 - العقد لا يطبق scoring أو ranking أو thresholds ولا يقرر أفضل فرصة.
 
 هذه الحدود تمنح Opportunity Engine مدخلًا ثابتًا دون اختراع سياسة اختيار قبل توفر أدلة Core والـbacktesting المناسبة.
@@ -141,6 +144,9 @@ Order Execution
 - non-Opportunity member is rejected
 - duplicate identity is rejected
 - same symbol on different timeframes remains valid
+- same symbol/timeframe with opposite directions remains valid
+- source sequence is snapshotted into an immutable tuple
+- candidate set itself is immutable
 
 ### Opportunity Evaluation
 
