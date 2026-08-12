@@ -44,7 +44,10 @@ class TestExecutionValidationContract(unittest.TestCase):
             with self.subTest(confidence=confidence):
                 request = self._request(confidence=confidence)
                 self.assertFalse(self.adapter.validate(request))
-                self.assertEqual(request.confidence, confidence)
+                if math.isnan(confidence):
+                    self.assertTrue(math.isnan(request.confidence))
+                else:
+                    self.assertEqual(request.confidence, confidence)
 
 
 if __name__ == "__main__":
