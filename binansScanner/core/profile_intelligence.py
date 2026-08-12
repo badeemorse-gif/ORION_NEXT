@@ -2,7 +2,7 @@
 ===============================================================================
 ORION
 Module : core.profile_intelligence
-Version: 1.1.0
+Version: 1.2.0
 
 Profile Intelligence — Fail-Closed
 ===============================================================================
@@ -146,7 +146,7 @@ class ProfileIntelligence:
         confidence = self._safe_confidence(profile)
         if confidence <= 0.0:
             return self._blocked(
-                "Directional profile intelligence requires positive confidence."
+                "Directional profile intelligence requires positive confidence across the complete profile."
             )
 
         return ProfileIntelligenceResult(
@@ -157,7 +157,11 @@ class ProfileIntelligence:
         )
 
     def _safe_confidence(self, profile: ProfileResult) -> float:
-        values = (profile.market.confidence, profile.statistics.confidence_limit)
+        values = (
+            profile.market.confidence,
+            profile.statistics.confidence_limit,
+            *(timeframe.characteristics.confidence for timeframe in profile.timeframes),
+        )
         if any(not self._finite_number(value) for value in values):
             return 0.0
         confidence = min(values)
@@ -218,9 +222,15 @@ class ProfileIntelligence:
                         f"in timeframe {timeframe_name}."
                     )
 
-            if timeframe.missing_candles > timeframe.candles_count:
+            if timeframe.candles_count <= 0:
                 return (
-                    f"ProfileResult contains impossible candle coverage "
+                    f"ProfileResult contains no candle coverage "
+                    f"in timeframe {timeframe_name}."
+                )
+
+            if timeframe.missing_candles >= timeframe.candles_count:
+                return (
+                    f"ProfileResult contains incomplete candle coverage "
                     f"in timeframe {timeframe_name}."
                 )
 
@@ -278,8 +288,10 @@ class ProfileIntelligence:
             if numeric_value < lower or (upper is not None and numeric_value > upper):
                 return f"ProfileResult contains out-of-range {field_name}."
 
-        if statistics.missing_candles > statistics.total_candles:
-            return "ProfileResult contains impossible aggregate candle coverage."
+        if statistics.total_candles <= 0:
+            return "ProfileResult contains no aggregate candle coverage."
+        if statistics.missing_candles >= statistics.total_candles:
+            return "ProfileResult contains incomplete aggregate candle coverage."
         if statistics.completion_ratio <= 0.0:
             return "ProfileResult has no completed market-data coverage."
         return None
