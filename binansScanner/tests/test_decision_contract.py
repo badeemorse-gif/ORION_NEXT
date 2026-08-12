@@ -293,6 +293,33 @@ class TestDecisionContract(unittest.TestCase):
         self.assertEqual(result.decision, "WAIT")
         self.assertEqual(result.confidence, 0.0)
 
+    def test_reverse_score_state_conflict_is_reported_and_fail_closed(self) -> None:
+        analysis = AnalysisResult(
+            market_state="BULLISH",
+            strength=70.0,
+            signals=["EMA_ALIGNMENT_BULLISH"],
+            warnings=[],
+        )
+
+        score = ScoreResult(
+            score=-80.0,
+            category="STRONG_BEARISH",
+            factors=[],
+            warnings=[],
+        )
+
+        result = self.engine.decide(
+            analysis,
+            score,
+        )
+
+        self.assertIn(
+            "CONFLICT_SCORE_BEARISH_STATE_BULLISH",
+            result.warnings,
+        )
+        self.assertEqual(result.decision, "WAIT")
+        self.assertEqual(result.confidence, 0.0)
+
     def test_score_below_negative_hundred_is_rejected(self) -> None:
         analysis = AnalysisResult(
             market_state="BEARISH",
