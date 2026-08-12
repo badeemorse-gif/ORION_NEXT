@@ -1,9 +1,8 @@
-"""Independent exact-parity verifier for ORION MAIN.
+"""Independent exact-parity verifier for the isolated ORION MAIN mirror.
 
-This command is intentionally read-only: it fetches origin/main, builds the
-same Git archive snapshot used by the MAIN restore path, computes a local
-manifest excluding only .git, and refuses success on any missing, extra, or
-content-different path.
+Read-only: fetches origin/main, builds the same archive snapshot used by the
+MAIN restore path, and compares it with ORION_NEXT_MAIN. The development
+checkout itself is never part of the writable MAIN mirror.
 
 Usage:
     python tools/orion_main_sync_verify.py
@@ -15,22 +14,19 @@ import os
 import subprocess
 import sys
 import tarfile
-import tempfile
 from io import BytesIO
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 REMOTE = "origin"
 REF = "origin/main"
+MAIN_ROOT = ROOT.parent / "ORION_NEXT_MAIN"
 
 
 def run_git(*args: str) -> bytes:
     result = subprocess.run(
-        ["git", *args],
-        cwd=ROOT,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        check=False,
+        ["git", *args], cwd=ROOT, stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE, check=False,
     )
     if result.returncode:
         detail = result.stderr.decode("utf-8", "replace").strip()
@@ -48,17 +44,17 @@ def sha256_file(path: Path) -> str:
 
 def local_manifest() -> dict[str, tuple]:
     result: dict[str, tuple] = {}
-    for base, dirs, files in os.walk(ROOT, topdown=True, followlinks=False):
+    if not MAIN_ROOT.is_dir():
+        return result
+    for base, dirs, files in os.walk(MAIN_ROOT, topdown=True, followlinks=False):
         base_path = Path(base)
         dirs[:] = [name for name in dirs if name != ".git"]
-        rel_base = base_path.relative_to(ROOT)
+        rel_base = base_path.relative_to(MAIN_ROOT)
         if rel_base != Path("."):
             result[rel_base.as_posix()] = ("dir",)
         for name in files:
             path = base_path / name
-            rel = path.relative_to(ROOT).as_posix()
-            if rel == ".git" or rel.startswith(".git/"):
-                continue
+            rel = path.relative_to(MAIN_ROOT).as_posix()
             if path.is_symlink():
                 result[rel] = ("link", os.readlink(path))
             else:
@@ -84,8 +80,6 @@ def archive_manifest() -> dict[str, tuple]:
                     raise RuntimeError(f"Unable to read archive member: {rel}")
                 data = source.read()
                 result[rel] = ("file", len(data), hashlib.sha256(data).hexdigest())
-    # git archive may omit explicit parent directory entries; add them so the
-    # comparison is structural as well as byte-for-byte.
     for rel in list(result):
         parent = Path(rel).parent
         while parent != Path("."):
@@ -104,31 +98,27 @@ def main() -> int:
         actual = local_manifest()
         missing = sorted(set(expected) - set(actual))
         extra = sorted(set(actual) - set(expected))
-        different = sorted(
-            rel for rel in set(expected) & set(actual) if expected[rel] != actual[rel]
-        )
-        print("ORION MAIN EXACT PARITY VERIFICATION")
-        print(f"Target: {REF}")
-        print(f"Commit: {remote_commit}")
+        different = sorted(rel for rel in set(expected) & set(actual) if expected[rel] != actual[rel])
+        print("ORION MAIN ISOLATED EXACT PARITY VERIFICATION")
+        print(f"Target:      {REF}")
+        print(f"Commit:      {remote_commit}")
+        print(f"MAIN Mirror: {MAIN_ROOT}")
         print(f"Expected paths: {len(expected)}")
-        print(f"Local paths:    {len(actual)}")
+        print(f"Mirror paths:   {len(actual)}")
         if missing or extra or different:
             print("RESULT: FAILED")
             if missing:
                 print("Missing:")
-                for rel in missing[:20]:
-                    print(f"  {rel}")
+                for rel in missing[:20]: print(f"  {rel}")
             if extra:
                 print("Extra:")
-                for rel in extra[:20]:
-                    print(f"  {rel}")
+                for rel in extra[:20]: print(f"  {rel}")
             if different:
                 print("Different:")
-                for rel in different[:20]:
-                    print(f"  {rel}")
+                for rel in different[:20]: print(f"  {rel}")
             return 1
         print("RESULT: EXACT MATCH")
-        print(".git is intentionally excluded from the parity contract.")
+        print("Development PROJECT_ROOT was not part of the writable MAIN mirror.")
         return 0
     except Exception as exc:
         print(f"RESULT: ERROR — {exc}", file=sys.stderr)
