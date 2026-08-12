@@ -5,25 +5,6 @@ Module : core.profile_intelligence
 Version: 1.1.0
 
 Profile Intelligence — Fail-Closed
-
-This module interprets the canonical ProfileResult without mutating it and
-without introducing a replacement Profile contract.
-
-Boundary
---------
-ProfileResult
-    |
-    v
-ProfileIntelligence
-    |
-    v
-ProfileIntelligenceResult
-
-Safety rule
------------
-If the profile is missing, incomplete, malformed, blocked, or internally
-inconsistent, this layer MUST return a blocked neutral result. It must never
-invent a directional recommendation from incomplete profile information.
 ===============================================================================
 """
 
@@ -36,6 +17,7 @@ from typing import Any, Optional
 
 from models.profile import (
     EMAAlignment,
+    MarketCharacteristics,
     MarketPhaseType,
     MomentumState,
     ProfileResult,
@@ -87,13 +69,7 @@ class ProfileIntelligenceResult:
 
 
 class ProfileIntelligence:
-    """
-    Deterministic interpreter for the canonical ProfileResult.
-
-    This class deliberately does not mutate ProfileResult, MarketDataset, or
-    TimeframeProfile objects. It is also independent of Score and Decision;
-    those layers remain responsible for their own canonical contracts.
-    """
+    """Deterministic interpreter for the canonical ProfileResult."""
 
     _VALID_TRENDS = {item.value for item in TrendType}
     _VALID_MOMENTUM = {item.value for item in MomentumState}
@@ -113,12 +89,8 @@ class ProfileIntelligence:
         MomentumState.SELL.value,
     }
 
-    def evaluate(
-        self,
-        profile: Optional[ProfileResult],
-    ) -> ProfileIntelligenceResult:
+    def evaluate(self, profile: Optional[ProfileResult]) -> ProfileIntelligenceResult:
         """Evaluate a profile and fail closed on every invalid boundary."""
-
         invalid_reason = self._validate_profile(profile)
         if invalid_reason is not None:
             return self._blocked(invalid_reason)
@@ -126,11 +98,7 @@ class ProfileIntelligence:
         assert profile is not None
         market = profile.market
 
-        trend = market.trend
-        momentum = market.momentum
-        risk = market.risk_level
-
-        if risk == RiskLevel.EXTREME.value:
+        if market.risk_level == RiskLevel.EXTREME.value:
             return ProfileIntelligenceResult(
                 recommendation=ProfileRecommendation.NEUTRAL.value,
                 confidence=0.0,
@@ -139,8 +107,8 @@ class ProfileIntelligence:
             )
 
         if (
-            trend == TrendType.BULLISH.value
-            and momentum in self._BULLISH_MOMENTUM
+            market.trend == TrendType.BULLISH.value
+            and market.momentum in self._BULLISH_MOMENTUM
         ):
             return self._directional_result(
                 ProfileRecommendation.BULLISH.value,
@@ -149,8 +117,8 @@ class ProfileIntelligence:
             )
 
         if (
-            trend == TrendType.BEARISH.value
-            and momentum in self._BEARISH_MOMENTUM
+            market.trend == TrendType.BEARISH.value
+            and market.momentum in self._BEARISH_MOMENTUM
         ):
             return self._directional_result(
                 ProfileRecommendation.BEARISH.value,
@@ -165,12 +133,8 @@ class ProfileIntelligence:
             blocked=False,
         )
 
-    def analyze(
-        self,
-        profile: Optional[ProfileResult],
-    ) -> ProfileIntelligenceResult:
-        """Compatibility alias for the canonical evaluate() operation."""
-
+    def analyze(self, profile: Optional[ProfileResult]) -> ProfileIntelligenceResult:
+        """Compatibility alias for evaluate()."""
         return self.evaluate(profile)
 
     def _directional_result(
@@ -180,7 +144,6 @@ class ProfileIntelligence:
         reason: str,
     ) -> ProfileIntelligenceResult:
         confidence = self._safe_confidence(profile)
-
         if confidence <= 0.0:
             return self._blocked(
                 "Directional profile intelligence requires positive confidence."
@@ -194,88 +157,71 @@ class ProfileIntelligence:
         )
 
     def _safe_confidence(self, profile: ProfileResult) -> float:
-        values = (
-            profile.market.confidence,
-            profile.statistics.confidence_limit,
-        )
-
+        values = (profile.market.confidence, profile.statistics.confidence_limit)
         if any(not self._finite_number(value) for value in values):
             return 0.0
-
         confidence = min(values)
         return min(max(float(confidence), 0.0), 100.0)
 
-    def _validate_profile(
-        self,
-        profile: Optional[ProfileResult],
-    ) -> Optional[str]:
+    def _validate_profile(self, profile: Optional[ProfileResult]) -> Optional[str]:
         if profile is None:
             return "ProfileResult is missing; directional intelligence is blocked."
-
         if not isinstance(profile, ProfileResult):
             return "Profile intelligence requires the canonical ProfileResult contract."
-
         if not profile.is_valid:
             return "ProfileResult is not valid/tradeable; directional intelligence is blocked."
-
         if not profile.timeframes:
             return "ProfileResult contains no timeframe profiles."
 
-        market = profile.market
-        statistics = profile.statistics
-
-        if market is None or statistics is None:
+        if profile.market is None or profile.statistics is None:
             return "ProfileResult contains incomplete canonical market/statistics data."
 
-        market_reason = self._validate_characteristics(
-            market,
-            prefix="market",
-        )
+        market_reason = self._validate_characteristics(profile.market, "market")
         if market_reason is not None:
             return market_reason
 
-        statistics_reason = self._validate_statistics(statistics)
+        statistics_reason = self._validate_statistics(profile.statistics)
         if statistics_reason is not None:
             return statistics_reason
 
         for timeframe in profile.timeframes:
-            if not getattr(timeframe, "timeframe", None):
+            timeframe_name = getattr(timeframe, "timeframe", None)
+            if not timeframe_name:
                 return "ProfileResult contains a malformed timeframe profile."
 
             characteristics = getattr(timeframe, "characteristics", None)
-            if characteristics is None:
-                return "ProfileResult contains a timeframe without characteristics."
+            if not isinstance(characteristics, MarketCharacteristics):
+                return (
+                    f"ProfileResult contains invalid characteristics "
+                    f"in timeframe {timeframe_name}."
+                )
 
             timeframe_reason = self._validate_characteristics(
                 characteristics,
-                prefix=f"timeframe {timeframe.timeframe}",
+                f"timeframe {timeframe_name}",
             )
             if timeframe_reason is not None:
                 return timeframe_reason
 
-            metadata_numeric_fields = (
-                ("candles_count", timeframe.candles_count, 0.0, None),
-                ("missing_candles", timeframe.missing_candles, 0.0, None),
-            )
-            for field_name, value, lower, upper in metadata_numeric_fields:
+            for field_name, value in (
+                ("candles_count", timeframe.candles_count),
+                ("missing_candles", timeframe.missing_candles),
+            ):
                 if not self._finite_number(value):
                     return (
                         f"ProfileResult contains non-finite {field_name} "
-                        f"in timeframe {timeframe.timeframe}."
+                        f"in timeframe {timeframe_name}."
                     )
-                numeric_value = float(value)
-                if numeric_value < lower or (
-                    upper is not None and numeric_value > upper
-                ):
+                if float(value) < 0.0:
                     return (
                         f"ProfileResult contains out-of-range {field_name} "
-                        f"in timeframe {timeframe.timeframe}."
+                        f"in timeframe {timeframe_name}."
                     )
 
             if timeframe.missing_candles > timeframe.candles_count:
                 return (
                     f"ProfileResult contains impossible candle coverage "
-                    f"in timeframe {timeframe.timeframe}."
+                    f"in timeframe {timeframe_name}."
                 )
 
         return None
@@ -283,17 +229,10 @@ class ProfileIntelligence:
     def _validate_characteristics(
         self,
         characteristics: Any,
-        *,
         prefix: str,
     ) -> Optional[str]:
-        if not isinstance(characteristics, type(ProfileResult.__dataclass_fields__["market"].default)):
-            # The canonical field is a concrete MarketCharacteristics instance;
-            # use structural validation below so this remains safe if the model
-            # implementation changes its default representation.
-            from models.profile import MarketCharacteristics
-
-            if not isinstance(characteristics, MarketCharacteristics):
-                return f"ProfileResult contains invalid {prefix} characteristics."
+        if not isinstance(characteristics, MarketCharacteristics):
+            return f"ProfileResult contains invalid {prefix} characteristics."
 
         categorical_fields = (
             ("trend", characteristics.trend, self._VALID_TRENDS),
@@ -305,7 +244,6 @@ class ProfileIntelligence:
             ("market_phase", characteristics.market_phase, self._VALID_PHASES),
             ("risk_level", characteristics.risk_level, self._VALID_RISKS),
         )
-
         for field_name, value, valid_values in categorical_fields:
             if value not in valid_values:
                 return f"ProfileResult contains invalid {prefix} {field_name}: {value!r}."
@@ -317,7 +255,6 @@ class ProfileIntelligence:
             ("volume_score", characteristics.volume_score, 0.0, 100.0),
             ("volatility_score", characteristics.volatility_score, 0.0, 100.0),
         )
-
         for field_name, value, lower, upper in numeric_fields:
             if not self._finite_number(value):
                 return f"ProfileResult contains non-finite {prefix} {field_name}."
@@ -334,22 +271,17 @@ class ProfileIntelligence:
             ("statistics.total_candles", statistics.total_candles, 0.0, None),
             ("statistics.missing_candles", statistics.missing_candles, 0.0, None),
         )
-
         for field_name, value, lower, upper in numeric_fields:
             if not self._finite_number(value):
                 return f"ProfileResult contains non-finite {field_name}."
             numeric_value = float(value)
-            if numeric_value < lower or (
-                upper is not None and numeric_value > upper
-            ):
+            if numeric_value < lower or (upper is not None and numeric_value > upper):
                 return f"ProfileResult contains out-of-range {field_name}."
 
         if statistics.missing_candles > statistics.total_candles:
             return "ProfileResult contains impossible aggregate candle coverage."
-
         if statistics.completion_ratio <= 0.0:
             return "ProfileResult has no completed market-data coverage."
-
         return None
 
     @staticmethod
