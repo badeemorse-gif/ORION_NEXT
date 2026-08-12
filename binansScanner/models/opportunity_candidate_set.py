@@ -7,6 +7,7 @@ future Intelligence Engine concern.
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from dataclasses import dataclass
 
 from .opportunity import Opportunity
@@ -39,5 +40,5 @@ class OpportunityCandidateSet:
     def __len__(self) -> int:
         return len(self.opportunities)
 
-    def __iter__(self):
+    def __iter__(self) -> Iterator[Opportunity]:
         return iter(self.opportunities)
