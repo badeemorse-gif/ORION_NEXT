@@ -1,7 +1,7 @@
 # ORION Restore — ALL Branch Synchronization Contract
 
-الإصدار: 2.2
-الحالة: MAIN + FAST ISOLATED ALL
+الإصدار: 2.3
+الحالة: MAIN + FAST ISOLATED ALL + INDEPENDENT MAIN PARITY VERIFIER
 
 ## الهدف
 
@@ -11,6 +11,89 @@
 - `ALL` = نسخ معزولة لجميع الفروع داخل `ORION_NEXT_ALL_BRANCHES`.
 
 لا يوجد أي تداخل بين المسارين.
+
+## MAIN — exact mirror
+
+`MAIN` هو المسار الوحيد المسموح له بالكتابة داخل:
+
+```text
+C:\Users\badee\Desktop\ORION_NEXT
+```
+
+المصدر:
+
+```text
+GitHub / origin/main
+```
+
+النتيجة المطلوبة هي **Exact Mirror**:
+
+> كل مسار موجود في `origin/main` يجب أن يكون موجودًا محليًا بالمحتوى نفسه، وكل مسار غير موجود في `origin/main` يجب ألا يبقى محليًا، باستثناء `.git` لأنه بيانات Git الداخلية الخاصة بالمستودع.
+
+يستخدم MAIN:
+
+1. `git fetch --prune origin main` دون checkout أو تغيير الفرع الحالي.
+2. `git archive origin/main` لبناء snapshot رسمي مستقل عن working tree.
+3. manifest محليًا مع استثناء `.git` فقط.
+4. SHA-256 لمحتوى الملفات.
+5. نقل الملفات الجديدة وتحديث المتغيرة فقط.
+6. حذف كل المسارات الزائدة محليًا.
+7. معالجة collisions بين file/directory/symlink.
+8. verification كامل بعد materialization.
+
+لا يظهر `MAIN SUCCESS` إلا إذا كان:
+
+```text
+LOCAL_MANIFEST (excluding .git)
+        ==
+ORIGIN_MAIN_ARCHIVE_MANIFEST
+```
+
+أي اختلاف يمنع النجاح.
+
+## Independent parity verification
+
+أضيفت أداة مستقلة للغرض الوحيد التالي:
+
+```text
+tools/orion_main_sync_verify.py
+```
+
+هذه الأداة **Read-Only** ولا تعدّل المشروع. تقوم بـ:
+
+1. `git fetch --prune origin main`.
+2. تحديد commit الهدف من `origin/main`.
+3. بناء archive snapshot من `git archive origin/main`.
+4. حساب manifest محلي مستقل مع استثناء `.git` فقط.
+5. مقارنة كل المسارات والبصمات SHA-256.
+6. إظهار `RESULT: EXACT MATCH` فقط عند التطابق الكامل.
+7. إظهار `FAILED` مع المسارات الناقصة أو الزائدة أو المختلفة عند وجود أي خلل.
+
+وبذلك أصبح لدينا مستويان مستقلان من الحماية:
+
+```text
+Sync MAIN
+    ↓
+Materialize
+    ↓
+Internal exact verification
+    ↓
+MAIN SUCCESS
+
+ثم عند الحاجة للتحقق المستقل:
+
+orion_main_sync_verify.py
+    ↓
+Fresh fetch
+    ↓
+Fresh archive
+    ↓
+Fresh local manifest
+    ↓
+EXACT MATCH / FAILED
+```
+
+هذا يمنع اعتمادنا على عداد الملفات أو commit hash وحدهما، ويجعل السؤال "هل النقل تم طبق الأصل؟" قابلًا للإجابة آليًا ببصمة محتوى كاملة.
 
 ## ALL — التصميم المعتمد
 
@@ -58,92 +141,6 @@ C:\Users\badee\Desktop\ORION_NEXT_ALL_BRANCHES\
 C:\Users\badee\Desktop\ORION_NEXT
 ```
 
-## MAIN — official primary project mirror
-
-`MAIN` هو المسار الوحيد المسموح له بالكتابة داخل:
-
-```text
-C:\Users\badee\Desktop\ORION_NEXT
-```
-
-المصدر:
-
-```text
-GitHub / origin/main
-```
-
-والنتيجة المطلوبة هي **Exact Mirror**:
-
-> كل مسار موجود في `origin/main` يجب أن يكون موجودًا محليًا بالمحتوى نفسه، وكل مسار غير موجود في `origin/main` يجب ألا يبقى محليًا، باستثناء `.git` لأنه بيانات Git الداخلية الخاصة بالمستودع.
-
-### قواعد MAIN
-
-1. يستخدم `git fetch --prune origin main` دون `checkout` أو تغيير للفرع الحالي.
-2. يقرأ snapshot الرسمي بواسطة `git archive origin/main`.
-3. يبني manifest فعليًا للمجلد المحلي مع استثناء `.git` فقط.
-4. يقارن المحتوى باستخدام SHA-256.
-5. ينقل الملفات الجديدة.
-6. يحدّث أي ملف تغير محتواه داخل `origin/main`.
-7. يحذف أي ملف أو مجلد محلي زائد لا وجود له في snapshot الرسمي لـ `origin/main`.
-8. يعالج file/directory collisions كجزء من تحقيق التطابق النهائي.
-9. لا يستخدم `clean -fdx` ولا `checkout` ولا `reset --hard` لتحقيق المزامنة.
-10. لا يكتب داخل `ALL_ROOT` مطلقًا.
-11. بعد materialization يتم تنفيذ verification كامل:
-    - لا ملفات ناقصة.
-    - لا ملفات زائدة.
-    - لا ملفات مختلفة المحتوى.
-12. لا يظهر `MAIN SUCCESS` إلا بعد نجاح verification.
-13. `BRANCHES` في MAIN = `1`، و`FILES / ADDED / UPDATED / REMOVED` تعرض نتائج MAIN نفسها.
-
-### تحديثات الملفات
-
-عند تغيير محتوى ملف في GitHub/main، يعاد حساب SHA-256 للمصدر والملف المحلي.
-
-إذا اختلفت البصمتان، ينقل MAIN المحتوى الجديد إلى الملف المحلي.
-
-إذا تطابقت البصمتان، لا يعاد نسخ الملف.
-
-### الملفات الزائدة محليًا
-
-MAIN الآن يعمل بمنطق mirror حقيقي وليس بمنطق tracked-files فقط.
-
-لذلك إذا كان هناك مثلًا:
-
-```text
-PROJECT_ROOT/
-    file_from_main.py
-    old_file.py
-    local_extra.txt
-```
-
-بينما `origin/main` يحتوي فقط على:
-
-```text
-file_from_main.py
-```
-
-فبعد `Sync MAIN` يجب أن تصبح النتيجة:
-
-```text
-PROJECT_ROOT/
-    .git/
-    file_from_main.py
-```
-
-ويتم حذف `old_file.py` و`local_extra.txt` لأنهما ليسا جزءًا من snapshot الرسمي.
-
-### verification النهائي
-
-المقارنة النهائية هي:
-
-```text
-LOCAL_MANIFEST (excluding .git)
-        ==
-ORIGIN_MAIN_ARCHIVE_MANIFEST
-```
-
-أي اختلاف، مهما كان سببه أو نوعه، يمنع إعلان النجاح.
-
 ## MAIN وALL — الفصل النهائي
 
 ```text
@@ -190,6 +187,7 @@ REMOVED  = الملفات الزائدة محليًا التي أزيلت لتح
 tools/
     orion_restore_gui.pyw       # محرك ALL المجمد
     orion_restore_main_gui.pyw  # واجهة MAIN + ALL
+    orion_main_sync_verify.py   # مستقل: exact parity verification
     orion_restore_gui.vbs       # Windows launcher
 ```
 
@@ -198,6 +196,10 @@ tools/
 `MAIN` =
 
 **Fetch origin/main → Archive snapshot → Compare SHA-256 → Add new files → Update changed files → Remove all extra local paths → Verify exact manifest → SUCCESS**
+
+والتحقق المستقل =
+
+**Fresh fetch → Fresh archive snapshot → Fresh local manifest → EXACT MATCH / FAILED**
 
 و`ALL` =
 
