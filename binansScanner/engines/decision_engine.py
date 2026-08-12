@@ -3,8 +3,8 @@
 Badee Binance Scanner
 Architecture : ORION
 Module       : engines.decision_engine
-Version      : 1.1.0
-Status       : ORION Production V1.1 REFACTORED
+Version      : 1.2.0
+Status       : ORION Production V1.2 REFACTORED
 ===============================================================================
 
 Decision Engine for transforming objective AnalysisResult and ScoreResult
@@ -142,8 +142,14 @@ class DecisionEngine:
                 if "NEUTRAL_OR_MIXED_CONDITIONS" not in reasons:
                     reasons.append("NEUTRAL_OR_MIXED_CONDITIONS")
 
-            # Calculate normalized confidence (0 to 100) based on absolute score magnitude
-            confidence = self._calculate_confidence(score.score)
+            # Decision confidence is confidence in an actionable outcome, not
+            # merely the magnitude of an upstream score. A WAIT decision or a
+            # score/state conflict must therefore never expose a high
+            # actionable-confidence value to downstream execution logic.
+            if decision == "WAIT":
+                confidence = 0.0
+            else:
+                confidence = self._calculate_confidence(score.score)
 
             decision_result = DecisionResult(
                 decision=decision,
