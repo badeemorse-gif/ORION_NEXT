@@ -4,6 +4,7 @@ from models.opportunity import (
     Opportunity,
     OpportunityDirection,
     OpportunityRisk,
+    RiskState,
 )
 from models.opportunity_candidate_set import OpportunityCandidateSet
 
@@ -17,7 +18,10 @@ class TestOpportunityCandidateSetContract(unittest.TestCase):
             direction=OpportunityDirection.LONG,
             confidence=80.0,
             setup_quality=75.0,
-            risk=OpportunityRisk(state="ACCEPTABLE", invalidation="setup invalidation"),
+            risk=OpportunityRisk(
+                state=RiskState.ACCEPTABLE,
+                invalidation="setup invalidation",
+            ),
         )
 
     def test_valid_candidates_are_preserved_in_order(self) -> None:
