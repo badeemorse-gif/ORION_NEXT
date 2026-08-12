@@ -76,6 +76,25 @@ class TestProfileContract(unittest.TestCase):
         self.assertFalse(result.is_tradeable)
         self.assertTrue(any("indicator metadata reports failed" in block for block in result.blocks))
 
+    def test_missing_indicator_metadata_fails_closed(self):
+        timeframe_data = self._prepared_timeframe()
+        timeframe_data.dataframe.attrs.pop("indicator_result", None)
+        with self.assertRaisesRegex(ValueError, "indicator metadata is missing"):
+            ProfileBuilder().build(timeframe_data.dataframe)
+
+    def test_incomplete_indicator_metadata_fails_closed(self):
+        timeframe_data = self._prepared_timeframe()
+        timeframe_data.dataframe.attrs["indicator_result"] = IndicatorResult(
+            quality="SUFFICIENT",
+            calculated_indicators=[
+                "ema_9", "ema_20", "ema_50", "ema_100", "ema_200",
+                "adx_14", "rsi_14", "momentum_5", "momentum_10",
+                "mfi_14",
+            ],
+        )
+        with self.assertRaisesRegex(ValueError, "calculated critical indicators are incomplete"):
+            ProfileBuilder().build(timeframe_data.dataframe)
+
     def test_valid_complete_indicators_produce_tradeable_profile(self):
         result = self._profile_result(self._prepared_timeframe())
         self.assertTrue(result.is_tradeable)
