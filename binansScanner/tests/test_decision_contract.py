@@ -19,7 +19,8 @@ The engine must:
     - preserve relevant reasons/signals;
     - reject invalid inputs;
     - reject non-finite score values;
-    - produce deterministic decision states.
+    - produce deterministic decision states;
+    - never expose actionable confidence for WAIT outcomes.
 
 ===============================================================================
 """
@@ -156,6 +157,7 @@ class TestDecisionContract(unittest.TestCase):
             result.decision,
             "WAIT",
         )
+        self.assertEqual(result.confidence, 0.0)
 
     def test_non_strong_bullish_conditions_do_not_force_favorable(self) -> None:
         analysis = AnalysisResult(
@@ -181,6 +183,7 @@ class TestDecisionContract(unittest.TestCase):
             result.decision,
             "WAIT",
         )
+        self.assertEqual(result.confidence, 0.0)
 
     def test_non_strong_bearish_conditions_do_not_force_unfavorable(self) -> None:
         analysis = AnalysisResult(
@@ -206,6 +209,7 @@ class TestDecisionContract(unittest.TestCase):
             result.decision,
             "WAIT",
         )
+        self.assertEqual(result.confidence, 0.0)
 
     def test_analysis_warnings_are_preserved(self) -> None:
         analysis = AnalysisResult(
@@ -286,6 +290,8 @@ class TestDecisionContract(unittest.TestCase):
             "CONFLICT_SCORE_BULLISH_STATE_BEARISH",
             result.warnings,
         )
+        self.assertEqual(result.decision, "WAIT")
+        self.assertEqual(result.confidence, 0.0)
 
     def test_score_below_negative_hundred_is_rejected(self) -> None:
         analysis = AnalysisResult(
