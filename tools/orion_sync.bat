@@ -10,7 +10,6 @@ if "%BRANCH%"=="" set "BRANCH=phase2/core-intelligence-hardening"
 
 cd /d "%ORION_ROOT%"
 if errorlevel 1 goto :root_error
-
 if /I "%BRANCH%"=="ALL" goto :all_not_supported
 
 for /f "delims=" %%A in ('git rev-parse --is-inside-work-tree 2^>nul') do set "IS_REPO=%%A"
@@ -45,7 +44,6 @@ if not defined REMOTE_COMMIT goto :target_error
 
 set "HAS_CHANGES="
 for /f "delims=" %%A in ('git status --porcelain --untracked-files=all') do set "HAS_CHANGES=1"
-
 set "EXTRA_COUNT=0"
 for /f "delims=" %%A in ('git clean -fdxn') do set /a EXTRA_COUNT+=1
 
@@ -57,7 +55,7 @@ if defined HAS_CHANGES (echo Local working tree    : CHANGED) else (echo Local w
 echo Extra paths to remove: %EXTRA_COUNT%
 echo.
 
-if /I "%CURRENT_BRANCH%"=="%BRANCH%" if "%LOCAL_COMMIT%"=="%REMOTE_COMMIT% if not defined HAS_CHANGES if "%EXTRA_COUNT%"=="0" (
+if /I "%CURRENT_BRANCH%"=="%BRANCH%" if "%LOCAL_COMMIT%"=="%REMOTE_COMMIT%" if not defined HAS_CHANGES if "%EXTRA_COUNT%"=="0" (
     echo ==================================================
     echo       ALREADY SYNCHRONIZED WITH GITHUB
     echo ==================================================
@@ -94,7 +92,7 @@ if defined HAS_CHANGES (
     if errorlevel 1 goto :reset_error
 )
 
- echo.
+echo.
 echo [3/8] Removing local files outside the Git target...
 git clean -fdx
 if errorlevel 1 goto :clean_error
@@ -120,10 +118,8 @@ echo.
 echo [6/8] Synchronizing submodules...
 git submodule update --init --recursive
 if errorlevel 1 goto :submodule_error
-
 git submodule foreach --recursive git reset --hard
 if errorlevel 1 goto :submodule_error
-
 git submodule foreach --recursive git clean -fdx
 if errorlevel 1 goto :submodule_error
 
@@ -131,13 +127,10 @@ echo.
 echo [7/8] Verifying commit and tracked tree...
 for /f "delims=" %%A in ('git rev-parse HEAD') do set "FINAL_COMMIT=%%A"
 if not "%FINAL_COMMIT%"=="%REMOTE_COMMIT%" goto :commit_error
-
 git diff --quiet %ORIGIN%/%BRANCH% HEAD
 if errorlevel 1 goto :tracked_error
-
 git diff --cached --quiet
 if errorlevel 1 goto :staged_error
-
 set "REMAINING="
 for /f "delims=" %%A in ('git status --porcelain --ignored') do set "REMAINING=1"
 if defined REMAINING goto :remaining_error
@@ -146,8 +139,8 @@ echo.
 echo [8/8] Final synchronization result...
 echo.
 echo ==================================================
-echo        ORION GITHUB -> LOCAL SYNC SUCCESS
- eecho ==================================================
+echo        ORION GITHUB -^> LOCAL SYNC SUCCESS
+echo ==================================================
 echo.
 echo Branch : %BRANCH%
 echo Commit : %FINAL_COMMIT%
@@ -167,60 +160,46 @@ exit /b 0
 :root_error
 echo ERROR: ORION project root was not found: %ORION_ROOT%
 exit /b 1
-
 :not_repo
 echo ERROR: This directory is not a Git repository.
 exit /b 1
-
 :remote_error
 echo ERROR: Git remote "origin" is not configured.
 exit /b 1
-
 :fetch_error
 echo ERROR: Could not fetch %ORIGIN%/%BRANCH%.
 exit /b 1
-
 :target_error
 echo ERROR: Target branch %ORIGIN%/%BRANCH% does not exist.
 exit /b 1
-
 :reset_error
 echo ERROR: Could not clear tracked local changes.
 exit /b 1
-
 :clean_error
 echo ERROR: Could not remove local files outside the Git target.
 exit /b 1
-
 :switch_error
 echo ERROR: Could not switch to target branch %BRANCH%.
 exit /b 1
-
 :reset_target_error
 echo ERROR: Could not reset local project to %ORIGIN%/%BRANCH%.
 exit /b 1
-
 :submodule_error
 echo ERROR: Submodule synchronization failed.
 exit /b 1
-
 :commit_error
 echo ERROR: Final commit does not match %ORIGIN%/%BRANCH%.
 exit /b 1
-
 :tracked_error
 echo ERROR: Local tracked files do not exactly match GitHub target.
 exit /b 1
-
 :staged_error
 echo ERROR: Local staged changes remain after synchronization.
 exit /b 1
-
 :remaining_error
 echo ERROR: Local files remain after synchronization:
 git status --short --ignored
 exit /b 1
-
 :all_not_supported
 echo ERROR: ALL is not a working-tree synchronization target.
 echo Use a specific branch such as phase2/core-intelligence-hardening.
