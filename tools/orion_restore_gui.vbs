@@ -1,12 +1,13 @@
 Option Explicit
 
-' The Windows launcher for the combined MAIN + ALL ORION Restore UI.
+' Windows launcher for the combined ORION Restore UI.
+' MAIN is isolated into ORION_NEXT_MAIN so it never overwrites the development checkout.
 Dim shell, fso, toolsDir, scriptPath, command, testArgument
 Set shell = CreateObject("WScript.Shell")
 Set fso = CreateObject("Scripting.FileSystemObject")
 
 toolsDir = fso.GetParentFolderName(WScript.ScriptFullName)
-scriptPath = fso.BuildPath(toolsDir, "orion_restore_main_gui.pyw")
+scriptPath = fso.BuildPath(toolsDir, "orion_restore_main_safe_gui.pyw")
 If Not fso.FileExists(scriptPath) Then
     MsgBox "ORION Restore file is missing:" & vbCrLf & scriptPath, vbCritical, "ORION Restore"
     WScript.Quit 1
