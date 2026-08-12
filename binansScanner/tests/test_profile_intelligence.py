@@ -52,9 +52,7 @@ class TestProfileIntelligence(unittest.TestCase):
             profiles = (
                 TimeframeProfile(
                     timeframe="1h",
-                    characteristics=(
-                        timeframe_characteristics or market
-                    ),
+                    characteristics=timeframe_characteristics or market,
                     candles_count=100,
                     first_timestamp=datetime(2026, 1, 1, tzinfo=timezone.utc),
                     last_timestamp=datetime(2026, 1, 2, tzinfo=timezone.utc),
@@ -178,14 +176,14 @@ class TestProfileIntelligence(unittest.TestCase):
         self.assertEqual(result.confidence, 0.0)
         self.assertIn("non-finite timeframe 1h confidence", result.reasons[0])
 
-    def test_impossible_timeframe_coverage_fails_closed(self):
+    def test_impossible_aggregate_coverage_fails_closed(self):
         profile = self._profile(missing_candles=101)
 
         result = self.intelligence.evaluate(profile)
 
         self.assertEqual(result.recommendation, ProfileRecommendation.BLOCKED.value)
         self.assertTrue(result.blocked)
-        self.assertIn("impossible candle coverage", result.reasons[0])
+        self.assertIn("impossible aggregate candle coverage", result.reasons[0])
 
 
 if __name__ == "__main__":
