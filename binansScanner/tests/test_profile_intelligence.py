@@ -29,8 +29,10 @@ class TestProfileIntelligence(unittest.TestCase):
         missing_candles=0,
         timeframe_candles_count=100,
         timeframe_missing_candles=None,
+        timeframe_name="1h",
         total_candles=100,
         statistics_missing_candles=None,
+        symbol="BTCUSDT",
     ) -> ProfileResult:
         market = MarketCharacteristics(
             trend=trend,
@@ -60,7 +62,7 @@ class TestProfileIntelligence(unittest.TestCase):
         if timeframes:
             profiles = (
                 TimeframeProfile(
-                    timeframe="1h",
+                    timeframe=timeframe_name,
                     characteristics=timeframe_characteristics or market,
                     candles_count=timeframe_candles_count,
                     first_timestamp=datetime(2026, 1, 1, tzinfo=timezone.utc),
@@ -70,7 +72,7 @@ class TestProfileIntelligence(unittest.TestCase):
             )
 
         return ProfileResult(
-            symbol="BTCUSDT",
+            symbol=symbol,
             market=market,
             statistics=statistics,
             timeframes=profiles,
@@ -153,6 +155,26 @@ class TestProfileIntelligence(unittest.TestCase):
         self.assertEqual(result.confidence, 0.0)
         self.assertFalse(result.is_directional)
 
+    def test_extreme_timeframe_risk_blocks_directional_intelligence(self):
+        timeframe_risk = MarketCharacteristics(
+            trend="Bullish",
+            momentum="Buy",
+            risk_level="Extreme",
+            confidence=80.0,
+            trend_score=80.0,
+            momentum_score=75.0,
+            volume_score=60.0,
+            volatility_score=40.0,
+        )
+        profile = self._profile(timeframe_characteristics=timeframe_risk)
+
+        result = self.intelligence.evaluate(profile)
+
+        self.assertEqual(result.recommendation, ProfileRecommendation.NEUTRAL.value)
+        self.assertTrue(result.blocked)
+        self.assertEqual(result.confidence, 0.0)
+        self.assertIn("one or more timeframes", result.reasons[0])
+
     def test_malformed_timeframe_characteristics_fail_closed(self):
         malformed = MarketCharacteristics(
             trend="NOT_A_TREND",
@@ -229,6 +251,26 @@ class TestProfileIntelligence(unittest.TestCase):
         self.assertFalse(result.is_directional)
         self.assertIn("incomplete candle coverage in timeframe 1h", result.reasons[0])
 
+    def test_invalid_timeframe_name_fails_closed(self):
+        profile = self._profile(timeframe_name="2h")
+
+        result = self.intelligence.evaluate(profile)
+
+        self.assertEqual(result.recommendation, ProfileRecommendation.BLOCKED.value)
+        self.assertTrue(result.blocked)
+        self.assertFalse(result.is_directional)
+        self.assertIn("unsupported timeframe", result.reasons[0])
+
+    def test_non_integer_timeframe_coverage_fails_closed(self):
+        profile = self._profile(timeframe_candles_count=100.5)
+
+        result = self.intelligence.evaluate(profile)
+
+        self.assertEqual(result.recommendation, ProfileRecommendation.BLOCKED.value)
+        self.assertTrue(result.blocked)
+        self.assertFalse(result.is_directional)
+        self.assertIn("invalid candles_count", result.reasons[0])
+
     def test_empty_aggregate_coverage_fails_closed(self):
         profile = self._profile(total_candles=0)
 
@@ -251,6 +293,50 @@ class TestProfileIntelligence(unittest.TestCase):
         self.assertEqual(result.recommendation, ProfileRecommendation.BLOCKED.value)
         self.assertTrue(result.blocked)
         self.assertIn("incomplete aggregate candle coverage", result.reasons[0])
+
+    def test_inconsistent_aggregate_completion_ratio_fails_closed(self):
+        profile = self._profile(
+            completion_ratio=0.5,
+            total_candles=100,
+            statistics_missing_candles=0,
+        )
+
+        result = self.intelligence.evaluate(profile)
+
+        self.assertEqual(result.recommendation, ProfileRecommendation.BLOCKED.value)
+        self.assertTrue(result.blocked)
+        self.assertFalse(result.is_directional)
+        self.assertIn("inconsistent aggregate completion ratio", result.reasons[0])
+
+    def test_non_string_market_category_fails_closed_without_exception(self):
+        profile = self._profile(trend=["Bullish"])
+
+        result = self.intelligence.evaluate(profile)
+
+        self.assertEqual(result.recommendation, ProfileRecommendation.BLOCKED.value)
+        self.assertTrue(result.blocked)
+        self.assertFalse(result.is_directional)
+        self.assertIn("invalid market trend", result.reasons[0])
+
+    def test_invalid_tradeable_state_fails_closed(self):
+        profile = self._profile(is_tradeable=1)
+
+        result = self.intelligence.evaluate(profile)
+
+        self.assertEqual(result.recommendation, ProfileRecommendation.BLOCKED.value)
+        self.assertTrue(result.blocked)
+        self.assertFalse(result.is_directional)
+        self.assertIn("tradeable-state flag", result.reasons[0])
+
+    def test_invalid_symbol_fails_closed(self):
+        profile = self._profile(symbol="   ")
+
+        result = self.intelligence.evaluate(profile)
+
+        self.assertEqual(result.recommendation, ProfileRecommendation.BLOCKED.value)
+        self.assertTrue(result.blocked)
+        self.assertFalse(result.is_directional)
+        self.assertIn("invalid symbol", result.reasons[0])
 
 
 if __name__ == "__main__":
