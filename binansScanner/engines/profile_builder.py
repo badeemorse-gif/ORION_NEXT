@@ -241,16 +241,31 @@ class ProfileBuilder:
             )
 
         metadata = df.attrs.get("indicator_result")
-        if metadata is not None:
-            if not isinstance(metadata, IndicatorResult):
-                raise ValueError(
-                    "Profile intelligence blocked: invalid indicator metadata."
-                )
-            if metadata.quality != "SUFFICIENT" or metadata.failed_indicators:
-                raise ValueError(
-                    "Profile intelligence blocked: indicator metadata reports "
-                    "failed or insufficient indicators."
-                )
+        if metadata is None:
+            raise ValueError(
+                "Profile intelligence blocked: indicator metadata is missing."
+            )
+        if not isinstance(metadata, IndicatorResult):
+            raise ValueError(
+                "Profile intelligence blocked: invalid indicator metadata."
+            )
+        if metadata.quality != "SUFFICIENT" or metadata.failed_indicators:
+            raise ValueError(
+                "Profile intelligence blocked: indicator metadata reports "
+                "failed or insufficient indicators."
+            )
+
+        calculated = set(metadata.calculated_indicators)
+        incomplete = [
+            name
+            for name in CRITICAL_PROFILE_INDICATORS
+            if name not in calculated
+        ]
+        if incomplete:
+            raise ValueError(
+                "Profile intelligence blocked: calculated critical indicators are incomplete: "
+                + ", ".join(incomplete)
+            )
 
         latest = df.iloc[-1]
         invalid = [
