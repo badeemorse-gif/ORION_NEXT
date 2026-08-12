@@ -107,9 +107,9 @@ if defined TOOL_REFRESH_REQUIRED if not defined ORION_SYNC_BOOTSTRAP (
     set "ORION_SYNC_CONFIRMED=1"
     set "ORION_SYNC_BACKED_UP=1"
     call "%LATEST_SYNC%" "%BRANCH%"
-    set "SYNC_RC=%ERRORLEVEL%"
+    set "SYNC_RC=!ERRORLEVEL!"
     del /q "%LATEST_SYNC%" >nul 2>&1
-    exit /b %SYNC_RC%
+    exit /b !SYNC_RC!
 )
 
 if defined HAS_CHANGES (
