@@ -1,19 +1,22 @@
 # ORION Restore — ALL Branch Synchronization Contract
 
-الإصدار: 2.1
-الحالة: REBUILT — FAST ALL-ONLY SYNCHRONIZER
+الإصدار: 2.2
+الحالة: MAIN + FAST ISOLATED ALL
 
 ## الهدف
 
-خيار `ALL` هو الوظيفة الوحيدة في أداة ORION Restore.
+أداة ORION Restore تحتوي الآن على مسارين مستقلين:
 
-يقوم البرنامج باكتشاف **جميع الفروع الموجودة فعليًا على GitHub** ثم مزامنة محتوى كل فرع إلى مجلد مستقل محليًا، مع منع اختلاط محتويات الفروع.
+- `MAIN` = نسخة مطابقة رسميًا لـ `origin/main` داخل المشروع الرئيسي.
+- `ALL` = نسخ معزولة لجميع الفروع داخل `ORION_NEXT_ALL_BRANCHES`.
 
-## التصميم المعتمد
+لا يوجد أي تداخل بين المسارين.
 
-تمت إعادة بناء `tools` من الصفر لأن تصميم Worktree السابق كان يسبب توقف ALL أثناء materialization.
+## ALL — التصميم المعتمد
 
-التصميم الجديد **لا يستخدم `git worktree` نهائيًا**.
+تم تثبيت تصميم ALL الحالي بعد نجاح اختبارات المزامنة.
+
+التصميم **لا يستخدم `git worktree` نهائيًا**.
 
 بدلًا من ذلك:
 
@@ -32,9 +35,7 @@ C:\Users\badee\Desktop\ORION_NEXT_ALL_BRANCHES\
 4. لا يتم تبديل `PROJECT_ROOT` إلى أي فرع أثناء ALL.
 5. لا يتم تنفيذ `reset --hard` أو `clean -fdx` أو `worktree add` داخل المشروع الرئيسي.
 
-## المزامنة الفعلية
-
-ALL ليست عملية استكشاف أو فحص فقط.
+## ALL — المزامنة الفعلية
 
 لكل فرع يتم:
 
@@ -47,64 +48,7 @@ ALL ليست عملية استكشاف أو فحص فقط.
 
 وبالتالي فإن كل مجلد فرع يصبح **Exact Mirror** لمحتوى GitHub لذلك الفرع.
 
-## إصلاح Windows المعتمد
-
-تمت إضافة حماية صريحة ضد تعارض **file/directory** الناتج عن تشغيلات ALL القديمة أو التشغيلات التي انقطعت أثناء النقل.
-
-إذا كان GitHub يحتوي على ملف باسم معين بينما توجد محليًا مجلد بنفس الاسم، يتم حذف التعارض داخل **مجلد الفرع المستقل فقط** ثم إنشاء الملف الصحيح.
-
-وبالعكس، إذا كان GitHub يتطلب مجلدًا بينما توجد محليًا نسخة ملف بنفس الاسم، تتم إزالة التعارض ثم إنشاء المجلد.
-
-كما يتم حذف أي ملف مؤقت متبقٍ باسم `.orion_tmp` قبل الكتابة، مع إعادة محاولة `os.replace` مرة واحدة فقط عند وجود تعارض مجلد متبقي.
-
-هذا يمنع خطأ Windows:
-
-```text
-[WinError 5] Access is denied
-...\\GitHub.orion_tmp -> ...\\GitHub
-```
-
-ولا يغيّر هذا الإصلاح أي شيء خارج مجلد الفرع الجاري مزامنته.
-
-## لماذا هذا أسرع وأكثر ثباتًا؟
-
-التصميم السابق كان يعتمد على إنشاء Worktree ثم `reset` و`checkout` و`clean` وsubmodules، وكان يمكن أن يتوقف عند أول فرع.
-
-التصميم الجديد لا يعتمد على Worktree ولا على حالة Git الداخلية لكل مجلد فرع.
-
-`git fetch` يتم مرة واحدة فقط، وبعد ذلك القراءة من الـremote refs المحلية تتم محليًا.
-
-هذا يلغي:
-
-- انتظار إنشاء 19 Worktree.
-- مشاكل sparse-checkout القديمة.
-- تعارضات Worktree registration.
-- تبديل الفرع الرئيسي أثناء ALL.
-- إعادة كتابة الملفات المطابقة بلا داعٍ.
-
-## إحصائيات الشاشة
-
-واجهة ALL أصبحت مركزة فقط على ما يحتاجه المستخدم:
-
-- `BRANCHES` — عدد الفروع المكتشفة.
-- `FILES` — عدد ملفات snapshot الموجودة لكل الفروع.
-- `ADDED` — عدد الملفات التي نُقلت فعليًا لأول مرة.
-- `UPDATED` — عدد الملفات التي تغيرت ونُقلت نسختها الجديدة.
-- `REMOVED` — عدد الملفات التي حُذفت من نسخة الفرع المحلي لأنها لم تعد موجودة في GitHub.
-
-كما يظهر في سجل العملية سطر مستقل لكل فرع:
-
-```text
-[1/19] main
-    ✓ Files: 478 | Added: 478 | Updated: 0 | Removed: 0
-
-[2/19] future/...
-    ✓ Files: 482 | Added: 12 | Updated: 7 | Removed: 3
-```
-
-وهذا يجعل واضحًا **ماذا نُقل من كل فرع** بدل عرض سجل Git طويل وغير مفيد للمستخدم.
-
-## العزل
+## ALL — الحماية والعزل
 
 كل فرع له مجلد مستقل.
 
@@ -114,83 +58,149 @@ ALL ليست عملية استكشاف أو فحص فقط.
 C:\Users\badee\Desktop\ORION_NEXT
 ```
 
-المجلد الرئيسي يبقى كما هو.
-
-## أسماء الفروع
-
-يتم تحويل `/` والأحرف غير الآمنة في Windows إلى `__`، مع إضافة hash قصير عند الحاجة حتى لا يحدث تصادم بين أسماء فروع مختلفة.
-
-## الحماية من التعليق
-
-كل أمر Git له timeout واضح.
-
-إذا توقف `git fetch` أو `git archive` بدل الاستمرار إلى أجل غير محدد، يتم إنهاء العملية وإظهار الخطأ في الواجهة.
-
-الـtimeout هو حد أمان فقط؛ لا توجد فترة انتظار مصطنعة للأوامر الناجحة.
-
-## الأدوات
-
-تم تنظيف `tools` وإعادة بنائها بحيث تبقى أداة ALL فقط:
-
-```text
-tools/
-    orion_restore_gui.pyw
-    orion_restore_gui.vbs
-```
-
-`orion_restore_gui.vbs` هو launcher آمن لـWindows ويشغل الواجهة الجديدة مباشرة.
-
-## النتيجة المعتمدة
-
-`ALL` =
-
-**Discover all branches → Batch Fetch → Archive each branch → Compare SHA-256 → Transfer only required files → Remove obsolete files → Resolve Windows path-type collisions → Show per-branch statistics.**
-
-ولا يعلن البرنامج نجاح المزامنة إلا بعد اكتمال materialization الفعلي لكل الفروع المكتشفة.
-
 ## MAIN — official primary project mirror
 
-أضيفت إلى نفس الأداة وظيفة ثانية مستقلة باسم `MAIN`، مع تجميد مسار `ALL` وعدم إعادة تصميمه.
-
-`MAIN` = **official primary project mirror**:
+`MAIN` هو المسار الوحيد المسموح له بالكتابة داخل:
 
 ```text
-GitHub / origin/main → PROJECT_ROOT
 C:\Users\badee\Desktop\ORION_NEXT
 ```
 
-أما `ALL` فيظل:
+المصدر:
 
 ```text
-GitHub / all branches → ALL_ROOT/<branch>
-C:\Users\badee\Desktop\ORION_NEXT_ALL_BRANCHES\<branch>
+GitHub / origin/main
 ```
+
+والنتيجة المطلوبة هي **Exact Mirror**:
+
+> كل مسار موجود في `origin/main` يجب أن يكون موجودًا محليًا بالمحتوى نفسه، وكل مسار غير موجود في `origin/main` يجب ألا يبقى محليًا، باستثناء `.git` لأنه بيانات Git الداخلية الخاصة بالمستودع.
 
 ### قواعد MAIN
 
-1. يستخدم `git fetch --prune origin main` دون checkout أو تغيير للفرع الحالي.
+1. يستخدم `git fetch --prune origin main` دون `checkout` أو تغيير للفرع الحالي.
 2. يقرأ snapshot الرسمي بواسطة `git archive origin/main`.
-3. يقارن المحتوى باستخدام نفس SHA-256/manifest mechanism المستخدم في Restore.
-4. ينقل الملفات الجديدة ويحدّث الملفات المتغيرة فقط.
-5. يحذف فقط الملفات المحلية التي هي **tracked** في الـcheckout أو كانت قد اعتمدت سابقًا كملفات رسمية لـMAIN ولم تعد موجودة في `origin/main`.
-6. لا ينفذ `clean -fdx` ولا يحذف untracked content تلقائيًا.
-7. عند وجود file/directory collision يتوقف بدل حذف محتوى untracked حفاظًا على ملفات المستخدم.
-8. بعد materialization يتم تنفيذ verification فعلي، ولا يظهر `MAIN SUCCESS` قبل نجاحه.
-9. `BRANCHES` في MAIN = `1`، و`FILES / ADDED / UPDATED / REMOVED` تعرض نتائج MAIN نفسها.
+3. يبني manifest فعليًا للمجلد المحلي مع استثناء `.git` فقط.
+4. يقارن المحتوى باستخدام SHA-256.
+5. ينقل الملفات الجديدة.
+6. يحدّث أي ملف تغير محتواه داخل `origin/main`.
+7. يحذف أي ملف أو مجلد محلي زائد لا وجود له في snapshot الرسمي لـ `origin/main`.
+8. يعالج file/directory collisions كجزء من تحقيق التطابق النهائي.
+9. لا يستخدم `clean -fdx` ولا `checkout` ولا `reset --hard` لتحقيق المزامنة.
+10. لا يكتب داخل `ALL_ROOT` مطلقًا.
+11. بعد materialization يتم تنفيذ verification كامل:
+    - لا ملفات ناقصة.
+    - لا ملفات زائدة.
+    - لا ملفات مختلفة المحتوى.
+12. لا يظهر `MAIN SUCCESS` إلا بعد نجاح verification.
+13. `BRANCHES` في MAIN = `1`، و`FILES / ADDED / UPDATED / REMOVED` تعرض نتائج MAIN نفسها.
 
-يتم الاحتفاظ بملف حالة صغير خارج `PROJECT_ROOT` باسم `ORION_NEXT_MAIN_STATE.json` لتذكر الملفات التي سبق أن كانت جزءًا من snapshot الرسمي لـMAIN؛ هذا يمنع بقاء ملف أضيف إلى main ثم حُذف منه في تشغيل لاحق، مع استمرار حماية الملفات untracked التي لم تكن جزءًا من MAIN.
+### تحديثات الملفات
 
-### الفصل بين MAIN وALL
+عند تغيير محتوى ملف في GitHub/main، يعاد حساب SHA-256 للمصدر والملف المحلي.
 
-- MAIN هو المسار الوحيد المسموح له بالكتابة داخل `PROJECT_ROOT`.
-- ALL لا يزال ممنوعًا من الكتابة داخل `PROJECT_ROOT`.
+إذا اختلفت البصمتان، ينقل MAIN المحتوى الجديد إلى الملف المحلي.
+
+إذا تطابقت البصمتان، لا يعاد نسخ الملف.
+
+### الملفات الزائدة محليًا
+
+MAIN الآن يعمل بمنطق mirror حقيقي وليس بمنطق tracked-files فقط.
+
+لذلك إذا كان هناك مثلًا:
+
+```text
+PROJECT_ROOT/
+    file_from_main.py
+    old_file.py
+    local_extra.txt
+```
+
+بينما `origin/main` يحتوي فقط على:
+
+```text
+file_from_main.py
+```
+
+فبعد `Sync MAIN` يجب أن تصبح النتيجة:
+
+```text
+PROJECT_ROOT/
+    .git/
+    file_from_main.py
+```
+
+ويتم حذف `old_file.py` و`local_extra.txt` لأنهما ليسا جزءًا من snapshot الرسمي.
+
+### verification النهائي
+
+المقارنة النهائية هي:
+
+```text
+LOCAL_MANIFEST (excluding .git)
+        ==
+ORIGIN_MAIN_ARCHIVE_MANIFEST
+```
+
+أي اختلاف، مهما كان سببه أو نوعه، يمنع إعلان النجاح.
+
+## MAIN وALL — الفصل النهائي
+
+```text
+MAIN:
+GitHub/main → PROJECT_ROOT
+
+ALL:
+GitHub/all branches → ALL_ROOT/<branch>
+```
+
+القواعد:
+
 - MAIN لا يستخدم `ALL_ROOT`.
 - ALL لا يستخدم `PROJECT_ROOT` كوجهة.
+- MAIN لا يغير أو يعيد تصميم محرك ALL.
+- ALL لا يكتب فوق المشروع الرئيسي.
 - لا يوجد `git worktree` في أي من المسارين.
 
-وبذلك أصبح التصميم النهائي:
+## إحصائيات الشاشة
 
-**MAIN = official primary project mirror**  
-**ALL = isolated mirrors of every branch**
+واجهة الأداة تعرض:
 
-مع بقاء baseline نجاح ALL كما هو، وإضافة MAIN كمسار مستقل فقط.
+- `BRANCHES`
+- `FILES`
+- `ADDED`
+- `UPDATED`
+- `REMOVED`
+
+في MAIN:
+
+```text
+BRANCHES = 1
+FILES    = عدد ملفات origin/main
+ADDED    = الملفات التي أضيفت محليًا
+UPDATED  = الملفات التي اختلف محتواها وتم تحديثها
+REMOVED  = الملفات الزائدة محليًا التي أزيلت لتحقيق التطابق
+```
+
+## الأدوات
+
+التصميم النهائي للأداة:
+
+```text
+tools/
+    orion_restore_gui.pyw       # محرك ALL المجمد
+    orion_restore_main_gui.pyw  # واجهة MAIN + ALL
+    orion_restore_gui.vbs       # Windows launcher
+```
+
+## النتيجة المعتمدة
+
+`MAIN` =
+
+**Fetch origin/main → Archive snapshot → Compare SHA-256 → Add new files → Update changed files → Remove all extra local paths → Verify exact manifest → SUCCESS**
+
+و`ALL` =
+
+**Discover all branches → Batch Fetch → Archive each branch → Compare SHA-256 → Transfer only required files → Remove obsolete files → Resolve Windows path-type collisions → Show per-branch statistics**.
+
+يظل نجاح ALL baseline محميًا، ويظل MAIN هو المسار الوحيد الذي يجوز له تحديث `PROJECT_ROOT`.
