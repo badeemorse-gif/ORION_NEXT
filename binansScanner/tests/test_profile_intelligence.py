@@ -27,6 +27,10 @@ class TestProfileIntelligence(unittest.TestCase):
         is_tradeable=True,
         timeframe_characteristics=None,
         missing_candles=0,
+        timeframe_candles_count=100,
+        timeframe_missing_candles=None,
+        total_candles=100,
+        statistics_missing_candles=None,
     ) -> ProfileResult:
         market = MarketCharacteristics(
             trend=trend,
@@ -39,12 +43,17 @@ class TestProfileIntelligence(unittest.TestCase):
             volatility_score=40.0,
         )
 
+        if statistics_missing_candles is None:
+            statistics_missing_candles = missing_candles
+        if timeframe_missing_candles is None:
+            timeframe_missing_candles = missing_candles
+
         statistics = ProfileStatistics(
             health_score=80.0,
             confidence_limit=confidence,
             completion_ratio=completion_ratio,
-            total_candles=100,
-            missing_candles=missing_candles,
+            total_candles=total_candles,
+            missing_candles=statistics_missing_candles,
         )
 
         profiles = ()
@@ -53,10 +62,10 @@ class TestProfileIntelligence(unittest.TestCase):
                 TimeframeProfile(
                     timeframe="1h",
                     characteristics=timeframe_characteristics or market,
-                    candles_count=100,
+                    candles_count=timeframe_candles_count,
                     first_timestamp=datetime(2026, 1, 1, tzinfo=timezone.utc),
                     last_timestamp=datetime(2026, 1, 2, tzinfo=timezone.utc),
-                    missing_candles=missing_candles,
+                    missing_candles=timeframe_missing_candles,
                 ),
             )
 
@@ -176,14 +185,72 @@ class TestProfileIntelligence(unittest.TestCase):
         self.assertEqual(result.confidence, 0.0)
         self.assertIn("non-finite timeframe 1h confidence", result.reasons[0])
 
-    def test_impossible_aggregate_coverage_fails_closed(self):
-        profile = self._profile(missing_candles=101)
+    def test_zero_timeframe_confidence_blocks_directional_intelligence(self):
+        low_confidence = MarketCharacteristics(
+            trend="Bullish",
+            momentum="Buy",
+            risk_level="Medium",
+            confidence=0.0,
+            trend_score=80.0,
+            momentum_score=75.0,
+            volume_score=60.0,
+            volatility_score=40.0,
+        )
+        profile = self._profile(timeframe_characteristics=low_confidence)
 
         result = self.intelligence.evaluate(profile)
 
         self.assertEqual(result.recommendation, ProfileRecommendation.BLOCKED.value)
         self.assertTrue(result.blocked)
-        self.assertIn("impossible aggregate candle coverage", result.reasons[0])
+        self.assertFalse(result.is_directional)
+        self.assertEqual(result.confidence, 0.0)
+        self.assertIn("positive confidence across the complete profile", result.reasons[0])
+
+    def test_empty_timeframe_coverage_fails_closed(self):
+        profile = self._profile(timeframe_candles_count=0)
+
+        result = self.intelligence.evaluate(profile)
+
+        self.assertEqual(result.recommendation, ProfileRecommendation.BLOCKED.value)
+        self.assertTrue(result.blocked)
+        self.assertFalse(result.is_directional)
+        self.assertIn("no candle coverage in timeframe 1h", result.reasons[0])
+
+    def test_incomplete_timeframe_coverage_fails_closed(self):
+        profile = self._profile(
+            timeframe_candles_count=100,
+            timeframe_missing_candles=100,
+        )
+
+        result = self.intelligence.evaluate(profile)
+
+        self.assertEqual(result.recommendation, ProfileRecommendation.BLOCKED.value)
+        self.assertTrue(result.blocked)
+        self.assertFalse(result.is_directional)
+        self.assertIn("incomplete candle coverage in timeframe 1h", result.reasons[0])
+
+    def test_empty_aggregate_coverage_fails_closed(self):
+        profile = self._profile(total_candles=0)
+
+        result = self.intelligence.evaluate(profile)
+
+        self.assertEqual(result.recommendation, ProfileRecommendation.BLOCKED.value)
+        self.assertTrue(result.blocked)
+        self.assertFalse(result.is_directional)
+        self.assertIn("no aggregate candle coverage", result.reasons[0])
+
+    def test_impossible_aggregate_coverage_fails_closed(self):
+        profile = self._profile(
+            missing_candles=101,
+            statistics_missing_candles=101,
+            timeframe_missing_candles=0,
+        )
+
+        result = self.intelligence.evaluate(profile)
+
+        self.assertEqual(result.recommendation, ProfileRecommendation.BLOCKED.value)
+        self.assertTrue(result.blocked)
+        self.assertIn("incomplete aggregate candle coverage", result.reasons[0])
 
 
 if __name__ == "__main__":
