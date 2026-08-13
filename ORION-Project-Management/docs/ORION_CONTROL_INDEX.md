@@ -1,191 +1,76 @@
 # ORION — CONTROL INDEX
 
-الإصدار: 1.4
+الإصدار: 1.5
 الحالة: ACTIVE
 المشروع: ORION
 
-==================================================
-1. وظيفة الفهرس
-==================================================
+## الوثائق الرسمية ومالك كل معلومة
 
-هذا الملف هو خريطة الوثائق الرسمية فقط.
+- GPT EXECUTION RULES → `ORION_GPT_EXECUTION_RULES.md`
+  قواعد تشغيل GPT، نموذج التطوير بالحزم، وسياسة التطوير/المزامنة.
+- CONTROL INDEX → `ORION_CONTROL_INDEX.md`
+  خريطة الوثائق وملكية المعلومات.
+- PROJECT CHARTER → `ORION_PROJECT_CHARTER.md`
+  تعريف المشروع ونطاقه وأهدافه العامة.
+- WORK PROTOCOL → `ORION_WORK_PROTOCOL.md`
+  طريقة التنفيذ والمراجعة والاختبار والتسليم والتكامل المؤجل.
+- ARCHITECTURE → `ORION_ARCHITECTURE.md`
+  المعمارية الحالية وحدود الطبقات والعقود.
+- PROJECT STATE → `ORION_PROJECT_STATE.md`
+  الحالة الحالية فقط.
+- ROADMAP → `ORION_ROADMAP.md`
+  ترتيب المراحل وشروط الانتقال.
+- FUTURE ROADMAP → `ORION_FUTURE_ROADMAP.md`
+  الأهداف المستقبلية فقط.
+- FUTURE PRODUCT VISION → `ORION_FUTURE_PRODUCT_VISION_DESKTOP_APPLICATION.md`
+  تصور المنتج النهائي.
+- ARCHITECTURE FINDINGS → `ORION_ARCHITECTURE_FINDINGS.md`
+  سجل Findings وحالاتها.
+- DECISIONS → `ORION_DECISIONS.md`
+  القرارات المؤثرة.
+- CHANGELOG → `ORION_CHANGELOG.md`
+  التاريخ التنفيذي المهم.
+- KNOWN PROBLEMS → `ORION_KNOWN_PROBLEMS.md`
+  المشاكل المؤكدة فقط.
+- RESTORE/ALL SYNC CONTRACT → `ORION_RESTORE_ALL_BRANCH_SYNC.md`
+  عقد MAIN/ALL والعزل والمرايا.
 
-لا يكرر محتوى المشروع، ولا يقرر الحالة أو المعمارية أو الأهداف بنفسه.
-وظيفته تحديد مالك كل نوع من المعلومات ومتى تستخدم الوثيقة.
+## قاعدة المصدر الواحد
 
-==================================================
-2. الوثائق الرسمية ومالك كل معلومة
-==================================================
+كل معلومة لها مالك رئيسي واحد. لا تنشأ وثيقة بديلة تؤدي نفس الوظيفة دون قرار موثق.
 
-GPT EXECUTION RULES
-→ ORION_GPT_EXECUTION_RULES.md
-قواعد تشغيل GPT داخل المشروع.
+## متى نقرأ الوثائق
 
-CONTROL INDEX
-→ ORION_CONTROL_INDEX.md
-خريطة الوثائق ونطاقاتها.
+- رسالة ORION عادية → GPT EXECUTION RULES + CONTROL INDEX.
+- أمر 1 → EXECUTION RULES + CONTROL INDEX + PROJECT STATE + ROADMAP ثم الوثائق المطلوبة فقط.
+- مراجعة تطوير → EXECUTION RULES + CONTROL INDEX + الحالة عند الحاجة + ARCHITECTURE/FINDINGS والكود المتأثر.
+- Workflow/Sync → EXECUTION RULES + CONTROL INDEX + WORK PROTOCOL + RESTORE/ALL SYNC CONTRACT عند تأثر MAIN/ALL.
+- مراجعة شاملة/تعارض → مراجعة موسعة للوثائق والكود والاختبارات المتأثرة.
 
-PROJECT CHARTER
-→ ORION_PROJECT_CHARTER.md
-تعريف ORION ونطاقه والهدف التشغيلي والمبادئ العامة.
+## سياسة التطوير والمزامنة الحالية
 
-WORK PROTOCOL
-→ ORION_WORK_PROTOCOL.md
-طريقة تنفيذ العمل، المراجعة، الاختبار، والتسليم.
+GITHUB هو مصدر الحقيقة أثناء التطوير.
 
-ARCHITECTURE
-→ ORION_ARCHITECTURE.md
-المعمارية الحالية المعتمدة وحدود الطبقات والعقود والمسؤوليات.
+المطورون داخل ChatGPT يعملون على فروع GitHub ويكملون حزمًا كاملة داخل نطاقاتهم.
 
-PROJECT STATE
-→ ORION_PROJECT_STATE.md
-الحالة الحالية فقط: المرحلة، الخطوة الحالية، Verification، Findings، والخطوة التالية.
+لا تتم مزامنة GITHUB → LOCAL بعد كل تعديل صغير.
 
-ROADMAP
-→ ORION_ROADMAP.md
-ترتيب مراحل التنفيذ الرسمية وشروط الانتقال بينها.
+`C:\Users\badee\Desktop\ORION_NEXT` هي بيئة Development / Integration محلية، وليست Sandbox لمزامنة كل فرع.
 
-FUTURE ROADMAP
-→ ORION_FUTURE_ROADMAP.md
-الأهداف والمراحل الكبرى المستقبلية فقط، دون أن تكون أمر تنفيذ حالي.
+عند اكتمال حالة التكامل فقط يتم إنشاء نسخة محلية نظيفة ومحددة بالـbranch/commit ثم تنفيذ Full Verification / E2E / parity.
 
-FUTURE PRODUCT VISION
-→ ORION_FUTURE_PRODUCT_VISION_DESKTOP_APPLICATION.md
-التصور التفصيلي للمنتج النهائي وواجهة Desktop والتشغيل المستقبلي.
+لا يجوز لمطور ChatGPT الادعاء بأنه شغّل اختبارًا محليًا دون تنفيذ فعلي.
 
-ARCHITECTURE FINDINGS
-→ ORION_ARCHITECTURE_FINDINGS.md
-سجل Findings المعمارية والمراجعات، مع حالات OPEN/DEFERRED/VERIFIED/CLOSED.
+## المرحلة الحالية
 
-DECISIONS
-→ ORION_DECISIONS.md
-القرارات المعمارية والإدارية المؤثرة.
+`ORION_PROJECT_STATE.md` هو المصدر الوحيد للمرحلة الحالية.
 
-CHANGELOG
-→ ORION_CHANGELOG.md
-التاريخ التنفيذي للتغييرات المهمة.
+## المستودع
 
-KNOWN PROBLEMS
-→ ORION_KNOWN_PROBLEMS.md
-المشاكل المؤكدة فقط.
+`badeemorse-gif/ORION_NEXT`
 
-==================================================
-3. الوثائق الملغاة كوثائق تشغيلية
-==================================================
+الفرع المرجعي العام: `main`
 
-تم إلغاء الاعتماد التشغيلي على الوثائق التالية بسبب تداخلها مع مصادر قائمة:
+الجذر المحلي: `C:\Users\badee\Desktop\ORION_NEXT`
 
-- ORION_EXECUTION_METHOD.md
-- ORION_TARGET_ARCHITECTURE_IMPLEMENTATION_BASELINE.md
-
-تم دمج المبادئ المفيدة منهما في:
-
-- ORION_WORK_PROTOCOL.md
-- ORION_ARCHITECTURE.md
-- ORION_ROADMAP.md
-
-لا يجوز إعادة إنشاء وثيقة بديلة تؤدي نفس الوظيفة دون قرار موثق.
-
-==================================================
-4. قاعدة المصدر الواحد
-==================================================
-
-كل معلومة لها مالك رئيسي واحد.
-
-يمكن للوثائق الأخرى الإشارة إليها، لكنها لا تنسخها كقاعدة أو حالة مستقلة.
-
-عند اكتشاف تكرار أو تعارض:
-
-1. تحديد الوثيقة المالكة.
-2. اعتماد أحدث حالة أو قرار مثبت بالأدلة.
-3. إزالة النسخة المكررة من الوثائق غير المالكة.
-4. استبدالها بإشارة مختصرة عند الحاجة.
-5. الحفاظ على التاريخ في CHANGELOG وDECISIONS وFindings.
-
-==================================================
-5. متى نقرأ الوثائق
-==================================================
-
-رسالة ORION عادية:
-→ GPT EXECUTION RULES + CONTROL INDEX
-
-أمر 1:
-→ EXECUTION RULES + CONTROL INDEX + PROJECT STATE + ROADMAP
-→ ثم الوثائق المطلوبة للخطوة فقط.
-
-مراجعة تطوير:
-→ EXECUTION RULES + CONTROL INDEX
-→ PROJECT STATE عند الحاجة
-→ ARCHITECTURE + FINDINGS
-→ الملفات المتغيرة + الاختبارات
-→ FUTURE ROADMAP عند وجود أثر مستقبلي.
-
-تعديل معماري:
-→ PROJECT STATE + ARCHITECTURE + FINDINGS + DECISIONS + ROADMAP
-→ FUTURE ROADMAP عند وجود أثر طويل الأجل.
-
-تعديل Workflow أو المزامنة:
-→ EXECUTION RULES + CONTROL INDEX + WORK PROTOCOL
-→ الأدوات التشغيلية المرتبطة.
-
-تعديل الوثائق:
-→ EXECUTION RULES + CONTROL INDEX
-→ الوثائق المتأثرة فقط، مع البحث عن التكرار والتعارض.
-
-تعارض أو مراجعة شاملة:
-→ مراجعة موسعة لكل الوثائق المتأثرة.
-
-==================================================
-6. قاعدة المرحلة الحالية
-==================================================
-
-PROJECT STATE هو المصدر الوحيد للمرحلة الحالية.
-
-ROADMAP يحدد ترتيب التنفيذ وشروط الانتقال.
-
-FUTURE ROADMAP لا يغير المرحلة الحالية.
-
-==================================================
-7. قاعدة Findings
-==================================================
-
-Finding جديدة لا توقف التطوير تلقائيًا.
-
-توقف فقط إذا أصبح الاستمرار سيكسر Contract معتمدًا، أو يثبت تعارضًا معماريًا، أو يبني مرحلة لاحقة على قرار غير محسوم، أو يضر بهدف المشروع.
-
-إذا تم تنفيذ Finding ونجح Verification:
-
-VERIFIED / CLOSED
-
-ولا تحذف من التاريخ.
-
-==================================================
-8. الاستمرارية
-==================================================
-
-يمكن بدء أي محادثة جديدة من:
-
-GPT EXECUTION RULES
-+
-CONTROL INDEX
-+
-PROJECT STATE
-
-ثم الوصول إلى باقي الوثائق حسب الحاجة.
-
-==================================================
-9. المستودع
-==================================================
-
-المستودع الرسمي:
-badeemorse-gif/ORION_NEXT
-
-الفرع:
-main
-
-الجذر المحلي:
-C:\Users\badee\Desktop\ORION_NEXT
-
-==================================================
 END
-==================================================
