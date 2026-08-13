@@ -8,23 +8,17 @@
 - Execution package: `ops/execution-fail-closed` @ `1ae3cca91f7b58e221e7e005f7949aceb1e96b02`
 - Opportunity package: `future/opportunity-intelligence-complete` @ `4975292572a8446a178a5d1afe708792082767a1`
 
-## Integration Policy
-
-Approved package snapshots are integrated selectively from their documented package scope. Diverged branch history is not merged blindly. `main` remains untouched until leadership approves the fully integrated result.
-
-Local materialization is forbidden during this gate. Full verification, E2E, and parity are deferred until an integrated HEAD is established.
-
-## Package Ownership
-
-### Core Intelligence
-Indicator → Analysis → Profile → Score → Decision. Domain result contracts remain owned by `models.*`; `core.intelligence_contract` is the single cross-layer semantic guard.
-
-### Execution
-Decision → ExecutionPlan → ExecutionRequest → Adapter → ExecutionResult → Report. Invalid numeric input, invalid quantity overrides, decision/side mismatches, and failed execution are fail-closed.
-
-### Opportunity
-MarketDataset + AnalysisResult + ProfileResult + ScoreResult → Opportunity Intelligence. Timeframe evidence is matched explicitly; unknown freshness, unavailable setup quality, ambiguity, and unsupported risk fail closed. No ranking thresholds or fabricated forecast data.
-
 ## Current Status
 
-Package approvals are complete. Central integration is in progress and must be reviewed file-by-file before acceptance. No package is considered integrated solely because its branch exists.
+**CENTRAL INTEGRATION = COMPLETE PACKAGE ASSEMBLY**
+
+The integration branch contains the main baseline plus only the approved Core, Execution, and Opportunity package-scope files and integration documentation. Shared `binansScanner/core/orchestrator.py` is resolved in favor of the Core implementation because Core owns the runtime intelligence gates and already produces the canonical ExecutionPlan consumed by Execution.
+
+Explicitly excluded: Sync/Restore, MAIN/ALL, backups, generated artifacts, unrelated GUI/tooling, global ancestry collateral, and cross-package pipeline test changes.
+
+No merge, rebase, cherry-pick, reset, or force-push was used. Local ORION_NEXT and ORION_NEXT_ALL_BRANCHES were not used.
+
+Package-scope integration commit: `894a14b085599d5a2fe3e9454320f70200d90044`
+Final documentation commit: `c489a784f0622a22ae02c61b01e050fd6a2077be`
+
+Full verification remains a central acceptance-gate responsibility; this integration executor does not claim local verification.
