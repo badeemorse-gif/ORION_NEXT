@@ -1,1 +1,0 @@
-The legacy ORION restore launcher is superseded by tools/orion_safe_sync_gui.vbs.
