@@ -48,6 +48,12 @@ def validate_analysis(analysis: AnalysisResult) -> None:
 
 
 def validate_profile(profile: ProfileResult) -> None:
+    if not isinstance(profile, ProfileResult):
+        raise IntelligenceContractError("Profile boundary requires ProfileResult.")
+    if profile.warnings:
+        raise IntelligenceContractError(
+            "Profile boundary blocked: warning-bearing ProfileResult is not actionable."
+        )
     result = ProfileIntelligence().evaluate(profile)
     if result.blocked or not result.is_valid:
         reason = "; ".join(result.reasons) or "Profile intelligence is not actionable."
