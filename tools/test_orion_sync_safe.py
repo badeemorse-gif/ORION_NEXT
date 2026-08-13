@@ -1,7 +1,5 @@
-import os
-import tempfile
+import subprocess
 import unittest
-from pathlib import Path
 from unittest.mock import patch
 
 import orion_sync_safe as sync
@@ -18,18 +16,17 @@ class TestSafeSyncContract(unittest.TestCase):
         self.assertEqual(target.name, "candidate-set")
 
     def test_path_traversal_is_rejected(self):
-        with self.assertRaises(RuntimeError):
-            sync.safe_branch_path("future/../main")
-        with self.assertRaises(RuntimeError):
-            sync.safe_branch_path("/absolute")
-        with self.assertRaises(RuntimeError):
-            sync.safe_branch_path("future\\escape")
+        for value in ("future/../main", "/absolute", "future\\escape"):
+            with self.assertRaises(RuntimeError):
+                sync.safe_branch_path(value)
 
     def test_development_sync_pushes_current_branch_not_main(self):
         calls = []
+        diff_result = subprocess.CompletedProcess([], 1)
         with patch.object(sync, "require_checkout"), \
              patch.object(sync, "current_branch", return_value="future/example"), \
-             patch.object(sync, "run_git", side_effect=lambda *args, **kwargs: calls.append(args) or "changed"):
+             patch.object(sync, "run_git", side_effect=lambda *args, **kwargs: calls.append(args) or "changed"), \
+             patch.object(sync.subprocess, "run", return_value=diff_result):
             sync.sync_development()
         push_calls = [call for call in calls if call and call[0] == "push"]
         self.assertEqual(len(push_calls), 1)
