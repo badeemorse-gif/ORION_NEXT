@@ -35,6 +35,7 @@ class ExecutionPlanBuilder:
             quantity=1.0,
             confidence=float(decision.confidence),
             reason="; ".join(decision.reasons),
+            decision=decision_name,
         )
 
     @staticmethod
