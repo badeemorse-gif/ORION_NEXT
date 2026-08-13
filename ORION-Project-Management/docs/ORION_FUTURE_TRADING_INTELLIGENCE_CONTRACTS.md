@@ -1,6 +1,6 @@
 # ORION — FUTURE TRADING INTELLIGENCE CONTRACTS
 
-الإصدار: 1.2
+الإصدار: 1.3
 الحالة: DESIGN BASELINE — NOT WIRED
 
 ## 1. الغرض
@@ -34,6 +34,25 @@
 الحد الأدنى للجاهزية المستقبلية هو اكتمال البيانات الأساسية، freshness معروفة، risk state معروف، ووجود evidence. ولا توجد thresholds رقمية للسكالبينج داخل العقد؛ thresholds والتصنيف يجب أن تأتي من Intelligence Engine عندما تتوفر أدلة Core المناسبة.
 
 `is_eligible` بوابة عقدية محافظة فقط: ACTIVE + FRESH + ACCEPTABLE risk + complete intelligence. وهي ليست قرار شراء/بيع ولا ExecutionPlan.
+
+### 2.1 Opportunity candidate-set boundary
+
+العقد المستقبلي هو `models.opportunity_candidate_set.OpportunityCandidateSet`.
+
+يمثل **مجموعة المدخلات** التي سيستهلكها Opportunity Engine لاحقًا قبل تطبيق أي ranking أو selection policy.
+
+القواعد الحالية:
+
+- المجموعة غير فارغة.
+- كل عنصر يجب أن يكون `Opportunity` صالحًا.
+- لا يسمح بتكرار نفس `(symbol, timeframe, direction)` داخل المجموعة.
+- ترتيب المرشحين محفوظ كما وصل إلى العقد.
+- المدخلات تُلتقط داخل `tuple` غير قابل للتعديل، ولا تتأثر بأي تعديل لاحق على sequence المصدر.
+- الـCandidateSet نفسه immutable.
+- اختلاف `direction` يجعل الهوية مختلفة؛ لذلك يمكن أن يحتوي العقد على LONG وSHORT لنفس `(symbol, timeframe)`.
+- العقد لا يطبق scoring أو ranking أو thresholds ولا يقرر أفضل فرصة.
+
+هذه الحدود تمنح Opportunity Engine مدخلًا ثابتًا دون اختراع سياسة اختيار قبل توفر أدلة Core والـbacktesting المناسبة.
 
 ## 3. Opportunity Evaluation boundary
 
@@ -117,6 +136,17 @@ Order Execution
 - incomplete intelligence
 - stale / expired opportunity
 - invalid confidence / non-finite values
+
+### Opportunity Candidate Set
+
+- valid candidates are preserved in order
+- empty candidate set is rejected
+- non-Opportunity member is rejected
+- duplicate identity is rejected
+- same symbol on different timeframes remains valid
+- same symbol/timeframe with opposite directions remains valid
+- source sequence is snapshotted into an immutable tuple
+- candidate set itself is immutable
 
 ### Opportunity Evaluation
 
