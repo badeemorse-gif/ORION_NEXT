@@ -2,7 +2,7 @@
 ===============================================================================
 ORION
 Module : core.profile_intelligence
-Version: 1.3.0
+Version: 1.4.0
 
 Profile Intelligence — Fail-Closed
 ===============================================================================
@@ -74,6 +74,7 @@ class ProfileIntelligence:
     """Deterministic interpreter for the canonical ProfileResult."""
 
     _VALID_TIMEFRAMES = {item.value for item in Timeframe}
+    _REQUIRED_TIMEFRAMES = frozenset({"1d", "4h", "1h"})
     _VALID_TRENDS = {item.value for item in TrendType}
     _VALID_MOMENTUM = {item.value for item in MomentumState}
     _VALID_RISKS = {item.value for item in RiskLevel}
@@ -114,9 +115,7 @@ class ProfileIntelligence:
                 blocked=True,
             )
 
-        if (
-            market.risk_level == RiskLevel.EXTREME.value
-        ):
+        if market.risk_level == RiskLevel.EXTREME.value:
             return ProfileIntelligenceResult(
                 recommendation=ProfileRecommendation.NEUTRAL.value,
                 confidence=0.0,
@@ -124,20 +123,14 @@ class ProfileIntelligence:
                 blocked=True,
             )
 
-        if (
-            market.trend == TrendType.BULLISH.value
-            and market.momentum in self._BULLISH_MOMENTUM
-        ):
+        if market.trend == TrendType.BULLISH.value and market.momentum in self._BULLISH_MOMENTUM:
             return self._directional_result(
                 ProfileRecommendation.BULLISH.value,
                 profile,
                 "Trend and momentum are aligned bullishly.",
             )
 
-        if (
-            market.trend == TrendType.BEARISH.value
-            and market.momentum in self._BEARISH_MOMENTUM
-        ):
+        if market.trend == TrendType.BEARISH.value and market.momentum in self._BEARISH_MOMENTUM:
             return self._directional_result(
                 ProfileRecommendation.BEARISH.value,
                 profile,
@@ -155,12 +148,7 @@ class ProfileIntelligence:
         """Compatibility alias for evaluate()."""
         return self.evaluate(profile)
 
-    def _directional_result(
-        self,
-        recommendation: str,
-        profile: ProfileResult,
-        reason: str,
-    ) -> ProfileIntelligenceResult:
+    def _directional_result(self, recommendation: str, profile: ProfileResult, reason: str) -> ProfileIntelligenceResult:
         confidence = self._safe_confidence(profile)
         if confidence <= 0.0:
             return self._blocked(
@@ -196,9 +184,10 @@ class ProfileIntelligence:
             return "ProfileResult contains an invalid tradeable-state flag."
         if not profile.is_valid:
             return "ProfileResult is not valid/tradeable; directional intelligence is blocked."
+        if profile.warnings:
+            return "ProfileResult contains warnings; actionable profile intelligence is blocked."
         if not profile.timeframes:
             return "ProfileResult contains no timeframe profiles."
-
         if profile.market is None or profile.statistics is None:
             return "ProfileResult contains incomplete canonical market/statistics data."
 
@@ -210,59 +199,46 @@ class ProfileIntelligence:
         if statistics_reason is not None:
             return statistics_reason
 
+        seen_timeframes: set[str] = set()
         for timeframe in profile.timeframes:
             timeframe_name = getattr(timeframe, "timeframe", None)
             if not isinstance(timeframe_name, str) or not timeframe_name:
                 return "ProfileResult contains a malformed timeframe profile."
             if timeframe_name not in self._VALID_TIMEFRAMES:
                 return f"ProfileResult contains unsupported timeframe: {timeframe_name!r}."
+            if timeframe_name in seen_timeframes:
+                return f"ProfileResult contains duplicate timeframe: {timeframe_name}."
+            seen_timeframes.add(timeframe_name)
 
             characteristics = getattr(timeframe, "characteristics", None)
             if not isinstance(characteristics, MarketCharacteristics):
-                return (
-                    f"ProfileResult contains invalid characteristics "
-                    f"in timeframe {timeframe_name}."
-                )
+                return f"ProfileResult contains invalid characteristics in timeframe {timeframe_name}."
 
-            timeframe_reason = self._validate_characteristics(
-                characteristics,
-                f"timeframe {timeframe_name}",
-            )
+            timeframe_reason = self._validate_characteristics(characteristics, f"timeframe {timeframe_name}")
             if timeframe_reason is not None:
                 return timeframe_reason
 
             candles_count = self._non_negative_integer(timeframe.candles_count)
             missing_candles = self._non_negative_integer(timeframe.missing_candles)
             if candles_count is None:
-                return (
-                    f"ProfileResult contains invalid candles_count "
-                    f"in timeframe {timeframe_name}."
-                )
+                return f"ProfileResult contains invalid candles_count in timeframe {timeframe_name}."
             if missing_candles is None:
-                return (
-                    f"ProfileResult contains invalid missing_candles "
-                    f"in timeframe {timeframe_name}."
-                )
-
+                return f"ProfileResult contains invalid missing_candles in timeframe {timeframe_name}."
             if candles_count <= 0:
-                return (
-                    f"ProfileResult contains no candle coverage "
-                    f"in timeframe {timeframe_name}."
-                )
-
+                return f"ProfileResult contains no candle coverage in timeframe {timeframe_name}."
             if missing_candles >= candles_count:
-                return (
-                    f"ProfileResult contains incomplete candle coverage "
-                    f"in timeframe {timeframe_name}."
-                )
+                return f"ProfileResult contains incomplete candle coverage in timeframe {timeframe_name}."
+
+        missing_timeframes = sorted(self._REQUIRED_TIMEFRAMES - seen_timeframes)
+        if missing_timeframes:
+            return (
+                "ProfileResult is missing required intelligence timeframes: "
+                + ", ".join(missing_timeframes)
+            )
 
         return None
 
-    def _validate_characteristics(
-        self,
-        characteristics: Any,
-        prefix: str,
-    ) -> Optional[str]:
+    def _validate_characteristics(self, characteristics: Any, prefix: str) -> Optional[str]:
         if not isinstance(characteristics, MarketCharacteristics):
             return f"ProfileResult contains invalid {prefix} characteristics."
 
@@ -314,7 +290,6 @@ class ProfileIntelligence:
             return "ProfileResult contains invalid statistics.total_candles."
         if missing_candles is None:
             return "ProfileResult contains invalid statistics.missing_candles."
-
         if total_candles <= 0:
             return "ProfileResult contains no aggregate candle coverage."
         if missing_candles >= total_candles:
@@ -323,12 +298,7 @@ class ProfileIntelligence:
             return "ProfileResult has no completed market-data coverage."
 
         expected_completion_ratio = (total_candles - missing_candles) / total_candles
-        if not isclose(
-            float(statistics.completion_ratio),
-            expected_completion_ratio,
-            rel_tol=0.0,
-            abs_tol=1e-9,
-        ):
+        if not isclose(float(statistics.completion_ratio), expected_completion_ratio, rel_tol=0.0, abs_tol=1e-9):
             return "ProfileResult contains inconsistent aggregate completion ratio."
 
         return None
