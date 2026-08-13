@@ -1,0 +1,2 @@
+Option Explicit
+' Safe launcher. The legacy launcher name is retained separately; use orion_safe_sync_gui.vbs for the new GUI.
