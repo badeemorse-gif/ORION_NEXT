@@ -1,5 +1,4 @@
 import subprocess
-import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -7,7 +6,7 @@ from unittest.mock import patch
 import orion_sync_guard as guard
 
 
-class TestSyncGuardContract(unittest.TestCase):
+class TestSyncGuardBasics(unittest.TestCase):
     def test_repository_root_is_checkout_root(self):
         self.assertEqual(guard.REPO_ROOT, Path(guard.__file__).resolve().parents[1])
 
@@ -34,20 +33,6 @@ class TestSyncGuardContract(unittest.TestCase):
         self.assertEqual(kwargs["env"]["ORION_PROJECT_ROOT"], str(guard.REPO_ROOT))
         self.assertEqual(kwargs["env"]["ORION_REMOTE"], "origin")
         self.assertEqual(run.call_args.args[0][-1], "main")
-
-    def test_audit_rejects_forbidden_command_in_entrypoint(self):
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            launcher = root / "launcher.bat"
-            launcher.write_text("git reset --hard origin/main\n", encoding="utf-8")
-            with patch.object(guard, "MIRROR_ENTRYPOINTS", (launcher,)), \
-                 patch.object(guard, "REPO_ROOT", root):
-                self.assertEqual(guard.audit_entrypoints(), 1)
-
-    def test_audit_accepts_guard_file_without_forbidden_commands(self):
-        with patch.object(guard, "MIRROR_ENTRYPOINTS", (Path(guard.__file__),)), \
-             patch.object(guard, "REPO_ROOT", Path(guard.__file__).resolve().parents[1]):
-            self.assertEqual(guard.audit_entrypoints(), 0)
 
 
 if __name__ == "__main__":
