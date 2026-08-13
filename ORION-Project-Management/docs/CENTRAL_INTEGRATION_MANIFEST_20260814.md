@@ -4,14 +4,15 @@
 - Base: `main`
 - Base content baseline at integration start: `a831bd3c3f3e8aa7ca4e051eda245fb48641daf3`
 - Integration branch: `integration/final-current-20260814`
-- Integration package commit: `894a14b085599d5a2fe3e9454320f70200d90044`
+- Final integration HEAD: recorded in `CENTRAL_INTEGRATION_GATE.md`.
+- Package integration commit: `894a14b085599d5a2fe3e9454320f70200d90044`
 
 ## Approved package sources
-- CORE: `phase2/core-intelligence-hardening` @ `3b37ad94d3440463f4e440c7e46ca0380c7e46ca0380d7ce900`
+- CORE: `phase2/core-intelligence-hardening` @ `3b37ad94d3440463f4e440c7e46ca0380d7ce900`
 - EXECUTION: `ops/execution-fail-closed` @ `1ae3cca91f7b58e221e7e005f7949aceb1e96b02`
-- OPPORTUNITY: `future/opportunity-intelligence-complete` @ `4975292572a8446a1786a5d1afe708792082767a1`
+- OPPORTUNITY: `future/opportunity-intelligence-complete` @ `4975292572a8446a178a5d1afe708792082767a1`
 
-## Package scope applied
+## Integrated package scope
 
 ### CORE
 - `ORION-Project-Management/docs/CORE_INTELLIGENCE_HANDOFF.md`
@@ -28,7 +29,7 @@
 - `binansScanner/engines/indicator_engine.py`
 - `binansScanner/engines/profile_builder.py`
 - `binansScanner/engines/score_engine.py`
-- Core contract/completion test files from the approved handoff.
+- Approved Core contract/completion tests.
 
 ### EXECUTION
 - `binansScanner/EXECUTION_BOUNDARY.md`
@@ -37,7 +38,7 @@
 - `binansScanner/engines/execution_engine.py`
 - `binansScanner/engines/report_engine.py`
 - `binansScanner/models/execution.py`
-- Execution contract test files from the approved handoff.
+- Approved Execution contract tests.
 
 ### OPPORTUNITY
 - `ORION-Project-Management/docs/OPPORTUNITY_HANDOFF.md`
@@ -49,12 +50,12 @@
 - `binansScanner/models/opportunity_candidate_set.py`
 - `binansScanner/models/opportunity_evaluation.py`
 - `binansScanner/models/trading_readiness.py`
-- Opportunity contract test files from the approved handoff.
+- Approved Opportunity contract tests.
 
 ## Shared-path decision
-`binansScanner/core/orchestrator.py` differed across CORE and EXECUTION. The CORE version was selected because Core owns the Intelligence runtime gates and already constructs the canonical `ExecutionPlan`; Execution consumes that plan and does not own Core orchestration.
+`binansScanner/core/orchestrator.py` was present in CORE and Execution history. CORE was selected because it owns the Intelligence runtime gates and already constructs the canonical `ExecutionPlan`; Execution consumes the plan and does not own Core orchestration.
 
-Execution-branch edits to Core engines/tests were excluded as collateral. Core versions remain authoritative for those shared Core paths.
+Execution-branch changes to Core engines/tests and cross-package pipeline tests were excluded as collateral. Core versions remain authoritative for shared Core paths.
 
 ## Explicit exclusions
 - Sync/Restore tooling and protocol changes.
@@ -65,5 +66,5 @@ Execution-branch edits to Core engines/tests were excluded as collateral. Core v
 - Opportunity tooling changes and current-pipeline wiring.
 - Cross-package `test_pipeline_execution_e2e.py` changes from source branches.
 
-## Final status
-Package-scope integration tree was committed at `894a14b085599d5a2fe3e9454320f70200d90044`.
+## Status
+Package-scope integration is complete. No branch history was merged; only approved package files were applied.
