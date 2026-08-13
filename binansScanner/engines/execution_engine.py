@@ -94,19 +94,19 @@ class ExecutionEngine:
         self._statistics.total_processed += 1
         try:
             self._validate_plan(plan)
-            side = plan.side
-            if side in (ExecutionSide.HOLD, ExecutionSide.NONE):
-                result = ExecutionResult(request=None, status=ExecutionStatus.SKIPPED, message=f"Decision is [{plan.decision or side.value}]. Execution skipped.", execution_time_ms=(time.perf_counter() - started) * 1000.0, executed_at=datetime.now(timezone.utc), order_id=None)
-                self._statistics.total_skipped += 1
-                self._last_result = result
-                return result
-
             if quantity is not None:
                 if not math.isfinite(float(quantity)) or float(quantity) <= 0.0:
                     raise ExecutionValidationError("Quantity override must be finite and greater than zero.")
                 effective_quantity = float(quantity)
             else:
                 effective_quantity = plan.quantity
+
+            side = plan.side
+            if side in (ExecutionSide.HOLD, ExecutionSide.NONE):
+                result = ExecutionResult(request=None, status=ExecutionStatus.SKIPPED, message=f"Decision is [{plan.decision or side.value}]. Execution skipped.", execution_time_ms=(time.perf_counter() - started) * 1000.0, executed_at=datetime.now(timezone.utc), order_id=None)
+                self._statistics.total_skipped += 1
+                self._last_result = result
+                return result
 
             request = ExecutionRequest(plan.symbol, side, plan.price, effective_quantity, plan.confidence)
             if not self._adapter.validate(request):
