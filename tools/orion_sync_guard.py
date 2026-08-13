@@ -6,7 +6,7 @@ to ``orion_sync_safe.py``.
 
 Safety contract:
 * the repository root is the directory containing this ``tools`` directory;
-* the configured remote must be the official ORION_NEXT repository;
+* the configured remote must be the exact official ORION_NEXT repository;
 * an operation mode is always explicit (no implicit DEV fallback);
 * MAIN and ALL are mirror operations and are never allowed to target the
   development checkout;
@@ -24,12 +24,8 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SAFE_CONTROLLER = REPO_ROOT / "tools" / "orion_sync_safe.py"
-CANONICAL_REMOTE_MARKER = "github.com/badeemorse-gif/ORION_NEXT"
 MODES = {"dev", "main", "all", "audit"}
 
-# These operations are forbidden in mirror entrypoints.  A mirror is allowed
-# to materialize/delete files inside its own isolated destination, but it must
-# never use Git operations that can mutate PROJECT_ROOT's checkout state.
 FORBIDDEN_GIT_PATTERNS = (
     "git reset --hard",
     "git clean -fd",
@@ -70,8 +66,14 @@ def run_git(*args: str) -> str:
 
 def canonical_remote() -> str:
     value = run_git("remote", "get-url", "origin").replace("\\", "/").rstrip("/")
-    # Accept HTTPS and SSH forms, but require the exact repository identity.
-    if CANONICAL_REMOTE_MARKER not in value:
+    if value.endswith(".git"):
+        value = value[:-4]
+    accepted = {
+        "https://github.com/badeemorse-gif/ORION_NEXT",
+        "git@github.com:badeemorse-gif/ORION_NEXT",
+        "ssh://git@github.com/badeemorse-gif/ORION_NEXT",
+    }
+    if value not in accepted:
         fail(f"REFUSED: unexpected origin remote: {value}")
     return value
 
@@ -80,7 +82,6 @@ def validate_checkout() -> str:
     top = Path(run_git("rev-parse", "--show-toplevel")).resolve()
     if top != REPO_ROOT.resolve():
         fail(f"REFUSED: Git top-level is {top}, expected {REPO_ROOT.resolve()}")
-    # A normal checkout has either a .git directory or a .git file (worktree).
     git_marker = REPO_ROOT / ".git"
     if not git_marker.exists():
         fail(f"REFUSED: not a Git checkout: {REPO_ROOT}")
@@ -109,9 +110,6 @@ def audit_entrypoints() -> int:
         for pattern in FORBIDDEN_GIT_PATTERNS:
             if pattern in text:
                 failures.append(f"forbidden Git command in {path.relative_to(REPO_ROOT)}: {pattern}")
-    # Every public launcher must delegate to the policy guard, not directly to
-    # the implementation.  This prevents an old launcher from bypassing the
-    # boundary after a future tool update.
     for launcher in (
         REPO_ROOT / "tools" / "orion_sync.bat",
         REPO_ROOT / "tools" / "orion_main_sync.bat",
@@ -136,8 +134,6 @@ def delegate(mode: str, remote: str) -> int:
     if not SAFE_CONTROLLER.is_file():
         fail(f"REFUSED: safe synchronization controller is missing: {SAFE_CONTROLLER}")
     env = os.environ.copy()
-    # Pin these values so an ambient environment variable cannot redirect the
-    # implementation to another checkout or remote.
     env["ORION_PROJECT_ROOT"] = str(REPO_ROOT)
     env["ORION_REMOTE"] = "origin"
     result = subprocess.run(
