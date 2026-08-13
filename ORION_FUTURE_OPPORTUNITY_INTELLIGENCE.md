@@ -22,12 +22,47 @@ AnalysisResult + ProfileResult + ScoreResult + MarketDataset
                TradingReadiness
 ```
 
+## Core integration contract
+
+Opportunity evidence must preserve Core semantics; it must not reinterpret aggregate evidence as timeframe-specific evidence.
+
+### Risk
+
+`ProfileResult.market.risk_level` and `TimeframeProfile.risk_level` use the canonical Profile risk values:
+
+- `Low`
+- `Medium`
+- `High`
+- `Extreme`
+
+Opportunity imports the Profile-owned `RiskLevel` contract. The unrelated legacy `enums.RiskLevel` is not used for Opportunity risk interpretation. Unknown values map to `RiskState.UNKNOWN` and therefore fail closed at selection/readiness.
+
+### Timeframe
+
+A requested Opportunity timeframe must resolve through the same canonical path:
+
+```text
+requested timeframe
+        ↓
+MarketDataset.TimeframeData
+        ↓
+ProfileResult.TimeframeProfile
+        ↓
+trend / EMA alignment / confidence / risk
+```
+
+Missing, duplicated, or mismatched timeframe evidence is rejected. `ProfileResult.market` is not used as the sole source for timeframe-specific Opportunity evidence.
+
+### Setup quality
+
+Core currently provides no canonical `setup_quality` evidence. Therefore Opportunity leaves `setup_quality=None`; it never maps `AnalysisResult.strength` into that field and never fabricates a replacement formula or threshold. The candidate remains incomplete and SelectionPolicy/TradingReadiness fail closed until Core provides the required semantic evidence.
+
 ## Evidence rules
 
 The implementation uses only fields already produced by Core:
 
 - `AnalysisResult.market_state`, `strength`, `signals`, and warnings.
-- `ProfileResult.market` characteristics, validity/tradeability, and blocks.
+- matching `ProfileResult.TimeframeProfile` characteristics and validity/tradeability.
 - `ScoreResult.category` and factors.
 - `MarketDataset` latest canonical `close` for the requested timeframe.
 
@@ -39,7 +74,7 @@ No future indicator, forecast, liquidity feed, ranking metric, or trading signal
 
 Directional candidates are generated only when Analysis reports `BULLISH` or `BEARISH`. `NEUTRAL` fails closed rather than becoming a synthetic candidate.
 
-The generated candidate contains the real latest close as an entry candidate, Core confidence/strength evidence, risk state derived from the existing Profile risk level, and the original Core signal/factor evidence.
+The generated candidate contains the real latest close as an entry candidate, Core confidence evidence from Analysis plus the matching timeframe Profile, risk state from the matching timeframe Profile, and the original Core signal/factor evidence.
 
 Freshness is intentionally an explicit dependency. Core currently exposes no canonical freshness-age policy, so the Opportunity layer accepts `FreshnessStatus` as evidence and rejects `UNKNOWN`/`STALE`; it does not invent a time threshold.
 
@@ -48,8 +83,8 @@ Freshness is intentionally an explicit dependency. Core currently exposes no can
 Selection is evidence consistency, not numerical ranking. A candidate must agree with:
 
 1. Analysis directional state.
-2. Profile trend.
-3. Profile EMA alignment.
+2. Matching Profile timeframe trend.
+3. Matching Profile timeframe EMA alignment.
 4. Score directional category.
 5. Profile validity/tradeability.
 6. Acceptable risk state.
