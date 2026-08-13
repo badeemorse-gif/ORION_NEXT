@@ -14,6 +14,12 @@ from enum import Enum
 from typing import Any, Optional, Protocol
 
 from core.execution_plan_builder import ExecutionPlanBuilder
+from core.intelligence_contract import (
+    validate_analysis,
+    validate_decision,
+    validate_profile,
+    validate_score,
+)
 from engines.analysis_engine import AnalysisEngine
 from engines.decision_engine import DecisionEngine
 from engines.indicator_engine import IndicatorEngine
@@ -186,10 +192,12 @@ class Orchestrator:
 
             self._change_stage(PipelineStage.ANALYSIS)
             analysis = self._analysis_engine.analyze(dataset)
+            validate_analysis(analysis)
             completed += 1
 
             self._change_stage(PipelineStage.PROFILE)
             profile = self._profile_engine.build_profile(dataset)
+            validate_profile(profile)
             if not profile.is_tradeable:
                 blocked = "; ".join(profile.blocks) or "Profile intelligence is not tradeable."
                 raise PipelineError(
@@ -199,10 +207,12 @@ class Orchestrator:
 
             self._change_stage(PipelineStage.SCORE)
             score = self._score_engine.calculate(analysis)
+            validate_score(score)
             completed += 1
 
             self._change_stage(PipelineStage.DECISION)
             decision = self._decision_engine.decide(analysis, score)
+            validate_decision(analysis, score, decision)
             execution_plan = self._execution_plan_builder.build(dataset, decision)
             completed += 1
 
