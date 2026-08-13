@@ -3,7 +3,7 @@
 Badee Binance Scanner
 Architecture : ORION
 Module       : engines.indicator_engine
-Version      : 3.0.2
+Version      : 3.1.0
 Status       : ORION Canonical Indicator Coordinator
 ===============================================================================
 
@@ -39,21 +39,16 @@ AVAILABLE_INDICATORS: tuple[str, ...] = (
 )
 
 
-# Indicators required to establish a trustworthy Profile intelligence input.
-# This is deliberately owned by the Indicator boundary so downstream layers
-# do not have to infer whether calculation quality was actually established.
+# Every indicator consumed by the Profile layer is part of this boundary.
+# Downstream code must never synthesize defaults for these values.
 PROFILE_CRITICAL_INDICATORS: tuple[str, ...] = (
-    "ema_9",
-    "ema_20",
-    "ema_50",
-    "ema_100",
-    "ema_200",
-    "adx_14",
-    "rsi_14",
-    "momentum_5",
-    "momentum_10",
-    "mfi_14",
-    "atr_14",
+    "ema_9", "ema_20", "ema_50", "ema_100", "ema_200",
+    "adx_14", "rsi_14", "momentum_5", "momentum_10",
+    "mfi_14", "atr_14",
+    "macd", "macd_signal", "roc_10",
+    "cmf_20", "obv",
+    "bb_bandwidth", "kc_lower", "kc_upper",
+    "dc_lower", "dc_upper",
 )
 
 
@@ -91,11 +86,7 @@ class IndicatorEngine:
         if not isinstance(timeframe_data, TimeframeData):
             raise TypeError("calculate_timeframe expects TimeframeData.")
         timeframe = timeframe_data.timeframe
-        timeframe_label = (
-            timeframe.value
-            if isinstance(timeframe, Timeframe)
-            else str(timeframe)
-        )
+        timeframe_label = timeframe.value if isinstance(timeframe, Timeframe) else str(timeframe)
         dataframe = timeframe_data.dataframe
         self._validate_dataframe(dataframe, timeframe_label)
         start_time = time.perf_counter()
@@ -140,29 +131,26 @@ class IndicatorEngine:
         timeframe_data.dataframe = cleaned
         return timeframe_data
 
-    def _validate_profile_critical_indicators(
-        self,
-        dataframe: pd.DataFrame,
-    ) -> None:
-        """Prove that Profile-critical indicators are usable at the latest bar."""
-
-        missing = [
-            name
-            for name in PROFILE_CRITICAL_INDICATORS
-            if name not in dataframe.columns
-        ]
+    def _validate_profile_critical_indicators(self, dataframe: pd.DataFrame) -> None:
+        """Prove that every Profile-consumed indicator is usable at the latest bar."""
+        missing = [name for name in PROFILE_CRITICAL_INDICATORS if name not in dataframe.columns]
         if missing:
             raise InvalidIndicatorData(
-                "Missing Profile-critical indicators: "
-                + ", ".join(missing)
+                "Missing Profile-critical indicators: " + ", ".join(missing)
             )
 
         latest = dataframe.iloc[-1]
-        invalid = [
-            name
-            for name in PROFILE_CRITICAL_INDICATORS
-            if not np.isfinite(float(latest[name]))
-        ]
+        invalid: list[str] = []
+        for name in PROFILE_CRITICAL_INDICATORS:
+            value = latest[name]
+            try:
+                numeric_value = float(value)
+            except (TypeError, ValueError):
+                invalid.append(name)
+                continue
+            if not np.isfinite(numeric_value):
+                invalid.append(name)
+
         if invalid:
             raise InvalidIndicatorData(
                 "Profile-critical indicators are invalid at the latest bar: "
@@ -193,3 +181,6 @@ class IndicatorEngine:
             raise InvalidIndicatorData(f"DataFrame for timeframe {timeframe} contains negative prices.")
         if (dataframe["volume"] < 0).any():
             raise InvalidIndicatorData(f"DataFrame for timeframe {timeframe} contains negative volume.")
+
+
+__all__ = ["IndicatorEngine", "IndicatorEngineError", "InvalidIndicatorData", "PROFILE_CRITICAL_INDICATORS"]
