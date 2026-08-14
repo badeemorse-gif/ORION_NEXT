@@ -3,7 +3,7 @@
 ## Integration identity
 - Base: `main` @ `9a02e4a94ea1fd3b63ecf17209211735ed554c83`
 - Integration branch: `integration/final-current-20260814`
-- Package content commit: `c63aa34bf946b1120f31f6932ea9445aca877bd3`
+- Package content HEAD: `447d82dc50806352df5ff361a502d669d2cc481c`
 
 ## Approved package sources
 - CORE: `phase2/core-intelligence-hardening` @ `3b37ad94d3440463f4e440c7e46ca0380d7ce900`
