@@ -8,7 +8,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import Mock
 
-from models.report import ReportResult
+from models.report import ReportAuditStatus, ReportResult
 from reports.html_report import HtmlReportRenderer
 from reports.json_report import JsonReportRenderer
 from reports.report_exporter import ReportExporter, ReportFormat
@@ -25,6 +25,8 @@ class TestReportResultContract(unittest.TestCase):
         self.assertEqual(report.symbol, "BTCUSDT")
         self.assertEqual(report.summary, ())
         self.assertEqual(report.warnings, ())
+        self.assertEqual(report.audit.status, ReportAuditStatus.INCOMPLETE)
+        self.assertIsNone(report.audit.execution_status)
 
     def test_report_result_does_not_require_market_dataset(self) -> None:
         report = ReportResult(symbol="BTCUSDT")
@@ -72,6 +74,7 @@ class TestReportResultContract(unittest.TestCase):
         self.assertEqual(payload["summary"], ["canonical report"])
         self.assertIn("analysis", payload)
         self.assertIn("execution", payload)
+        self.assertIn("audit", payload)
 
     def test_html_renderer_consumes_canonical_report_result(self) -> None:
         report = ReportResult(
@@ -84,6 +87,7 @@ class TestReportResultContract(unittest.TestCase):
         self.assertIn("BTCUSDT", rendered)
         self.assertIn("canonical report", rendered)
         self.assertIn("test warning", rendered)
+        self.assertIn("INCOMPLETE", rendered)
 
     def test_report_exporter_uses_renderer_boundary(self) -> None:
         report = ReportResult(symbol="BTCUSDT")
@@ -97,6 +101,7 @@ class TestReportResultContract(unittest.TestCase):
             self.assertTrue(output_path.exists())
             payload = json.loads(output_path.read_text(encoding="utf-8"))
             self.assertEqual(payload["symbol"], "BTCUSDT")
+            self.assertEqual(payload["audit"]["status"], "INCOMPLETE")
 
 
 if __name__ == "__main__":
