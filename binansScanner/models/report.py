@@ -95,6 +95,13 @@ class ReportResult:
     metadata: ReportMetadata = field(default_factory=ReportMetadata)
     audit: ReportAudit = field(default_factory=ReportAudit)
 
+    def __post_init__(self) -> None:
+        if self.audit.status is ReportAuditStatus.COMPLETE:
+            if not self.is_complete:
+                raise ValueError("COMPLETE report audit requires all canonical upstream results.")
+            if self.audit.execution_status is None:
+                raise ValueError("COMPLETE report audit requires execution_status.")
+
     @property
     def has_warnings(self) -> bool:
         return bool(self.warnings)
@@ -125,21 +132,18 @@ class ReportResult:
 
     @property
     def is_successful(self) -> bool:
-        """Expose reporting success semantics without changing Pipeline.success."""
         return self.audit.is_successful
 
     @property
     def is_complete(self) -> bool:
         """Structural completeness of the canonical upstream result set."""
-        return all(
-            (
-                self.analysis is not None,
-                self.profile is not None,
-                self.score is not None,
-                self.decision is not None,
-                self.execution is not None,
-            )
-        )
+        return all((
+            self.analysis is not None,
+            self.profile is not None,
+            self.score is not None,
+            self.decision is not None,
+            self.execution is not None,
+        ))
 
 
 __all__ = ["ReportAuditStatus", "ReportAudit", "ReportMetadata", "ReportResult"]
