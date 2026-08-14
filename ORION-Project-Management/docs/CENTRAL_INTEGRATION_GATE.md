@@ -2,26 +2,25 @@
 
 ## Leadership Integration Base
 
-- Base: `main`
+- Base: `main` @ `9a02e4a94ea1fd3b63ecf17209211735ed554c83`
 - Integration branch: `integration/final-current-20260814`
 - Core package: `phase2/core-intelligence-hardening` @ `3b37ad94d3440463f4e440c7e46ca0380d7ce900`
 - Execution package: `ops/execution-fail-closed` @ `1ae3cca91f7b58e221e7e005f7949aceb1e96b02`
-- Opportunity package: `future/opportunity-intelligence-complete` @ `4975292572a8446a1786a5d1afe708792082767a1`
+- Opportunity package: `future/opportunity-intelligence-complete` @ `0257a339f5f1725e424cf0cc3f83806d1faf4588`
 
 ## Current Status
 
-**CENTRAL INTEGRATION = COMPLETE PACKAGE ASSEMBLY**
+**PACKAGE-SCOPE CENTRAL INTEGRATION ASSEMBLED**
 
-The integration branch contains the main baseline plus only the approved Core, Execution, and Opportunity package-scope files and integration documentation. Shared `binansScanner/core/orchestrator.py` is resolved in favor of the Core implementation because Core owns the runtime intelligence gates and already produces the canonical ExecutionPlan consumed by Execution.
+The integration branch is built from the current main baseline plus only approved package-scope files. Branch histories were not merged. Shared `binansScanner/core/orchestrator.py` is CORE-authoritative because Core owns the runtime intelligence gates and produces the canonical `ExecutionPlan` consumed by Execution.
 
-Explicitly excluded: Sync/Restore, MAIN/ALL, backups, generated artifacts, unrelated GUI/tooling, global ancestry collateral, and cross-package pipeline test changes.
+Opportunity confidence uses only the requested `ProfileResult.TimeframeProfile.confidence`; `AnalysisResult.strength` is not used as Opportunity confidence and no `min()` aggregation is introduced.
 
-No merge, rebase, cherry-pick, reset, or force-push was used. Local ORION_NEXT and ORION_NEXT_ALL_BRANCHES were not used.
+Explicitly excluded: Sync/Restore, MAIN/ALL, backups, generated artifacts, unrelated GUI/tooling, ancestry collateral, and cross-package pipeline tests.
 
 ## Published integration HEAD
 
-The package-integrated branch state immediately before this documentation-closure commit was `ef211b66f0c17e200d164e6ccef4933fac92a020`. This documentation closure is the final commit published on the integration branch.
+Final package assembly commit: `324d6ccc2483080e93ffa859558afccb70c9deec`
+Documentation closure commits follow that assembly; the branch HEAD must be verified against the published ref before acceptance.
 
-Package-scope integration commit: `b051b6cd8a27dd75585a4dba1401d589e213647f`
-
-Full verification remains a central acceptance-gate responsibility; this integration executor does not claim local verification.
+Full verification remains a central acceptance-gate responsibility. No Local ORION_NEXT materialization was used.
