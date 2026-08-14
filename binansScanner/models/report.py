@@ -62,19 +62,17 @@ class ReportAudit:
 
     @property
     def execution_failed(self) -> bool:
+        """True only when the canonical execution contract reports FAILED."""
         return self.execution_status is ExecutionStatus.FAILED
 
     @property
-    def execution_executed(self) -> bool:
+    def execution_succeeded(self) -> bool:
+        """True only when execution evidence explicitly reports EXECUTED."""
         return self.execution_status is ExecutionStatus.EXECUTED
 
     @property
-    def is_successful(self) -> bool:
-        """True only for a non-failed, complete report evidence contract."""
-        return self.status is ReportAuditStatus.COMPLETE
-
-    @property
     def has_failure(self) -> bool:
+        """True only when the report carries failed-stage evidence."""
         return self.status is ReportAuditStatus.FAILED
 
 
@@ -131,12 +129,13 @@ class ReportResult:
         return self.audit.execution_failed
 
     @property
-    def is_successful(self) -> bool:
-        return self.audit.is_successful
+    def execution_succeeded(self) -> bool:
+        """Expose execution success evidence only; this is not pipeline success."""
+        return self.audit.execution_succeeded
 
     @property
     def is_complete(self) -> bool:
-        """Structural completeness of the canonical upstream result set."""
+        """Structural completeness of the canonical upstream result set only."""
         return all((
             self.analysis is not None,
             self.profile is not None,
