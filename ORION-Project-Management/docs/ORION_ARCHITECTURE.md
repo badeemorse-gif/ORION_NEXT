@@ -1,6 +1,6 @@
 # ORION — المعمارية الرسمية
 
-الإصدار: 2.1
+الإصدار: 2.2
 الحالة: ACTIVE
 المشروع: ORION
 المستودع: badeemorse-gif/ORION_NEXT
@@ -12,7 +12,6 @@
 هذه الوثيقة هي المرجع الرسمي للمعمارية الحالية المعتمدة.
 
 تحدد:
-
 - الطبقات.
 - حدود المسؤوليات.
 - اتجاه الاعتماديات.
@@ -21,18 +20,11 @@
 - المسارات التنفيذية القانونية.
 - سياسة Legacy والازدواجية.
 
-لا تحدد المرحلة الحالية أو ترتيب المراحل؛ لذلك يرجع إلى:
-
-ORION_PROJECT_STATE.md
-ORION_ROADMAP.md
+لا تحدد المرحلة الحالية؛ لذلك يرجع إلى ORION_PROJECT_STATE.md.
 
 ==================================================
 2. المبدأ المعماري
 ==================================================
-
-ORION نظام متعدد الطبقات، وكل طبقة تمتلك مسؤولية محددة.
-
-المسار الأساسي:
 
 External Market Source
 ↓
@@ -62,8 +54,6 @@ ReportResult
 ↓
 Renderers / Exporter
 
-وتتصل واجهات التشغيل عبر:
-
 API / GUI / Scheduler
 ↓
 Application
@@ -76,22 +66,16 @@ Core / Engines
 3. قواعد الاعتماديات
 ==================================================
 
-الاعتماديات تتجه نحو العقود المستقرة.
-
-يمنع:
-
-- اعتماد Engines على Binance مباشرة.
-- اعتماد Domain على GUI أو API.
-- وضع Business Logic داخل GUI أو Router.
-- جعل Orchestrator مستودعًا لقواعد الأعمال.
-- جعل MarketDataset مخزنًا دائمًا لنتائج المراحل الأخرى.
-- إعادة إدخال Legacy path إلى المسار القانوني دون Decision.
+- Engines لا تعتمد مباشرة على Binance.
+- Domain لا يعتمد على GUI أو API.
+- Business Logic الأساسي لا يوضع في GUI أو Router.
+- Orchestrator ينسق ولا يصبح مستودعًا لقواعد الأعمال.
+- MarketDataset لا يحمل نتائج المراحل الأخرى بصورة دائمة.
+- Legacy لا يعود للمسار القانوني دون قرار معماري.
 
 ==================================================
 4. Market Data Boundary
 ==================================================
-
-المسار القانوني:
 
 External Provider
 ↓
@@ -105,29 +89,9 @@ MarketDataProvider
 ↓
 MarketDataset
 
-تفاصيل Binance تبقى محصورة في Provider Layer.
-
 ==================================================
-5. MarketDataset وTimeframe Data
+5. Result Contracts
 ==================================================
-
-MarketDataset يمثل بيانات السوق وmetadata الشرعية الخاصة بها فقط.
-
-لا يحمل بصورة دائمة:
-
-- Profile.
-- Score.
-- Decision.
-- Execution.
-- Report.
-
-البيانات الزمنية تستخدم contract موحدًا، ويظل `dataframe` هو الاسم القانوني للبيانات الجدولية حيث ينطبق ذلك.
-
-==================================================
-6. Result Contracts
-==================================================
-
-العقود الرئيسية الحالية:
 
 AnalysisResult
 ProfileResult
@@ -139,59 +103,21 @@ ReportResult
 
 كل مرحلة تنتج نتيجة مستقلة.
 
-لا يتم إخفاء نتيجة مرحلة داخل Domain Model غير مخصص لها.
-
 ==================================================
-7. Intelligence Layer
+6. Intelligence Layer
 ==================================================
 
-### Indicators
+Indicators يحسب المؤشرات.
+Analysis ينتج AnalysisResult.
+Profile ينتج ProfileResult.
+Score ينتج ScoreResult.
+Decision ينتج DecisionResult.
 
-مسؤول عن حساب المؤشرات من MarketDataset وفق contract مركزي.
-
-### Analysis
-
-MarketDataset
-↓
-AnalysisEngine
-↓
-AnalysisResult
-
-Analysis لا يملك Execution أو Reporting أو Orchestration.
-
-### Profile
-
-MarketDataset + Indicator Context
-↓
-ProfileEngine / ProfileBuilder
-↓
-ProfileResult
-
-ProfileResult يمثل Market Context مستقلًا في Core Intelligence الحالي.
-
-### Score
-
-AnalysisResult
-↓
-ScoreEngine
-↓
-ScoreResult
-
-### Decision
-
-AnalysisResult + ScoreResult + ProfileResult عندما يتطلب القرار ذلك
-↓
-DecisionEngine
-↓
-DecisionResult
-
-Decision يقرر ما يجب فعله، ولا ينفذ الصفقة بنفسه.
+Report لا يدخل في توليد intelligence.
 
 ==================================================
-8. Execution Boundary
+7. Execution Boundary
 ==================================================
-
-المسار الحالي:
 
 DecisionResult
 ↓
@@ -205,15 +131,9 @@ ExecutionResult
 
 `ExecutionPlanBuilder` هو المسؤول عن mapping بين القرار وخطة التنفيذ.
 
-Orchestrator ينسق ولا يمتلك mapping logic الخاص بـExecutionPlan.
-
-التكامل مع Broker/Exchange وRisk/Order Management المتقدم يظل ضمن مرحلة Trading Bot المستقبلية ولا يعاد هندسته مبكرًا دون حاجة.
-
 ==================================================
-9. Report Boundary — Canonical
+8. Report Boundary — Canonical
 ==================================================
-
-المسار القانوني الحالي:
 
 AnalysisResult
 +
@@ -231,40 +151,56 @@ JsonReportRenderer / HtmlReportRenderer
 ↓
 ReportExporter
 
-القواعد:
+القواعد الملزمة:
 
-- Report لا يعيد تنفيذ Analysis.
-- Report لا يغير Result Contracts.
-- Report لا يحول Execution failure إلى نجاح.
-- ReportResult هو العقد القانوني.
-- Renderers تستهلك ReportResult.
-- ReportExporter يمر عبر renderer boundary.
+- Report يستهلك evidence فقط.
+- Report لا يعيد تنفيذ Analysis/Score/Decision/Execution.
+- Report لا يغير Decision semantics.
+- `ReportResult` هو العقد القانوني.
+- Renderers تستهلك `ReportResult` فقط.
+- Exporter يكتب artifact ولا يقرر نجاح pipeline.
+- نجاح كتابة ملف report ليس نجاحًا للتشغيل.
 
-لا يوجد مسار Report بديل قانوني في main الحالية.
+العقد التفصيلي الوحيد هو:
+`ORION_EXECUTION_REPORT_CONTRACT.md`
 
-المراجع التاريخية مثل `engines.report_engine` أو `FullReport` لا تعاد إلى المسار التنفيذي إلا بعد Architecture Review وDecision صريح.
+==================================================
+9. Execution → Report Failure Semantics
+==================================================
+
+ExecutionStatus.FAILED
+↓
+Failure Evidence Report مسموح
+↓
+Report.audit.status = FAILED
+↓
+Pipeline.success = False
+
+يجب أن يحتفظ التقرير بـExecutionResult وبالأدلة التالية عند توافرها:
+
+- execution_status
+- execution_message
+- order_id
+- failure_stage
+- failure_message
+- stage_trace
+
+لا يجوز لأي renderer/exporter/API تحويل `FAILED` إلى success semantics.
+
+`COMPLETE` و`INCOMPLETE` و`FAILED` هي الحالات الرسمية لـ`Report.audit.status`.
 
 ==================================================
 10. Orchestrator وPipeline
 ==================================================
 
-### Orchestrator
+Orchestrator ينسق الخطوات ويحتفظ بالـresults الرسمية.
+Pipeline يمثل Application Flow.
 
-مسؤول عن التنسيق عالي المستوى بين النتائج والخطوات.
-
-لا يملك قواعد الأعمال الخاصة بـAnalysis أو Score أو Decision أو Report.
-
-### Pipeline
-
-يمثل Application Flow ويجمع المكونات القانونية في Use Case متكامل.
-
-لا يعيد تنفيذ منطق Engines.
+Pipeline مسؤول عن إبقاء `Pipeline.success=False` عند failure، مع السماح بتوليد Failure Evidence Report عندما توجد النتيجة اللازمة لبنائه.
 
 ==================================================
 11. Application / Bootstrap
 ==================================================
-
-Bootstrap:
 
 Bootstrap
 ↓
@@ -272,49 +208,20 @@ Dependency Container
 ↓
 Application
 
-مسؤوليته إنشاء وربط المكونات القانونية فقط.
-
-Application:
-
-API / GUI / Scheduler
-↓
-Application
-↓
-Pipeline / Orchestrator
-
-Application ينسق حالات الاستخدام ودورة الحياة ولا يعتمد على UI implementation details.
+Application ينسق حالات الاستخدام ولا يعتمد على UI implementation details.
 
 ==================================================
 12. API / GUI / Scheduler
 ==================================================
 
-### API
-
-Router
-↓
-Service
-↓
-Application
-
-API boundary ولا تحتوي Business Logic الأساسي.
-
-### GUI
-
-GUI
-↓
-Application
-
-GUI طبقة عرض وتحكم فقط، وتبقى downstream من Core Intelligence.
-
-### Scheduler
-
-Scheduler
-↓
-Application
-↓
-Pipeline
-
+API boundary لا تحتوي Business Logic الأساسي.
+GUI downstream من Core Intelligence.
 Scheduler مسؤول عن WHEN وليس عن كيفية عمل Analysis.
+
+عند `export_report` تعكس API حالة التقرير:
+`COMPLETE → success=True`
+`INCOMPLETE → success=False`
+`FAILED → success=False`
 
 ==================================================
 13. Repository / Storage
@@ -326,69 +233,28 @@ MarketRepository
 ↓
 Storage
 
-SQLite أو أي تنفيذ تخزين آخر يبقى خلف Repository/Storage boundary.
-
-لا تتسرب تفاصيل التخزين إلى Business Logic.
-
 ==================================================
 14. Legacy Policy
 ==================================================
 
-يصبح المكون Legacy عندما:
-
-1. يوجد بديل canonical.
-2. تم ترحيل المستهلكين الفعليين.
-3. نجحت الاختبارات.
-4. نجح التكامل.
-5. لا توجد dependency تشغيلية فعالة عليه.
-
-لا يحذف Legacy بالحدس.
-
-لكن لا يسمح بإعادة استخدامه كمسار قانوني جديد دون قرار معماري.
+يصبح المكون Legacy عندما يوجد بديل canonical وتم ترحيل المستهلكين ونجحت الاختبارات والتكامل ولا توجد dependency تشغيلية عليه.
 
 ==================================================
-15. حالة الازدواجيات المعروفة
+15. Verification Boundary
 ==================================================
 
-تم حسم Report Architecture في Phase 1.
-
-المسار القانوني هو:
-
-models.report.ReportResult
-↓
-reports renderers
-↓
-reports.report_exporter.ReportExporter
-
-أي ملفات أو مسارات تاريخية خارج ذلك المسار تعتبر Legacy references ما لم تثبت الحاجة إليها بقرار جديد.
-
-أما `app/` و`application/` أو أي تعدد آخر فيظل مقبولًا فقط عندما تكون المسؤوليات مختلفة فعلًا، وليس لمجرد وجود اسمين متشابهين.
-
-==================================================
-16. Verification Boundary
-==================================================
-
-المعمارية لا تعتبر صحيحة لمجرد وجود Classes.
-
-يجب أن تثبتها:
-
+يجب أن تثبت المعمارية عبر:
 - Contract Tests.
 - Integration Tests.
 - E2E Tests عند وجود أثر تكاملي.
 - Full Verification عند بوابة المرحلة.
 
-المرجع الحالي للحالة والـVerification:
-ORION_PROJECT_STATE.md
-
 ==================================================
-17. قاعدة التطوير الحالية
+16. قاعدة التطوير الحالية
 ==================================================
 
 Phase 1 مكتملة.
-
-Phase 2 تعمل فوق هذه المعمارية.
-
-لا يعاد فتح عقد أو boundary مثبتة إلا بسبب معماري أو متطلب جديد مثبت بالأدلة.
+Phase 2 تعمل فوق العقود والحدود المثبتة.
 
 ==================================================
 END
