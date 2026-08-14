@@ -12,18 +12,16 @@
 
 **PACKAGE-SCOPE CENTRAL INTEGRATION ASSEMBLED**
 
-The integration branch is built from the current main baseline plus only approved package-scope files. Branch histories were not merged. Shared `binansScanner/core/orchestrator.py` is CORE-authoritative because Core owns the runtime intelligence gates and produces the canonical `ExecutionPlan` consumed by Execution.
+The branch is built from current main plus only approved Core, Execution, and Opportunity files. No branch history was merged. Shared `binansScanner/core/orchestrator.py` remains CORE-authoritative.
 
-Opportunity confidence uses only the requested `ProfileResult.TimeframeProfile.confidence`; `AnalysisResult.strength` is not used as Opportunity confidence and no `min()` aggregation is introduced.
+Opportunity confidence is sourced only from the requested `ProfileResult.TimeframeProfile.confidence`; `AnalysisResult.strength` is not substituted or aggregated.
 
-Explicitly excluded: Sync/Restore, MAIN/ALL, backups, generated artifacts, unrelated GUI/tooling, ancestry collateral, and cross-package pipeline tests.
+Explicit exclusions: Sync/Restore, MAIN/ALL, backups, generated artifacts, unrelated GUI/tooling, ancestry collateral, and cross-package pipeline tests.
 
 ## Published integration HEAD
 
-FINAL HEAD: `b7e7b5c56ed572d786fea462c68587b3f326c25b`
+FINAL HEAD: `c5c9593c099f166aa0e5f143670eaf79aa50553a`
 
-The GitHub branch ref was checked directly after the final manifest commit and points to this exact commit.
+This ref is the exact GitHub branch HEAD after the package tree and manifest closure commits.
 
-## Acceptance note
-
-Local verification is intentionally outside this executor's scope. Central acceptance may now inspect the final integrated tree against the manifest.
+Local verification is outside this executor's scope.
