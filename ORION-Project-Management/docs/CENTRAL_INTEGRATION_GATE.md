@@ -20,8 +20,8 @@ Explicit exclusions: Sync/Restore, MAIN/ALL, backups, generated artifacts, unrel
 
 ## Published integration HEAD
 
-FINAL HEAD: `c5c9593c099f166aa0e5f143670eaf79aa50553a`
+FINAL HEAD: `1e4a119bf905d97a3f881b586efe6b83989ff280`
 
-This ref is the exact GitHub branch HEAD after the package tree and manifest closure commits.
+The final manifest and gate are documentation-only closures after the package-scope correction; the branch ref must point to this exact final commit.
 
 Local verification is outside this executor's scope.
