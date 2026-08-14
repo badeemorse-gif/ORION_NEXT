@@ -6,7 +6,7 @@
 - Integration branch: `integration/final-current-20260814`
 - Core package: `phase2/core-intelligence-hardening` @ `3b37ad94d3440463f4e440c7e46ca0380d7ce900`
 - Execution package: `ops/execution-fail-closed` @ `1ae3cca91f7b58e221e7e005f7949aceb1e96b02`
-- Opportunity package: `future/opportunity-intelligence-complete` @ `4975292572a8446a178a5d1afe708792082767a1`
+- Opportunity package: `future/opportunity-intelligence-complete` @ `4975292572a8446a1786a5d1afe708792082767a1`
 
 ## Current Status
 
@@ -18,7 +18,10 @@ Explicitly excluded: Sync/Restore, MAIN/ALL, backups, generated artifacts, unrel
 
 No merge, rebase, cherry-pick, reset, or force-push was used. Local ORION_NEXT and ORION_NEXT_ALL_BRANCHES were not used.
 
-Package-scope integration commit: `894a14b085599d5a2fe3e9454320f70200d90044`
-Final documentation commit: `c489a784f0622a22ae02c61b01e050fd6a2077be`
+## Published integration HEAD
+
+The package-integrated branch state immediately before this documentation-closure commit was `ef211b66f0c17e200d164e6ccef4933fac92a020`. This documentation closure is the final commit published on the integration branch.
+
+Package-scope integration commit: `b051b6cd8a27dd75585a4dba1401d589e213647f`
 
 Full verification remains a central acceptance-gate responsibility; this integration executor does not claim local verification.
