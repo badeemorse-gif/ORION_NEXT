@@ -8,6 +8,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import Mock
 
+from models.execution import ExecutionResult, ExecutionStatus
 from models.report import ReportResult
 from reports.html_report import HtmlReportRenderer
 from reports.json_report import JsonReportRenderer
@@ -44,6 +45,26 @@ class TestReportResultContract(unittest.TestCase):
             decision=Mock(),
         )
         self.assertTrue(report.is_complete)
+
+    def test_failure_evidence_report_retains_failed_execution_and_never_implies_success(self) -> None:
+        execution = ExecutionResult(
+            status=ExecutionStatus.FAILED,
+            message="execution failed",
+        )
+        report = ReportResult(
+            symbol="BTCUSDT",
+            execution=execution,
+            warnings=("execution failed; evidence only",),
+        )
+
+        self.assertIs(report.execution, execution)
+        self.assertEqual(report.execution.status, ExecutionStatus.FAILED)
+        self.assertFalse(report.execution.executed)
+        self.assertTrue(report.has_warnings)
+        self.assertFalse(
+            report.execution.status is ExecutionStatus.EXECUTED,
+            "ReportResult existence must never imply successful execution.",
+        )
 
     def test_report_result_metadata_is_canonical(self) -> None:
         report = ReportResult(symbol="BTCUSDT", summary=("canonical report",))
