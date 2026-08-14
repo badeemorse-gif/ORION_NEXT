@@ -3,7 +3,7 @@
 ## Integration identity
 - Base: `main` @ `9a02e4a94ea1fd3b63ecf17209211735ed554c83`
 - Integration branch: `integration/final-current-20260814`
-- FINAL HEAD: `855dec3ef56e63bbaa02135638a0c84be7609b62`
+- Package content commit: `c63aa34bf946b1120f31f6932ea9445aca877bd3`
 
 ## Approved package sources
 - CORE: `phase2/core-intelligence-hardening` @ `3b37ad94d3440463f4e440c7e46ca0380d7ce900`
@@ -28,7 +28,7 @@
 - `binansScanner/tests/test_opportunity_integration_fixes.py`
 
 ## Core and Execution integration
-Core, Execution, and their approved tests/docs remain integrated as previously established. Shared `binansScanner/core/orchestrator.py` remains CORE-authoritative.
+Core, Execution, and approved tests/docs remain integrated as previously established. Shared `binansScanner/core/orchestrator.py` remains CORE-authoritative.
 
 ## Explicit exclusions
 - Sync/Restore tooling and protocol changes.
@@ -39,7 +39,7 @@ Core, Execution, and their approved tests/docs remain integrated as previously e
 - Any Opportunity source collateral outside the files listed above.
 
 ## Truth rule
-Every file named in this manifest must exist in the integration Git tree. No file outside approved package scope is admitted by this manifest.
+Every file named in this manifest is required to exist in the final integration Git tree. No file outside approved package scope is admitted by this manifest.
 
 ## Opportunity confidence
 `Opportunity.confidence` is sourced only from the requested `ProfileResult.TimeframeProfile.confidence`. `AnalysisResult.strength` is not substituted or aggregated.
