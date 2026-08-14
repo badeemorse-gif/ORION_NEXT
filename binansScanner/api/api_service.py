@@ -8,7 +8,7 @@ from typing import Any, Optional
 
 from api.api_models import ApiRequest, ApiResponse
 from core.pipeline import Pipeline
-from models.report import ReportAuditStatus, ReportResult
+from models.report import ReportResult
 from reports.html_report import HtmlReportRenderer
 from reports.json_report import JsonReportRenderer
 from reports.report_exporter import ReportExporter, ReportFormat
@@ -120,7 +120,7 @@ class ApiService:
             raise ApiServiceError(f"Failed to run pipeline: {err}") from err
 
     def export_report(self, request: ApiRequest) -> ApiResponse:
-        """Export a report while preserving audit status as the API success semantic."""
+        """Export a ReportResult; response success means export I/O only, never pipeline success."""
         if not isinstance(request, ApiRequest):
             raise ApiServiceError("export_report requires an ApiRequest.")
         payload = request.payload
@@ -140,24 +140,20 @@ class ApiService:
                 raise ApiServiceError("export_report requires payload['format'] to be 'html' or 'json'.") from err
         try:
             exported_path = self._report_exporter.export(report=report, output_path=Path(output_path), report_format=selected_format)
-            status = report.audit.status
-            response_success = status is ReportAuditStatus.COMPLETE
-            if status is ReportAuditStatus.FAILED:
-                message = "Failure evidence report exported; audit status is FAILED."
-            elif status is ReportAuditStatus.INCOMPLETE:
-                message = "Report exported; audit status is INCOMPLETE."
-            else:
-                message = "Report exported successfully."
+            status = report.audit.status.value
+            execution_status = report.audit.execution_status.value if report.audit.execution_status is not None else None
             return ApiResponse(
-                success=response_success,
-                message=message,
+                success=True,
+                message="Report exported; export success does not imply pipeline success.",
                 payload={
                     "request_id": request.request_id,
                     "endpoint": request.endpoint,
                     "format": selected_format.value,
                     "output_path": str(exported_path),
-                    "audit_status": status.value,
-                    "execution_status": report.audit.execution_status.value if report.audit.execution_status is not None else None,
+                    "export_success": True,
+                    "pipeline_success": None,
+                    "audit_status": status,
+                    "execution_status": execution_status,
                     "failure_stage": report.audit.failure_stage,
                     "failure_message": report.audit.failure_message,
                 },
