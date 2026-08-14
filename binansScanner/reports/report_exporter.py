@@ -6,7 +6,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, Optional
 
-from models.report import ReportResult
+from models.report import ReportAuditStatus, ReportResult
 from reports.html_report import HtmlReportRenderer
 from reports.json_report import JsonReportRenderer
 
@@ -30,7 +30,7 @@ class LoggerAdapter(logging.LoggerAdapter):
 
 
 class ReportExporter:
-    """Write canonical reports without translating audit status into transport success."""
+    """Write canonical reports without translating audit status into pipeline success."""
 
     def __init__(
         self,
@@ -62,8 +62,8 @@ class ReportExporter:
             else:
                 raise ReportExporterError(f"Unsupported report format: {report_format}")
             output_path.write_text(content, encoding="utf-8")
-            if report.is_successful:
-                logger.info("Report artifact written; audit_status=COMPLETE path='%s'", output_path)
+            if report.audit.status is ReportAuditStatus.COMPLETE:
+                logger.info("Report artifact written; audit_status=COMPLETE (structural evidence only) path='%s'", output_path)
             else:
                 logger.warning("Report evidence artifact written; audit_status=%s path='%s'", audit_status, output_path)
             return output_path
