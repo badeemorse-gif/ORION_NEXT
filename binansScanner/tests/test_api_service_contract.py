@@ -5,8 +5,13 @@ from types import SimpleNamespace
 
 from api.api_models import ApiRequest
 from api.api_service import ApiService, ApiServiceError
+from engines.report_engine import ReportEngine
+from models.analysis import AnalysisResult
+from models.decision import DecisionResult
 from models.execution import ExecutionResult, ExecutionStatus
+from models.profile import MarketCharacteristics, ProfileResult, ProfileStatistics
 from models.report import ReportAudit, ReportAuditStatus, ReportResult
+from models.score import ScoreResult
 from reports.report_exporter import ReportFormat
 
 
@@ -48,6 +53,17 @@ class _FakePipeline:
 
 
 class TestApiServiceContract(unittest.TestCase):
+    @staticmethod
+    def _complete_report() -> ReportResult:
+        return ReportEngine().build_report(
+            symbol="BTCUSDT",
+            analysis=AnalysisResult(),
+            profile=ProfileResult(symbol="BTCUSDT", market=MarketCharacteristics(), statistics=ProfileStatistics()),
+            score=ScoreResult(),
+            decision=DecisionResult(decision="WAIT"),
+            execution=ExecutionResult(status=ExecutionStatus.SKIPPED, message="hold"),
+        )
+
     def test_health_returns_canonical_response(self):
         response = ApiService(scheduler=_FakeScheduler(), report_exporter=_FakeExporter()).health()
         self.assertTrue(response.success)
@@ -68,7 +84,7 @@ class TestApiServiceContract(unittest.TestCase):
 
     def test_export_complete_report_is_api_success(self):
         exporter = _FakeExporter()
-        report = ReportResult(symbol="BTCUSDT", audit=ReportAudit(status=ReportAuditStatus.COMPLETE))
+        report = self._complete_report()
         service = ApiService(scheduler=_FakeScheduler(), report_exporter=exporter)
         with tempfile.TemporaryDirectory() as tmp:
             target = Path(tmp) / "report.json"
