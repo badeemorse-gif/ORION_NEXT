@@ -3,14 +3,11 @@
 Badee Binance Scanner
 Architecture : ORION
 Module       : data_quality.py
-Version      : 1.0.1
+Version      : 1.0.2
 Status       : ORION Market Data Quality Contract
 ===============================================================================
 
 Dataset-level integrity validation.
-
-This module owns structural market-data quality only. It deliberately does not
-interpret indicators, profiles, scores, decisions, opportunities, or execution.
 ===============================================================================
 """
 
@@ -117,10 +114,12 @@ class MarketDatasetQualityValidator:
 
         if missing_required:
             status = DataQualityStatus.MISSING
-        elif any(issue.startswith("stale timeframe:") for issue in issues):
-            status = DataQualityStatus.STALE
-        elif issues:
+        elif issues and not all(
+            issue.startswith("stale timeframe:") for issue in issues
+        ):
             status = DataQualityStatus.INVALID
+        elif issues:
+            status = DataQualityStatus.STALE
         else:
             status = DataQualityStatus.VALID
 
