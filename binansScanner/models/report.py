@@ -1,13 +1,4 @@
-"""
-===============================================================================
-ORION
-Module : models.report
-Version: 2.1.0
-
-Canonical Report domain contract with auditability metadata.
-===============================================================================
-"""
-
+"""Canonical Report domain contract with explicit auditability semantics."""
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -31,15 +22,11 @@ class ReportMetadata:
     execution_time_ms: float = 0.0
 
     def __post_init__(self) -> None:
-        object.__setattr__(
-            self,
-            "execution_time_ms",
-            max(float(self.execution_time_ms), 0.0),
-        )
+        object.__setattr__(self, "execution_time_ms", max(float(self.execution_time_ms), 0.0))
 
 
 class ReportAuditStatus(str, Enum):
-    """Operational state of the evidence carried by a report."""
+    """Official status of the evidence carried by a report."""
 
     COMPLETE = "COMPLETE"
     INCOMPLETE = "INCOMPLETE"
@@ -48,13 +35,7 @@ class ReportAuditStatus(str, Enum):
 
 @dataclass(slots=True, frozen=True)
 class ReportAudit:
-    """
-    Evidence-only audit record for a ReportResult.
-
-    This contract records facts supplied by upstream result contracts and the
-    application pipeline. It does not calculate intelligence or decision
-    semantics.
-    """
+    """Evidence-only audit contract; it never creates intelligence or decisions."""
 
     status: ReportAuditStatus = ReportAuditStatus.INCOMPLETE
     stage_trace: tuple[str, ...] = ()
@@ -66,35 +47,43 @@ class ReportAudit:
     failure_stage: Optional[str] = None
     failure_message: Optional[str] = None
 
+    def __post_init__(self) -> None:
+        if not isinstance(self.status, ReportAuditStatus):
+            object.__setattr__(self, "status", ReportAuditStatus(str(self.status).strip().upper()))
+        if self.execution_status is not None and not isinstance(self.execution_status, ExecutionStatus):
+            object.__setattr__(self, "execution_status", ExecutionStatus(str(self.execution_status).strip().upper()))
+        if self.status is ReportAuditStatus.FAILED:
+            if self.execution_status is not ExecutionStatus.FAILED and not self.failure_stage and not self.failure_message:
+                raise ValueError("FAILED audit status requires failure evidence.")
+        elif self.execution_status is ExecutionStatus.FAILED:
+            raise ValueError("ExecutionStatus.FAILED requires ReportAuditStatus.FAILED.")
+        elif self.status is ReportAuditStatus.COMPLETE and (self.failure_stage or self.failure_message):
+            raise ValueError("COMPLETE audit status cannot contain failure evidence.")
+
     @property
     def execution_failed(self) -> bool:
-        """Return True only when the canonical execution result is FAILED."""
         return self.execution_status is ExecutionStatus.FAILED
 
     @property
     def execution_executed(self) -> bool:
-        """Return True only when the canonical execution result is EXECUTED."""
         return self.execution_status is ExecutionStatus.EXECUTED
 
     @property
+    def is_successful(self) -> bool:
+        """True only for a non-failed, complete report evidence contract."""
+        return self.status is ReportAuditStatus.COMPLETE
+
+    @property
     def has_failure(self) -> bool:
-        """Return True when either execution or an upstream stage failed."""
-        return self.execution_failed or self.failure_stage is not None
+        return self.status is ReportAuditStatus.FAILED
 
 
 @dataclass(slots=True, frozen=True)
 class ReportResult:
-    """
-    Canonical output of ReportBuilder / ReportEngine.
-
-    ReportResult aggregates canonical results from preceding pipeline stages.
-    It contains audit evidence but never generates business intelligence.
-    """
+    """Canonical report result aggregating upstream evidence without generating intelligence."""
 
     symbol: str
-    generated_at: datetime = field(
-        default_factory=lambda: datetime.now(timezone.utc)
-    )
+    generated_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     analysis: Optional[AnalysisResult] = None
     profile: Optional[ProfileResult] = None
     score: Optional[ScoreResult] = None
@@ -132,12 +121,16 @@ class ReportResult:
 
     @property
     def execution_failed(self) -> bool:
-        """Expose the canonical execution failure state without inference."""
         return self.audit.execution_failed
 
     @property
+    def is_successful(self) -> bool:
+        """Expose reporting success semantics without changing Pipeline.success."""
+        return self.audit.is_successful
+
+    @property
     def is_complete(self) -> bool:
-        """Return True when all canonical upstream result contracts exist."""
+        """Structural completeness of the canonical upstream result set."""
         return all(
             (
                 self.analysis is not None,
@@ -149,9 +142,4 @@ class ReportResult:
         )
 
 
-__all__ = [
-    "ReportAuditStatus",
-    "ReportAudit",
-    "ReportMetadata",
-    "ReportResult",
-]
+__all__ = ["ReportAuditStatus", "ReportAudit", "ReportMetadata", "ReportResult"]
