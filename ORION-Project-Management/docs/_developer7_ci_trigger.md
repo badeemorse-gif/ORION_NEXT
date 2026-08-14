@@ -1,0 +1,1 @@
+Developer 7 verification trigger used by the repository's existing pull_request workflow.
