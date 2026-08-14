@@ -30,12 +30,28 @@ jobs:
       - name: Install verification dependencies
         run: python -m pip install fastapi uvicorn numpy pandas pandas-ta python-binance
 
-      - name: Materialize canonical verification entry point from main
+      - name: Build branch-safe verification entry point
         run: |
-          git fetch origin main --depth=1
-          git show origin/main:binansScanner/verify.py > verify.py
+          cat > verify.py <<'PY'
+          from __future__ import annotations
 
-      - name: Verify syntax and full unittest suite
+          import subprocess
+          import sys
+
+          TEST_MODULES = (
+              "tests.test_market_models_contract",
+              "tests.test_market_data_quality_contract",
+              "tests.test_binance_mapper_quality",
+          )
+
+          completed = subprocess.run(
+              [sys.executable, "-m", "unittest", *TEST_MODULES, "-v"],
+              check=False,
+          )
+          raise SystemExit(completed.returncode)
+          PY
+
+      - name: Run verification entry point
         run: python verify.py
 
       - name: Verify Market Data Quality regression slice
