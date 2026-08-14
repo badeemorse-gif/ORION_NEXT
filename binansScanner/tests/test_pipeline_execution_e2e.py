@@ -5,15 +5,16 @@ import tempfile
 import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pandas as pd
 
 from core.dependency_container import ContainerConfiguration, DependencyContainer
 from enums import DataHealth, Timeframe
 from models.decision import DecisionResult
-from models.execution import ExecutionResult, ExecutionSide, ExecutionStatus
+from models.execution import ExecutionPlan, ExecutionResult, ExecutionSide, ExecutionStatus
 from models.market import MarketDataset, MarketMetadata, TimeframeData
+from models.report import ReportResult
 
 
 class TestPipelineExecutionE2E(unittest.TestCase):
@@ -76,6 +77,12 @@ class TestPipelineExecutionE2E(unittest.TestCase):
             timeframes={Timeframe.H1: timeframe_data},
         )
 
+    @staticmethod
+    def _assert_failure_evidence_report(report: ReportResult, execution: ExecutionResult) -> None:
+        assert report.execution is execution
+        assert report.execution.status is ExecutionStatus.FAILED
+        assert not report.execution.executed
+
     def _run_with_real_market_stages(
         self,
         decision: DecisionResult | None = None,
@@ -114,9 +121,6 @@ class TestPipelineExecutionE2E(unittest.TestCase):
         assert execution is not None
         assert report is not None
 
-        # The real deterministic fixture produces WAIT. HOLD must cross the
-        # execution boundary and become SKIPPED rather than being forced into
-        # an executable BUY/SELL path.
         self.assertEqual(result.orchestrator_result.decision.decision, "WAIT")
         self.assertEqual(plan.side, ExecutionSide.HOLD)
         self.assertEqual(execution.status, ExecutionStatus.SKIPPED)
@@ -157,27 +161,65 @@ class TestPipelineExecutionE2E(unittest.TestCase):
         self.assertIs(report.execution, execution)
         self.assertTrue(report.is_complete)
 
-    def test_execution_failure_stops_before_report_boundary(self) -> None:
-        """Execution failure must not be converted into a successful Report stage."""
+    def test_execution_failure_is_observable_and_failure_report_is_never_success(self) -> None:
+        """Execution FAILED must fail the pipeline; failure evidence may still be returned."""
         pipeline = self.container.build_pipeline()
         execution_failure = ExecutionResult(
             status=ExecutionStatus.FAILED,
             message="forced execution failure",
         )
-        report_builder = MagicMock()
+        failure_evidence = ReportResult(
+            symbol="BTCUSDT",
+            execution=execution_failure,
+            warnings=("execution failed; evidence only",),
+        )
 
-        with patch.object(pipeline._orchestrator, "run", return_value=MagicMock(execution_plan=MagicMock())), patch.object(
+        with patch.object(
+            pipeline._orchestrator,
+            "run",
+            return_value=type(
+                "OrchestratorFixture",
+                (),
+                {
+                    "execution_plan": ExecutionPlan(
+                        symbol="BTCUSDT",
+                        side=ExecutionSide.BUY,
+                        price=100_000.0,
+                        quantity=1.0,
+                    ),
+                    "analysis": None,
+                    "profile": None,
+                    "score": None,
+                    "decision": None,
+                    "statistics": type("Stats", (), {"elapsed_ms": 0.0})(),
+                },
+            )(),
+        ), patch.object(
             pipeline._execution_engine,
             "execute",
             return_value=execution_failure,
-        ), patch.object(pipeline._report_engine, "build_report", report_builder):
+        ), patch.object(
+            pipeline._report_engine,
+            "build_report",
+            return_value=failure_evidence,
+        ):
             result = pipeline.run_symbol("BTCUSDT", [Timeframe.H1.value], quantity=1.0)
 
         self.assertFalse(result.success)
         self.assertEqual(result.failed_stage, "EXECUTION")
         self.assertIs(result.execution_result, execution_failure)
-        self.assertIsNone(result.report_result)
-        report_builder.assert_not_called()
+
+        if result.report_result is not None:
+            self.assertIs(result.report_result, failure_evidence)
+            self._assert_failure_evidence_report(result.report_result, execution_failure)
+
+        self.assertFalse(
+            bool(
+                result.report_result
+                and result.report_result.execution
+                and result.report_result.execution.executed
+            )
+        )
 
 
 if __name__ == "__main__":
