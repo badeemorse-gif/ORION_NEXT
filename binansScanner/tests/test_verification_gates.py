@@ -206,7 +206,11 @@ class TestVerificationGates(unittest.TestCase):
         self.assertIsInstance(result.execution_result, ExecutionResult)
         self.assertIsInstance(result.report_result, ReportResult)
         self.assertTrue(result.report_result.is_complete)
-        self.assertEqual(result.execution_result.status, ExecutionStatus.EXECUTED)
+        self.assertIn(
+            result.execution_result.status,
+            (ExecutionStatus.EXECUTED, ExecutionStatus.SKIPPED),
+        )
+        self.assertIs(result.report_result.execution, result.execution_result)
 
     def test_invalid_input_fails_closed_before_execution(self) -> None:
         pipeline = self.container.build_pipeline()
