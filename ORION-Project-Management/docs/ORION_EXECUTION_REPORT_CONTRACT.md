@@ -1,6 +1,6 @@
 # ORION — Execution → Report Contract
 
-الإصدار: 1.0
+الإصدار: 1.1
 الحالة: ACTIVE
 المالك: Reporting / Auditability
 
@@ -8,11 +8,53 @@
 
 هذه الوثيقة تثبت العقد الرسمي والوحيد للعلاقة بين `ExecutionResult` و`ReportResult`.
 
+يوجد فصل إلزامي بين ثلاث دلالات مستقلة:
+
+```text
+STRUCTURAL COMPLETENESS
+≠
+EXECUTION SUCCESS
+≠
+PIPELINE SUCCESS
+```
+
 Report يستهلك evidence صادرًا من الطبقات السابقة ولا ينشئ intelligence جديدة، ولا يغيّر Decision semantics.
 
-## الحالات الرسمية
+## الدلالات الرسمية
 
-`Report.audit.status` له ثلاث حالات فقط:
+### Structural Completeness — `ReportResult.is_complete`
+
+`is_complete` يجيب سؤالًا واحدًا فقط:
+
+> هل توجد كل النتائج canonical upstream المطلوبة لبنية التقرير؟
+
+لا يجيب هذا property عن نجاح التنفيذ أو نجاح الـpipeline.
+
+### Report Audit Status — `ReportAuditStatus`
+
+`COMPLETE` تعني أن عقد الـevidence مكتمل ولا توجد failure evidence، مع وجود `execution_status`.
+
+`INCOMPLETE` تعني أن البنية المطلوبة لم تكتمل ولا توجد failure evidence مثبتة.
+
+`FAILED` تعني وجود failure evidence في التنفيذ أو مرحلة upstream.
+
+### Execution Success Evidence — `ReportAudit.execution_succeeded`
+
+هذه الخاصية تعني شيئًا واحدًا فقط:
+
+`execution_status == ExecutionStatus.EXECUTED`
+
+وهي **execution evidence** وليست pipeline success.
+
+`ExecutionStatus.SKIPPED` قد ينتج تقريرًا `COMPLETE` لكنه لا يثبت execution success.
+
+### Pipeline Success
+
+نجاح الـpipeline مملوك لـ`PipelineItemResult.success`، وليس لـ`ReportResult` أو `ReportAudit`.
+
+لا توجد خاصية في Report باسم `is_successful` لأن الاسم يوحي بدلالة تشغيلية غير مملوكة للتقرير.
+
+## الحالات الرسمية
 
 ### COMPLETE
 
@@ -20,15 +62,27 @@ Report يستهلك evidence صادرًا من الطبقات السابقة و�
 
 `ExecutionStatus.EXECUTED` و`ExecutionStatus.SKIPPED` يمكن أن ينتجا تقريرًا `COMPLETE`.
 
-`COMPLETE` هو اكتمال عقد التقرير، وليس ترخيصًا لإعادة تفسير قرار التداول.
+لذلك:
+
+```text
+Report COMPLETE
+does NOT imply
+Execution SUCCESS
+```
+
+وبالأخص:
+
+```text
+COMPLETE + SKIPPED
+→ structurally complete
+→ execution_succeeded = False
+```
 
 ### INCOMPLETE
 
 لم تكتمل مجموعة النتائج المطلوبة للتقرير، ولا توجد failure evidence مثبتة.
 
-مثال: `execution_status = None` مع غياب `ExecutionResult`.
-
-`INCOMPLETE` لا يساوي نجاح pipeline.
+`INCOMPLETE` لا يساوي نجاح pipeline ولا نجاح execution.
 
 ### FAILED
 
@@ -81,17 +135,30 @@ Report يستهلك evidence صادرًا من الطبقات السابقة و�
 ## API / Renderer / Exporter
 
 - `ReportEngine.build_report()` يشتق `ReportAuditStatus` من الأدلة الموجودة فقط.
-- `ReportEngine.export_dict()` و`export_json()` يحافظان على `audit` و`execution_status` وfailure fields دون إنشاء `success` بديل.
+- `ReportEngine.export_dict()` و`export_json()` يحافظان على `audit` و`execution_status` وfailure fields دون إنشاء `success` أو `pipeline_success` بديل.
 - JSON وHTML renderers يستهلكان `ReportResult` فقط ويعرضان audit evidence.
-- `ReportExporter` قد يكتب Failure Evidence Report، لكن نجاح عملية الكتابة لا يساوي نجاح التقرير.
-- `ApiService.export_report()` يعيد `success=False` عندما يكون `Report.audit.status = FAILED` أو `INCOMPLETE` حتى لو نجحت كتابة الملف.
+- `ReportExporter` قد يكتب Failure Evidence Report، لكن نجاح عملية الكتابة لا يساوي نجاح التقرير ولا نجاح الـpipeline.
+- `ApiService.export_report()` يستخدم `ApiResponse.success` فقط لنجاح عملية export I/O. ويضع `export_success=True` و`pipeline_success=None` في payload حتى لا تختلط دلالة التصدير بدلالة الـpipeline.
+
+مثال إلزامي:
+
+```text
+FAILED Report
++ successful file write
+→ export_success = True
+→ pipeline_success = None
+→ audit_status = FAILED
+```
 
 ## الممنوع
 
 لا يجوز لأي Report component:
 
+- استخدام `ReportAuditStatus.COMPLETE` كمرادف لنجاح execution.
+- استخدام `ReportResult.is_complete` كمرادف لنجاح pipeline.
 - تحويل `FAILED` إلى `SUCCESS`.
 - إسقاط `ExecutionResult` الفاشل من التقرير.
+- إنشاء `is_successful` أو أي alias عام يخلط structural completeness مع operational success.
 - استنتاج intelligence جديدة.
 - إعادة حساب Decision أو تغيير semantics الخاصة به.
 - اعتبار نجاح export I/O مساويًا لنجاح pipeline.
