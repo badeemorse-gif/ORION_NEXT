@@ -11,6 +11,7 @@ from models.analysis import AnalysisResult
 from models.decision import DecisionResult
 from models.execution import ExecutionResult, ExecutionStatus
 from models.profile import MarketCharacteristics, ProfileResult, ProfileStatistics
+from models.report import ReportAuditStatus
 from models.score import ScoreResult
 from reports.html_report import HtmlReportRenderer
 from reports.json_report import JsonReportRenderer
@@ -38,7 +39,7 @@ class TestReportAuditability(unittest.TestCase):
             stage_trace=("ORCHESTRATION", "EXECUTION", "REPORT"),
         )
         self.assertTrue(report.is_complete)
-        self.assertEqual(report.audit.status, report.audit.status.COMPLETE)
+        self.assertEqual(report.audit.status, ReportAuditStatus.COMPLETE)
         self.assertFalse(report.execution_succeeded)
         self.assertEqual(report.audit.execution_status, ExecutionStatus.SKIPPED)
 
@@ -64,7 +65,7 @@ class TestReportAuditability(unittest.TestCase):
             stage_trace=("ORCHESTRATION", "EXECUTION", "REPORT"),
             failure_stage="EXECUTION",
         )
-        self.assertEqual(report.audit.status.value, "FAILED")
+        self.assertEqual(report.audit.status, ReportAuditStatus.FAILED)
         self.assertFalse(report.execution_succeeded)
         self.assertTrue(report.execution_failed)
         self.assertEqual(report.audit.execution_status, ExecutionStatus.FAILED)
@@ -79,7 +80,7 @@ class TestReportAuditability(unittest.TestCase):
             failure_stage="ORCHESTRATION",
             failure_message="provider validation failed",
         )
-        self.assertEqual(report.audit.status.value, "FAILED")
+        self.assertEqual(report.audit.status, ReportAuditStatus.FAILED)
         self.assertIsNone(report.audit.execution_status)
         self.assertEqual(report.audit.failure_stage, "ORCHESTRATION")
         self.assertEqual(report.audit.failure_message, "provider validation failed")
@@ -90,7 +91,7 @@ class TestReportAuditability(unittest.TestCase):
         report = self.engine.build_report(
             symbol="BTCUSDT", analysis=analysis, profile=profile, score=score, decision=decision, execution=None,
         )
-        self.assertEqual(report.audit.status.value, "INCOMPLETE")
+        self.assertEqual(report.audit.status, ReportAuditStatus.INCOMPLETE)
         self.assertFalse(report.is_complete)
         self.assertFalse(report.execution_succeeded)
         self.assertFalse(report.execution_failed)
