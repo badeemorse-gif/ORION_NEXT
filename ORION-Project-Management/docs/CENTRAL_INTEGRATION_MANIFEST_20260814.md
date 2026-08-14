@@ -3,7 +3,7 @@
 ## Integration identity
 - Base: `main` @ `9a02e4a94ea1fd3b63ecf17209211735ed554c83`
 - Integration branch: `integration/final-current-20260814`
-- FINAL HEAD: `60c0d1d7d98213fe182479782d196b33c15c970d`
+- FINAL HEAD: `855dec3ef56e63bbaa02135638a0c84be7609b62`
 
 ## Approved package sources
 - CORE: `phase2/core-intelligence-hardening` @ `3b37ad94d3440463f4e440c7e46ca0380d7ce900`
@@ -28,7 +28,7 @@
 - `binansScanner/tests/test_opportunity_integration_fixes.py`
 
 ## Core and Execution integration
-Core, Execution, and their approved tests/docs remain exactly as previously integrated on this branch. Shared `binansScanner/core/orchestrator.py` remains CORE-authoritative.
+Core, Execution, and their approved tests/docs remain integrated as previously established. Shared `binansScanner/core/orchestrator.py` remains CORE-authoritative.
 
 ## Explicit exclusions
 - Sync/Restore tooling and protocol changes.
