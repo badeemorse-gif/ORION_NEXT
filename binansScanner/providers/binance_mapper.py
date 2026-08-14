@@ -3,7 +3,7 @@
 Badee Binance Scanner
 Architecture : ORION
 Module       : providers.binance_mapper
-Version      : 3.1.0
+Version      : 3.1.1
 Status       : ORION Canonical Market Contract
 ===============================================================================
 
@@ -22,7 +22,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
-from data_quality import MarketDatasetQualityValidator
+from data_quality import DataQualityError, MarketDatasetQualityValidator
 from enums import DataHealth, Timeframe
 from models.market import MarketDataset, MarketMetadata, TimeframeData
 
@@ -61,47 +61,27 @@ class BinanceMapper:
         "ignore",
     )
 
-    def convert_klines_to_dataframe(
-        self,
-        raw_klines: list[list[Any]],
-    ) -> pd.DataFrame:
+    def convert_klines_to_dataframe(self, raw_klines: list[list[Any]]) -> pd.DataFrame:
         """Convert raw Binance klines into a validated OHLCV DataFrame."""
 
         if not raw_klines:
-            raise InvalidKlinesData(
-                "Received empty klines data from Binance API."
-            )
+            raise InvalidKlinesData("Received empty klines data from Binance API.")
 
         try:
-            dataframe = pd.DataFrame(
-                raw_klines,
-                columns=self.RAW_COLUMNS,
-            )
+            dataframe = pd.DataFrame(raw_klines, columns=self.RAW_COLUMNS)
         except Exception as exc:
             raise InvalidKlinesData(
                 f"Unable to construct kline DataFrame: {exc}"
             ) from exc
 
         for column in self.REQUIRED_COLUMNS:
-            dataframe[column] = pd.to_numeric(
-                dataframe[column],
-                errors="raise",
-            )
-
+            dataframe[column] = pd.to_numeric(dataframe[column], errors="raise")
         dataframe["open_time"] = pd.to_numeric(
             dataframe["open_time"],
             errors="raise",
         )
-
-        dataframe = dataframe[
-            list(self.REQUIRED_COLUMNS) + ["open_time"]
-        ]
-
-        dataframe.index = pd.to_datetime(
-            dataframe["open_time"],
-            unit="ms",
-            utc=True,
-        )
+        dataframe = dataframe[list(self.REQUIRED_COLUMNS) + ["open_time"]]
+        dataframe.index = pd.to_datetime(dataframe["open_time"], unit="ms", utc=True)
         dataframe.index.name = "timestamp"
         dataframe.drop(columns=["open_time"], inplace=True)
         dataframe = dataframe.sort_index()
@@ -156,7 +136,7 @@ class BinanceMapper:
 
         try:
             MarketDatasetQualityValidator().assert_valid(dataset)
-        except Exception as exc:
+        except DataQualityError as exc:
             raise InvalidKlinesData(str(exc)) from exc
 
         return dataset
@@ -182,8 +162,7 @@ class BinanceMapper:
             raise InvalidKlinesData("DataFrame is empty.")
 
         missing_columns = [
-            column
-            for column in self.REQUIRED_COLUMNS
+            column for column in self.REQUIRED_COLUMNS
             if column not in dataframe.columns
         ]
         if missing_columns:
@@ -191,17 +170,11 @@ class BinanceMapper:
                 f"Missing required columns: {missing_columns}"
             )
         if not isinstance(dataframe.index, pd.DatetimeIndex):
-            raise InvalidKlinesData(
-                "DataFrame index must be a DatetimeIndex."
-            )
+            raise InvalidKlinesData("DataFrame index must be a DatetimeIndex.")
         if dataframe.index.tz is None:
-            raise InvalidKlinesData(
-                "DataFrame index must be timezone-aware."
-            )
+            raise InvalidKlinesData("DataFrame index must be timezone-aware.")
         if dataframe.index.duplicated().any():
-            raise InvalidKlinesData(
-                "DataFrame contains duplicate timestamps."
-            )
+            raise InvalidKlinesData("DataFrame contains duplicate timestamps.")
         if not dataframe.index.is_monotonic_increasing:
             raise InvalidKlinesData(
                 "DataFrame index must be chronologically sorted."
@@ -216,9 +189,7 @@ class BinanceMapper:
             ) from exc
 
         if not np.isfinite(numeric_data).all():
-            raise InvalidKlinesData(
-                "DataFrame contains non-finite values."
-            )
+            raise InvalidKlinesData("DataFrame contains non-finite values.")
         if (dataframe["volume"] < 0).any():
             raise InvalidKlinesData(
                 "DataFrame contains negative volume values."
