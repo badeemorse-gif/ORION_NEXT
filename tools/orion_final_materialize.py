@@ -6,7 +6,7 @@ This is the only non-legacy path intended for the final local handoff:
 
 Hard invariants:
 * the development checkout is never a materialization destination;
-* the target must be outside PROJECT_ROOT and its Git checkout parent;
+* the target must be outside PROJECT_ROOT and any Git checkout ancestor;
 * the source is an exact commit object fetched from origin;
 * no checkout, reset, clean, pull, merge, or working-tree write is performed;
 * the destination is replaced only after a complete staged snapshot passes parity;
@@ -111,21 +111,6 @@ def fetch_exact_commit(remote: str, commit: str) -> str:
     return resolved
 
 
-def ensure_external_target(target: Path) -> Path:
-    target = target.expanduser().resolve()
-    project = ROOT.resolve()
-    if target == project or project in target.parents:
-        fail(f"REFUSED: target is inside PROJECT_ROOT: {target}")
-    if target == project.parent:
-        fail(f"REFUSED: target cannot be the ORION parent: {target}")
-    if target.name == ".git" or ".git" in target.parts:
-        fail(f"REFUSED: target path contains .git: {target}")
-    target.parent.mkdir(parents=True, exist_ok=True)
-    if (target.parent / ".git").is_dir():
-        fail(f"REFUSED: target parent is a Git checkout: {target.parent}")
-    return target
-
-
 def _is_reparse(path: Path) -> bool:
     if path.is_symlink():
         return True
@@ -135,9 +120,42 @@ def _is_reparse(path: Path) -> bool:
         return False
 
 
+def _existing_ancestors(path: Path):
+    current = path
+    while current != current.parent:
+        if current.exists() or current.is_symlink():
+            yield current
+        current = current.parent
+
+
+def ensure_external_target(target: Path) -> Path:
+    """Validate the lexical target before resolving it, preventing symlink redirection."""
+    raw = target.expanduser().absolute()
+    for ancestor in _existing_ancestors(raw):
+        if _is_reparse(ancestor):
+            fail(f"REFUSED: reparse-point/symlink target boundary: {ancestor}")
+        if (ancestor / ".git").is_dir():
+            fail(f"REFUSED: target is inside a Git checkout: {ancestor}")
+
+    target = raw.resolve()
+    project = ROOT.resolve()
+    if target == project or project in target.parents:
+        fail(f"REFUSED: target is inside PROJECT_ROOT: {target}")
+    if target == project.parent:
+        fail(f"REFUSED: target cannot be the ORION parent: {target}")
+    if target.name == ".git" or ".git" in target.parts:
+        fail(f"REFUSED: target path contains .git: {target}")
+
+    target.parent.mkdir(parents=True, exist_ok=True)
+    if (target.parent / ".git").is_dir():
+        fail(f"REFUSED: target parent is a Git checkout: {target.parent}")
+    return target
+
+
 def reject_reparse_boundary(target: Path) -> None:
-    if _is_reparse(target) or _is_reparse(target.parent):
-        fail(f"REFUSED: reparse-point/symlink target boundary: {target}")
+    for ancestor in _existing_ancestors(target):
+        if _is_reparse(ancestor):
+            fail(f"REFUSED: reparse-point/symlink target boundary: {ancestor}")
 
 
 def snapshot_manifest(data: bytes) -> dict[str, tuple]:
