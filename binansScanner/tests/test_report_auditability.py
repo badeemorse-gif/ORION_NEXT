@@ -30,28 +30,30 @@ class TestReportAuditability(unittest.TestCase):
             DecisionResult(decision="WAIT", reasons=["decision evidence"], warnings=["decision warning"]),
         )
 
-    def test_successful_execution_is_complete(self) -> None:
-        analysis, profile, score, decision = self._complete_inputs()
-        report = self.engine.build_report(
-            symbol="BTCUSDT", analysis=analysis, profile=profile, score=score, decision=decision,
-            execution=ExecutionResult(status=ExecutionStatus.EXECUTED, message="executed", order_id="PAPER-1"),
-            stage_trace=("ORCHESTRATION", "EXECUTION", "REPORT"),
-        )
-        self.assertEqual(report.audit.status.value, "COMPLETE")
-        self.assertTrue(report.is_successful)
-        self.assertEqual(report.audit.execution_status, ExecutionStatus.EXECUTED)
-        self.assertEqual(report.audit.order_id, "PAPER-1")
-
-    def test_skipped_execution_is_complete(self) -> None:
+    def test_complete_report_does_not_imply_execution_success(self) -> None:
         analysis, profile, score, decision = self._complete_inputs()
         report = self.engine.build_report(
             symbol="BTCUSDT", analysis=analysis, profile=profile, score=score, decision=decision,
             execution=ExecutionResult(status=ExecutionStatus.SKIPPED, message="hold"),
             stage_trace=("ORCHESTRATION", "EXECUTION", "REPORT"),
         )
-        self.assertEqual(report.audit.status.value, "COMPLETE")
+        self.assertTrue(report.is_complete)
+        self.assertEqual(report.audit.status, report.audit.status.COMPLETE)
+        self.assertFalse(report.execution_succeeded)
         self.assertEqual(report.audit.execution_status, ExecutionStatus.SKIPPED)
+
+    def test_executed_report_exposes_execution_success_evidence_only(self) -> None:
+        analysis, profile, score, decision = self._complete_inputs()
+        report = self.engine.build_report(
+            symbol="BTCUSDT", analysis=analysis, profile=profile, score=score, decision=decision,
+            execution=ExecutionResult(status=ExecutionStatus.EXECUTED, message="executed", order_id="PAPER-1"),
+            stage_trace=("ORCHESTRATION", "EXECUTION", "REPORT"),
+        )
+        self.assertTrue(report.is_complete)
+        self.assertTrue(report.execution_succeeded)
         self.assertFalse(report.execution_failed)
+        self.assertEqual(report.audit.execution_status, ExecutionStatus.EXECUTED)
+        self.assertEqual(report.audit.order_id, "PAPER-1")
 
     def test_execution_failure_is_failed_evidence(self) -> None:
         analysis, profile, score, decision = self._complete_inputs()
@@ -63,7 +65,7 @@ class TestReportAuditability(unittest.TestCase):
             failure_stage="EXECUTION",
         )
         self.assertEqual(report.audit.status.value, "FAILED")
-        self.assertFalse(report.is_successful)
+        self.assertFalse(report.execution_succeeded)
         self.assertTrue(report.execution_failed)
         self.assertEqual(report.audit.execution_status, ExecutionStatus.FAILED)
         self.assertEqual(report.audit.failure_stage, "EXECUTION")
@@ -81,15 +83,17 @@ class TestReportAuditability(unittest.TestCase):
         self.assertIsNone(report.audit.execution_status)
         self.assertEqual(report.audit.failure_stage, "ORCHESTRATION")
         self.assertEqual(report.audit.failure_message, "provider validation failed")
-        self.assertFalse(report.is_successful)
+        self.assertFalse(report.execution_succeeded)
 
-    def test_incomplete_report_is_distinct_from_failure(self) -> None:
+    def test_incomplete_report_is_distinct_from_failure_and_success(self) -> None:
         analysis, profile, score, decision = self._complete_inputs()
         report = self.engine.build_report(
             symbol="BTCUSDT", analysis=analysis, profile=profile, score=score, decision=decision, execution=None,
         )
         self.assertEqual(report.audit.status.value, "INCOMPLETE")
-        self.assertFalse(report.is_successful)
+        self.assertFalse(report.is_complete)
+        self.assertFalse(report.execution_succeeded)
+        self.assertFalse(report.execution_failed)
         self.assertIsNone(report.audit.failure_stage)
 
     def test_failed_state_survives_engine_json_and_renderers(self) -> None:
