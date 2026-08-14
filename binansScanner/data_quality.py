@@ -3,7 +3,7 @@
 Badee Binance Scanner
 Architecture : ORION
 Module       : data_quality.py
-Version      : 1.0.0
+Version      : 1.0.1
 Status       : ORION Market Data Quality Contract
 ===============================================================================
 
@@ -21,6 +21,7 @@ from datetime import datetime, timedelta, timezone
 from enum import Enum
 from typing import Iterable, Optional
 
+import numpy as np
 import pandas as pd
 
 from enums import Timeframe
@@ -74,13 +75,12 @@ class MarketDatasetQualityValidator:
         now: Optional[datetime] = None,
         max_age: Optional[timedelta] = None,
     ) -> DataQualityReport:
-        """
-        Validate a MarketDataset without repairing or fabricating data.
+        """Validate a MarketDataset without repairing or fabricating data."""
 
-        ``max_age`` is intentionally caller-supplied. No freshness threshold is
-        invented by this contract. If supplied, it must be non-negative and is
-        applied to the latest candle of every present timeframe.
-        """
+        if not isinstance(dataset, MarketDataset):
+            raise DataQualityError("dataset must be a MarketDataset")
+        if max_age is not None and max_age < timedelta(0):
+            raise DataQualityError("max_age must be non-negative")
 
         checked_at = self._normalize_now(now)
         issues: list[str] = []
@@ -99,23 +99,21 @@ class MarketDatasetQualityValidator:
         issues.extend(self._validate_metadata(dataset))
 
         for timeframe, timeframe_data in dataset.timeframes.items():
-            issues.extend(
-                self._validate_timeframe(
-                    timeframe,
-                    timeframe_data,
-                )
-            )
+            issues.extend(self._validate_timeframe(timeframe, timeframe_data))
 
             if max_age is not None and timeframe_data.last_timestamp is not None:
-                age = checked_at - self._ensure_aware(
-                    timeframe_data.last_timestamp,
-                    "last_timestamp",
-                )
-                if age > max_age:
-                    issues.append(
-                        f"stale timeframe: {timeframe.value} "
-                        f"(age={age}, max_age={max_age})"
+                try:
+                    age = checked_at - self._ensure_aware(
+                        timeframe_data.last_timestamp,
+                        "last_timestamp",
                     )
+                    if age > max_age:
+                        issues.append(
+                            f"stale timeframe: {timeframe.value} "
+                            f"(age={age}, max_age={max_age})"
+                        )
+                except DataQualityError as exc:
+                    issues.append(str(exc))
 
         if missing_required:
             status = DataQualityStatus.MISSING
@@ -165,14 +163,8 @@ class MarketDatasetQualityValidator:
                 issues.append(f"invalid provenance field: {field_name}")
 
         try:
-            downloaded_at = self._ensure_aware(
-                metadata.downloaded_at,
-                "downloaded_at",
-            )
-            last_updated_at = self._ensure_aware(
-                metadata.last_updated_at,
-                "last_updated_at",
-            )
+            downloaded_at = self._ensure_aware(metadata.downloaded_at, "downloaded_at")
+            last_updated_at = self._ensure_aware(metadata.last_updated_at, "last_updated_at")
             if last_updated_at < downloaded_at:
                 issues.append(
                     "invalid provenance chronology: last_updated_at before downloaded_at"
@@ -221,18 +213,12 @@ class MarketDatasetQualityValidator:
             issues.append(f"timestamps not ordered: {timeframe.value}")
 
         required_data = dataframe[list(required_columns)]
-        if required_data.isna().any().any():
-            issues.append(f"non-finite missing values: {timeframe.value}")
         try:
-            if not pd.DataFrame(required_data).applymap(pd.api.types.is_number).all().all():
-                issues.append(f"non-numeric OHLCV values: {timeframe.value}")
             numeric_values = required_data.to_numpy(dtype=float)
-            if not pd.notna(numeric_values).all():
+            if not np.isfinite(numeric_values).all():
                 issues.append(f"non-finite OHLCV values: {timeframe.value}")
-            if not pd.Series(numeric_values.ravel()).map(pd.api.types.is_number).all():
-                issues.append(f"non-numeric OHLCV values: {timeframe.value}")
         except (TypeError, ValueError):
-            issues.append(f"non-numeric or non-finite OHLCV values: {timeframe.value}")
+            issues.append(f"non-numeric OHLCV values: {timeframe.value}")
 
         if (dataframe["volume"] < 0).any():
             issues.append(f"negative volume: {timeframe.value}")
@@ -264,18 +250,15 @@ class MarketDatasetQualityValidator:
                 f"metadata={timeframe_data.candles_count}, actual={len(dataframe)}"
             )
 
-        first_timestamp = self._ensure_aware(
-            timeframe_data.first_timestamp,
-            "first_timestamp",
-        )
-        last_timestamp = self._ensure_aware(
-            timeframe_data.last_timestamp,
-            "last_timestamp",
-        )
-        if first_timestamp != dataframe.index[0].to_pydatetime():
-            issues.append(f"first_timestamp mismatch: {timeframe.value}")
-        if last_timestamp != dataframe.index[-1].to_pydatetime():
-            issues.append(f"last_timestamp mismatch: {timeframe.value}")
+        try:
+            first_timestamp = self._ensure_aware(timeframe_data.first_timestamp, "first_timestamp")
+            last_timestamp = self._ensure_aware(timeframe_data.last_timestamp, "last_timestamp")
+            if first_timestamp != dataframe.index[0].to_pydatetime():
+                issues.append(f"first_timestamp mismatch: {timeframe.value}")
+            if last_timestamp != dataframe.index[-1].to_pydatetime():
+                issues.append(f"last_timestamp mismatch: {timeframe.value}")
+        except DataQualityError as exc:
+            issues.append(str(exc))
 
         return issues
 
@@ -289,7 +272,5 @@ class MarketDatasetQualityValidator:
     @staticmethod
     def _ensure_aware(value: Optional[datetime], field_name: str) -> datetime:
         if value is None or value.tzinfo is None or value.utcoffset() is None:
-            raise DataQualityError(
-                f"{field_name} must be a timezone-aware datetime"
-            )
+            raise DataQualityError(f"{field_name} must be a timezone-aware datetime")
         return value
