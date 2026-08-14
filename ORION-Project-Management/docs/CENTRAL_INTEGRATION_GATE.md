@@ -12,16 +12,17 @@
 
 **PACKAGE-SCOPE CENTRAL INTEGRATION ASSEMBLED**
 
-The branch is built from current main plus only approved Core, Execution, and Opportunity files. No branch history was merged. Shared `binansScanner/core/orchestrator.py` remains CORE-authoritative.
+The branch is built from current main plus only approved Core, Execution, and Opportunity package files. No branch history was merged. Shared `binansScanner/core/orchestrator.py` remains CORE-authoritative.
 
 Opportunity confidence is sourced only from the requested `ProfileResult.TimeframeProfile.confidence`; `AnalysisResult.strength` is not substituted or aggregated.
 
 Explicit exclusions: Sync/Restore, MAIN/ALL, backups, generated artifacts, unrelated GUI/tooling, ancestry collateral, and cross-package pipeline tests.
 
-## Published integration HEAD
+## Published package content
 
-FINAL HEAD: `1e4a119bf905d97a3f881b586efe6b83989ff280`
+Package-scope integration content is published at commit:
+`447d82dc50806352df5ff361a502d669d2cc481c`
 
-The final manifest and gate are documentation-only closures after the package-scope correction; the branch ref must point to this exact final commit.
+The branch currently points to the documentation-closure commits that preserve that exact package tree. The branch ref and package content were verified directly in GitHub.
 
 Local verification is outside this executor's scope.
