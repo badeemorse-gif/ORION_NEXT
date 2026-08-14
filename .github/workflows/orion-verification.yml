@@ -1,0 +1,43 @@
+name: ORION verification
+
+on:
+  push:
+    branches: [developer7-market-data-quality]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  verify-binans-scanner:
+    name: Verify binansScanner
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: binansScanner
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install verification dependencies
+        run: python -m pip install fastapi uvicorn numpy pandas pandas-ta python-binance
+
+      - name: Materialize canonical verification entry point from main
+        run: |
+          git fetch origin main --depth=1
+          git show origin/main:binansScanner/verify.py > verify.py
+
+      - name: Verify syntax and full unittest suite
+        run: python verify.py
+
+      - name: Verify Market Data Quality regression slice
+        run: python -m unittest tests.test_market_data_quality_contract tests.test_binance_mapper_quality -v
