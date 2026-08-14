@@ -1,18 +1,16 @@
 # ORION_NEXT — Central Integration Manifest
 
 ## Integration identity
-- Base: `main`
-- Base content baseline at integration start: `a831bd3c3f3e8aa7ca4e051eda245fb48641daf3`
+- Base: `main` @ `9a02e4a94ea1fd3b63ecf17209211735ed554c83`
 - Integration branch: `integration/final-current-20260814`
-- Final integration HEAD: recorded in `CENTRAL_INTEGRATION_GATE.md`.
-- Package integration commit: `894a14b085599d5a2fe3e9454320f70200d90044`
+- Final package content commit: `324d6ccc2483080e93ffa859558afccb70c9deec`
 
 ## Approved package sources
 - CORE: `phase2/core-intelligence-hardening` @ `3b37ad94d3440463f4e440c7e46ca0380d7ce900`
 - EXECUTION: `ops/execution-fail-closed` @ `1ae3cca91f7b58e221e7e005f7949aceb1e96b02`
-- OPPORTUNITY: `future/opportunity-intelligence-complete` @ `4975292572a8446a178a5d1afe708792082767a1`
+- OPPORTUNITY: `future/opportunity-intelligence-complete` @ `0257a339f5f1725e424cf0cc3f83806d1faf4588`
 
-## Integrated package scope
+## Integrated scope
 
 ### CORE
 - `ORION-Project-Management/docs/CORE_INTELLIGENCE_HANDOFF.md`
@@ -41,6 +39,7 @@
 - Approved Execution contract tests.
 
 ### OPPORTUNITY
+- `ORION-Project-Management/docs/OPPORTUNITY_CONFIDENCE_FIX.md`
 - `ORION-Project-Management/docs/OPPORTUNITY_HANDOFF.md`
 - `ORION-Project-Management/docs/ORION_FUTURE_TRADING_INTELLIGENCE_CONTRACTS.md`
 - `ORION_FUTURE_OPPORTUNITY_INTELLIGENCE.md`
@@ -50,21 +49,21 @@
 - `binansScanner/models/opportunity_candidate_set.py`
 - `binansScanner/models/opportunity_evaluation.py`
 - `binansScanner/models/trading_readiness.py`
-- Approved Opportunity contract tests.
+- Approved Opportunity contract/integration tests.
 
 ## Shared-path decision
-`binansScanner/core/orchestrator.py` was present in CORE and Execution history. CORE was selected because it owns the Intelligence runtime gates and already constructs the canonical `ExecutionPlan`; Execution consumes the plan and does not own Core orchestration.
-
-Execution-branch changes to Core engines/tests and cross-package pipeline tests were excluded as collateral. Core versions remain authoritative for shared Core paths.
+`binansScanner/core/orchestrator.py` is CORE-authoritative. It owns the runtime intelligence gates and produces the canonical `ExecutionPlan`; Execution consumes that plan and does not own Core orchestration.
 
 ## Explicit exclusions
 - Sync/Restore tooling and protocol changes.
 - MAIN/ALL tooling and GUI collateral.
-- Backup directories and generated artifacts.
-- Global documentation changes that are ancestry collateral rather than package-owned handoff scope.
-- Execution-branch changes to Core Intelligence files.
-- Opportunity tooling changes and current-pipeline wiring.
-- Cross-package `test_pipeline_execution_e2e.py` changes from source branches.
+- Backups and generated artifacts.
+- Unrelated GUI/tooling.
+- Cross-package pipeline tests and ancestry collateral.
+- Any Opportunity source collateral outside the files listed above.
+
+## Truth rule
+Every file named in this manifest must exist in the integration Git tree. No file outside approved package scope is admitted by this manifest.
 
 ## Status
-Package-scope integration is complete. No branch history was merged; only approved package files were applied.
+Package-scope integration content is assembled from the current `main` baseline and the three approved package HEADs without merging branch history.
