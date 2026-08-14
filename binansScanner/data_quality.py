@@ -3,7 +3,7 @@
 Badee Binance Scanner
 Architecture : ORION
 Module       : data_quality.py
-Version      : 1.0.2
+Version      : 1.0.3
 Status       : ORION Market Data Quality Contract
 ===============================================================================
 
@@ -63,6 +63,8 @@ class MarketDatasetQualityValidator:
         Timeframe.H4: timedelta(hours=4),
         Timeframe.D1: timedelta(days=1),
     }
+
+    REQUIRED_OHLCV_COLUMNS = ("open", "high", "low", "close", "volume")
 
     def validate(
         self,
@@ -190,9 +192,10 @@ class MarketDatasetQualityValidator:
             issues.append(f"invalid or empty dataframe: {timeframe.value}")
             return issues
 
-        required_columns = ("open", "high", "low", "close", "volume")
         missing_columns = [
-            column for column in required_columns if column not in dataframe.columns
+            column
+            for column in self.REQUIRED_OHLCV_COLUMNS
+            if column not in dataframe.columns
         ]
         if missing_columns:
             issues.append(
@@ -211,14 +214,32 @@ class MarketDatasetQualityValidator:
         if not dataframe.index.is_monotonic_increasing:
             issues.append(f"timestamps not ordered: {timeframe.value}")
 
-        required_data = dataframe[list(required_columns)]
+        required_data = dataframe[list(self.REQUIRED_OHLCV_COLUMNS)]
+
+        non_numeric_columns = [
+            column
+            for column in self.REQUIRED_OHLCV_COLUMNS
+            if not pd.api.types.is_numeric_dtype(required_data[column])
+        ]
+        if non_numeric_columns:
+            issues.append(
+                f"non-numeric OHLCV columns for {timeframe.value}: "
+                f"{non_numeric_columns}"
+            )
+            return issues
+
         try:
             numeric_values = required_data.to_numpy(dtype=float)
-            if not np.isfinite(numeric_values).all():
-                issues.append(f"non-finite OHLCV values: {timeframe.value}")
         except (TypeError, ValueError):
             issues.append(f"non-numeric OHLCV values: {timeframe.value}")
+            return issues
 
+        if not np.isfinite(numeric_values).all():
+            issues.append(f"non-finite OHLCV values: {timeframe.value}")
+            return issues
+
+        # OHLCV values are now known to be finite numeric data. Only after
+        # this invariant is established do we perform comparisons.
         if (dataframe["volume"] < 0).any():
             issues.append(f"negative volume: {timeframe.value}")
 
@@ -250,8 +271,14 @@ class MarketDatasetQualityValidator:
             )
 
         try:
-            first_timestamp = self._ensure_aware(timeframe_data.first_timestamp, "first_timestamp")
-            last_timestamp = self._ensure_aware(timeframe_data.last_timestamp, "last_timestamp")
+            first_timestamp = self._ensure_aware(
+                timeframe_data.first_timestamp,
+                "first_timestamp",
+            )
+            last_timestamp = self._ensure_aware(
+                timeframe_data.last_timestamp,
+                "last_timestamp",
+            )
             if first_timestamp != dataframe.index[0].to_pydatetime():
                 issues.append(f"first_timestamp mismatch: {timeframe.value}")
             if last_timestamp != dataframe.index[-1].to_pydatetime():
