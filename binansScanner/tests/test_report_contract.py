@@ -1,4 +1,7 @@
-"""Canonical ReportResult contract tests."""
+"""Canonical ReportResult contract tests.
+
+The audit fields are part of the canonical reporting evidence boundary.
+"""
 
 from __future__ import annotations
 
