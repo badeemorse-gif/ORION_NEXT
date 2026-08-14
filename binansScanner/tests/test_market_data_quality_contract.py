@@ -3,7 +3,7 @@
 Badee Binance Scanner
 Architecture : ORION
 Module       : tests.test_market_data_quality_contract
-Version      : 1.0.0
+Version      : 1.1.0
 ===============================================================================
 
 Contract tests for MarketDataset integrity, provenance, cadence, and freshness.
@@ -77,6 +77,39 @@ class TestMarketDatasetQualityContract(unittest.TestCase):
         dataset = MarketDataset(metadata=metadata)
         dataset.add_timeframe(timeframe_data)
         return dataset
+
+    def _assert_non_numeric_column_is_invalid(self, column: str) -> None:
+        dataset = self._build_dataset()
+        timeframe_data = dataset.get_timeframe(Timeframe.H1)
+        assert timeframe_data is not None
+        timeframe_data.dataframe[column] = ["not-a-number", "still-invalid", "invalid"]
+
+        report = self.validator.validate(dataset)
+        self.assertEqual(report.status, DataQualityStatus.INVALID)
+        self.assertFalse(report.is_valid)
+        self.assertTrue(
+            any(
+                "non-numeric OHLCV columns" in issue and column in issue
+                for issue in report.issues
+            )
+        )
+        with self.assertRaises(DataQualityError):
+            self.validator.assert_valid(dataset)
+
+    def test_non_numeric_open_is_invalid(self) -> None:
+        self._assert_non_numeric_column_is_invalid("open")
+
+    def test_non_numeric_high_is_invalid(self) -> None:
+        self._assert_non_numeric_column_is_invalid("high")
+
+    def test_non_numeric_low_is_invalid(self) -> None:
+        self._assert_non_numeric_column_is_invalid("low")
+
+    def test_non_numeric_close_is_invalid(self) -> None:
+        self._assert_non_numeric_column_is_invalid("close")
+
+    def test_non_numeric_volume_is_invalid(self) -> None:
+        self._assert_non_numeric_column_is_invalid("volume")
 
     def test_valid_dataset_is_accepted(self) -> None:
         dataset = self._build_dataset()
