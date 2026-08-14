@@ -82,7 +82,7 @@ class TestApiServiceContract(unittest.TestCase):
         with self.assertRaises(ApiServiceError):
             service.run_symbol(ApiRequest(request_id="req-run-2", endpoint="/pipeline/run", payload={"symbol": "BTCUSDT", "timeframes": ["1h"]}))
 
-    def test_export_complete_report_is_api_success(self):
+    def test_export_success_is_export_io_success_not_pipeline_success(self):
         exporter = _FakeExporter()
         report = self._complete_report()
         service = ApiService(scheduler=_FakeScheduler(), report_exporter=exporter)
@@ -90,11 +90,14 @@ class TestApiServiceContract(unittest.TestCase):
             target = Path(tmp) / "report.json"
             response = service.export_report(ApiRequest(request_id="req-1", endpoint="export_report", payload={"report": report, "output_path": target, "format": "json"}))
             self.assertTrue(response.success)
+            self.assertTrue(response.payload["export_success"])
+            self.assertIsNone(response.payload["pipeline_success"])
             self.assertEqual(response.payload["audit_status"], "COMPLETE")
+            self.assertEqual(response.payload["execution_status"], "SKIPPED")
             self.assertEqual(response.payload["output_path"], str(target))
             self.assertEqual(exporter.calls, [(report, target, ReportFormat.JSON)])
 
-    def test_export_failed_report_is_not_api_success(self):
+    def test_failed_evidence_remains_exportable_without_becoming_pipeline_success(self):
         exporter = _FakeExporter()
         failed_execution = ExecutionResult(status=ExecutionStatus.FAILED, message="exchange unavailable")
         report = ReportResult(
@@ -112,8 +115,9 @@ class TestApiServiceContract(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             target = Path(tmp) / "failed.json"
             response = service.export_report(ApiRequest(request_id="req-failed", endpoint="export_report", payload={"report": report, "output_path": target, "format": "json"}))
-            self.assertFalse(response.success)
-            self.assertIn("FAILED", response.message)
+            self.assertTrue(response.success)
+            self.assertTrue(response.payload["export_success"])
+            self.assertIsNone(response.payload["pipeline_success"])
             self.assertEqual(response.payload["audit_status"], "FAILED")
             self.assertEqual(response.payload["execution_status"], "FAILED")
             self.assertEqual(response.payload["failure_stage"], "EXECUTION")
