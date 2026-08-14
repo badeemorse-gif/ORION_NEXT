@@ -20,7 +20,10 @@ Explicitly excluded: Sync/Restore, MAIN/ALL, backups, generated artifacts, unrel
 
 ## Published integration HEAD
 
-Final package assembly commit: `324d6ccc2483080e93ffa859558afccb70c9deec`
-Documentation closure commits follow that assembly; the branch HEAD must be verified against the published ref before acceptance.
+FINAL HEAD: `b7e7b5c56ed572d786fea462c68587b3f326c25b`
 
-Full verification remains a central acceptance-gate responsibility. No Local ORION_NEXT materialization was used.
+The GitHub branch ref was checked directly after the final manifest commit and points to this exact commit.
+
+## Acceptance note
+
+Local verification is intentionally outside this executor's scope. Central acceptance may now inspect the final integrated tree against the manifest.
