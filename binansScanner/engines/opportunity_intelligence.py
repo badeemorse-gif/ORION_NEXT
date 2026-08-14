@@ -139,7 +139,9 @@ class OpportunityCandidateGenerator:
             timeframe=timeframe.value,
             direction=direction,
             entry_candidate=entry,
-            confidence=min(float(analysis.strength), float(profile.confidence)),
+            # Profile owns canonical timeframe confidence. Analysis.strength
+            # is a separate Core signal and is not aggregated into confidence.
+            confidence=float(profile.confidence),
             setup_quality=None,
             risk=risk,
             expected_move=None,
@@ -173,21 +175,15 @@ class OpportunityCandidateGenerator:
     def _risk_from_timeframe_profile(profile: TimeframeProfile) -> OpportunityRisk:
         level = profile.risk_level
         if level == ProfileRiskLevel.EXTREME.value:
-            return OpportunityRisk(
-                state=RiskState.UNACCEPTABLE,
-                invalidation="Core Profile timeframe reports extreme risk",
-            )
+            return OpportunityRisk(state=RiskState.UNACCEPTABLE,
+                                   invalidation="Core Profile timeframe reports extreme risk")
         if level == ProfileRiskLevel.HIGH.value:
-            return OpportunityRisk(
-                state=RiskState.ELEVATED,
-                invalidation="Core Profile timeframe reports high risk",
-            )
+            return OpportunityRisk(state=RiskState.ELEVATED,
+                                   invalidation="Core Profile timeframe reports high risk")
         if level in {ProfileRiskLevel.LOW.value, ProfileRiskLevel.MEDIUM.value}:
             return OpportunityRisk(state=RiskState.ACCEPTABLE)
-        return OpportunityRisk(
-            state=RiskState.UNKNOWN,
-            invalidation="Core Profile timeframe risk level is unknown",
-        )
+        return OpportunityRisk(state=RiskState.UNKNOWN,
+                               invalidation="Core Profile timeframe risk level is unknown")
 
 
 class OpportunitySelectionPolicy:
@@ -198,81 +194,49 @@ class OpportunitySelectionPolicy:
         OpportunityDirection.SHORT: {"BEARISH", "STRONG_BEARISH"},
     }
 
-    def select(
-        self,
-        candidates: OpportunityCandidateSet,
-        evidence: CoreOpportunityEvidence,
-    ) -> OpportunitySelectionResult:
+    def select(self, candidates: OpportunityCandidateSet,
+               evidence: CoreOpportunityEvidence) -> OpportunitySelectionResult:
         evaluations = tuple(self._evaluate(candidate, evidence) for candidate in candidates)
-        accepted = tuple(
-            evaluation.opportunity for evaluation in evaluations if evaluation.accepted
-        )
+        accepted = tuple(evaluation.opportunity for evaluation in evaluations if evaluation.accepted)
         reasons: list[str] = []
         selected: Optional[Opportunity] = None
-
         if len(accepted) == 1:
             selected = accepted[0]
         elif len(accepted) == 0:
             reasons.append("No candidate satisfies every evidence gate")
         else:
-            reasons.append(
-                "Selection is ambiguous: Core evidence supplies no tie-breaker, so no ranking is invented"
-            )
+            reasons.append("Selection is ambiguous: Core evidence supplies no tie-breaker, so no ranking is invented")
             evaluations = tuple(
                 OpportunityEvaluation(
                     opportunity=evaluation.opportunity,
                     status=OpportunityEvaluationStatus.REJECTED,
-                    reasons=evaluation.reasons
-                    + ("ambiguous selection; no evidence-backed tie-breaker",),
-                )
-                if evaluation.accepted
-                else evaluation
+                    reasons=evaluation.reasons + ("ambiguous selection; no evidence-backed tie-breaker",),
+                ) if evaluation.accepted else evaluation
                 for evaluation in evaluations
             )
-
         readiness = self._readiness(selected, evidence, tuple(reasons))
-        return OpportunitySelectionResult(
-            evaluations=evaluations,
-            selected=selected,
-            readiness=readiness,
-            reasons=tuple(reasons),
-        )
+        return OpportunitySelectionResult(evaluations=evaluations, selected=selected,
+                                          readiness=readiness, reasons=tuple(reasons))
 
-    def _evaluate(
-        self,
-        candidate: Opportunity,
-        evidence: CoreOpportunityEvidence,
-    ) -> OpportunityEvaluation:
+    def _evaluate(self, candidate: Opportunity,
+                  evidence: CoreOpportunityEvidence) -> OpportunityEvaluation:
         reasons: list[str] = []
         timeframe = OpportunityCandidateGenerator._normalize_timeframe(candidate.timeframe)
-        timeframe_profile = OpportunityCandidateGenerator._matching_timeframe_profile(
-            evidence.profile, timeframe
-        )
-        expected_state = (
-            "BULLISH" if candidate.direction is OpportunityDirection.LONG else "BEARISH"
-        )
+        timeframe_profile = OpportunityCandidateGenerator._matching_timeframe_profile(evidence.profile, timeframe)
+        expected_state = "BULLISH" if candidate.direction is OpportunityDirection.LONG else "BEARISH"
         if evidence.analysis.market_state != expected_state:
             reasons.append("analysis direction does not support candidate direction")
-
         if timeframe_profile is None:
             reasons.append("profile timeframe evidence is missing or ambiguous")
         else:
-            expected_trend = (
-                "Bullish" if candidate.direction is OpportunityDirection.LONG else "Bearish"
-            )
+            expected_trend = "Bullish" if candidate.direction is OpportunityDirection.LONG else "Bearish"
             characteristics = timeframe_profile.characteristics
             if characteristics.trend != expected_trend:
                 reasons.append("profile timeframe trend does not support candidate direction")
             if characteristics.ema_alignment != expected_trend:
-                reasons.append(
-                    "profile timeframe EMA alignment does not support candidate direction"
-                )
-            expected_confidence = min(
-                float(evidence.analysis.strength), float(timeframe_profile.confidence)
-            )
-            if candidate.confidence != expected_confidence:
-                reasons.append("candidate confidence does not match timeframe Core evidence")
-
+                reasons.append("profile timeframe EMA alignment does not support candidate direction")
+            if candidate.confidence != float(timeframe_profile.confidence):
+                reasons.append("candidate confidence does not match timeframe Profile confidence")
         if evidence.score.category not in self._DIRECTIONAL_SCORE_CATEGORIES[candidate.direction]:
             reasons.append("score category does not support candidate direction")
         if not evidence.profile.is_valid:
@@ -285,44 +249,26 @@ class OpportunitySelectionPolicy:
             if candidate.setup_quality is None:
                 reasons.append("setup quality evidence is unavailable in Core")
             reasons.append("candidate contract is incomplete")
-
-        status = (
-            OpportunityEvaluationStatus.ACCEPTED
-            if not reasons
-            else OpportunityEvaluationStatus.REJECTED
-        )
-        return OpportunityEvaluation(
-            opportunity=candidate,
-            status=status,
-            reasons=tuple(reasons),
-        )
+        status = OpportunityEvaluationStatus.ACCEPTED if not reasons else OpportunityEvaluationStatus.REJECTED
+        return OpportunityEvaluation(opportunity=candidate, status=status, reasons=tuple(reasons))
 
     @staticmethod
-    def _readiness(
-        selected: Optional[Opportunity],
-        evidence: CoreOpportunityEvidence,
-        selection_reasons: tuple[str, ...],
-    ) -> TradingReadiness:
+    def _readiness(selected: Optional[Opportunity], evidence: CoreOpportunityEvidence,
+                   selection_reasons: tuple[str, ...]) -> TradingReadiness:
         if selected is None:
             return TradingReadiness(
-                intelligence_complete=False,
-                confidence_acceptable=False,
-                opportunity_fresh=False,
-                risk_acceptable=False,
+                intelligence_complete=False, confidence_acceptable=False,
+                opportunity_fresh=False, risk_acceptable=False,
                 market_conditions_valid=False,
                 reasons=selection_reasons or ("No selected opportunity",),
             )
         return TradingReadiness(
             intelligence_complete=selected.is_complete and evidence.profile.is_valid,
-            confidence_acceptable=selected.confidence is not None
-            and selected.setup_quality is not None,
+            confidence_acceptable=selected.confidence is not None and selected.setup_quality is not None,
             opportunity_fresh=selected.freshness is FreshnessStatus.FRESH,
             risk_acceptable=selected.risk.state is RiskState.ACCEPTABLE,
-            market_conditions_valid=selected.direction
-            is (
-                OpportunityDirection.LONG
-                if evidence.analysis.market_state == "BULLISH"
-                else OpportunityDirection.SHORT
+            market_conditions_valid=selected.direction is (
+                OpportunityDirection.LONG if evidence.analysis.market_state == "BULLISH" else OpportunityDirection.SHORT
             ),
             reasons=selection_reasons,
         )
