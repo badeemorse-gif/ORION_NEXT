@@ -2,7 +2,7 @@
 
 Repository: badeemorse-gif/ORION_NEXT
 Branch: future/opportunity-intelligence-complete
-Confidence-fix HEAD: e90b3e946223225e4a84b2939d7fcda0c2d5cc77
+Confidence-fix HEAD: dddc49c03bf543bf37a3a8e74fa2bb0c0dbafa4c
 
 ## Confidence contract
 
