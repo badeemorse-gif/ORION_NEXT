@@ -16,8 +16,11 @@ A dataset is valid only when all of the following hold:
    - Candle count and first/last timestamps agree with the actual frame.
 
 2. **Finite numeric data**
-   - OHLCV values must be numeric and finite.
+   - Every OHLCV column must already have a numeric dtype; numeric-looking strings are not coerced into numbers.
+   - OHLCV values must be finite.
    - `NaN`, positive infinity, and negative infinity are rejected.
+   - Numeric validation completes before any OHLC or volume comparisons are evaluated.
+   - A non-numeric or non-finite OHLCV condition records an integrity issue and exits timeframe validation before unsafe comparisons.
    - Volume cannot be negative.
    - OHLC relationships must be internally coherent.
 
@@ -42,7 +45,9 @@ A dataset is valid only when all of the following hold:
 
 `MarketDatasetQualityValidator.assert_valid()` raises `DataQualityError` for every non-valid state. It never repairs data and never fabricates a trading-ready substitute.
 
-The Binance mapper invokes this assertion before returning a `MarketDataset`, so invalid cadence, gaps, non-finite values, and invalid provenance cannot cross the canonical market-data boundary.
+The Binance mapper invokes this assertion before returning a `MarketDataset`, so invalid cadence, gaps, non-numeric values, non-finite values, and invalid provenance cannot cross the canonical market-data boundary.
+
+For non-numeric OHLCV input, the validator records `INVALID` and returns before executing negative-volume or OHLC relationship comparisons on the invalid data. This guarantees a controlled quality result or `DataQualityError`, rather than an incidental Python/pandas comparison exception.
 
 ## Provenance lineage
 
