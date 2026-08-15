@@ -25,6 +25,10 @@ from models.decision import DecisionResult
 base_logger = logging.getLogger(__name__)
 
 
+# =============================================================================
+# Custom Exceptions
+# =============================================================================
+
 class DecisionEngineError(Exception):
     """Base exception for all decision engine related errors."""
     pass
@@ -40,7 +44,15 @@ class InvalidScoreData(DecisionEngineError):
     pass
 
 
+# =============================================================================
+# Logger Adapter
+# =============================================================================
+
 class LoggerAdapter(logging.LoggerAdapter):
+    """
+    Custom LoggerAdapter to inject contextual information into every log record.
+    """
+
     def process(self, msg: str, kwargs: Any) -> tuple[str, dict[str, Any]]:
         context = self.extra or {}
         context_str = " | ".join(f"{k}={v}" for k, v in context.items() if v is not None)
@@ -51,11 +63,21 @@ class LoggerAdapter(logging.LoggerAdapter):
         return formatted_msg, kwargs
 
 
+# =============================================================================
+# Decision Engine
+# =============================================================================
+
 class DecisionEngine:
-    """Stateless decision engine over canonical AnalysisResult and ScoreResult."""
+    """
+    Stateless analytical decision engine operating exclusively on AnalysisResult
+    and ScoreResult instances without executing trades or communicating with external APIs.
+    """
 
     def __init__(self) -> None:
-        self.logger = LoggerAdapter(base_logger, {"operation": "init"})
+        self.logger = LoggerAdapter(
+            base_logger,
+            {"operation": "init"},
+        )
 
     def _get_logger(
         self,
@@ -65,10 +87,21 @@ class DecisionEngine:
     ) -> LoggerAdapter:
         return LoggerAdapter(
             base_logger,
-            {"operation": operation, "decision": decision, "confidence": confidence},
+            {
+                "operation": operation,
+                "decision": decision,
+                "confidence": confidence,
+            },
         )
 
+    # -------------------------------------------------------------------------
+    # Public Methods
+    # -------------------------------------------------------------------------
+
     def decide(self, analysis: AnalysisResult, score: ScoreResult) -> DecisionResult:
+        """
+        Derives a structured DecisionResult from given AnalysisResult and ScoreResult.
+        """
         if analysis is None:
             raise InvalidDecisionData("AnalysisResult is None. Cannot make a decision.")
         if score is None:
@@ -81,6 +114,7 @@ class DecisionEngine:
             reasons: list[str] = []
             warnings: list[str] = list(analysis.warnings)
 
+            # Accumulate factors and signals into reasons
             if score.factors:
                 reasons.extend(score.factors)
             if analysis.signals:
@@ -88,11 +122,13 @@ class DecisionEngine:
                     if sig not in reasons:
                         reasons.append(sig)
 
+            # Check for potential conflict between score category and market state
             if score.category in {"STRONG_BULLISH", "BULLISH"} and analysis.market_state == "BEARISH":
                 warnings.append("CONFLICT_SCORE_BULLISH_STATE_BEARISH")
             elif score.category in {"STRONG_BEARISH", "BEARISH"} and analysis.market_state == "BULLISH":
                 warnings.append("CONFLICT_SCORE_BEARISH_STATE_BULLISH")
 
+            # Core Decision Logic Rules
             if score.category == "STRONG_BULLISH" and analysis.market_state == "BULLISH":
                 decision = "FAVORABLE"
                 if "STRONG_SCORE" not in reasons:
@@ -106,6 +142,10 @@ class DecisionEngine:
                 if "NEUTRAL_OR_MIXED_CONDITIONS" not in reasons:
                     reasons.append("NEUTRAL_OR_MIXED_CONDITIONS")
 
+            # Decision confidence is confidence in an actionable outcome, not
+            # merely the magnitude of an upstream score. A WAIT decision or a
+            # score/state conflict must therefore never expose a high
+            # actionable-confidence value to downstream execution logic.
             if decision == "WAIT":
                 confidence = 0.0
             else:
@@ -118,11 +158,12 @@ class DecisionEngine:
                 warnings=warnings,
             )
 
-            self._get_logger(
+            logger = self._get_logger(
                 operation="decide",
                 decision=decision,
                 confidence=confidence,
-            ).info("Decision derived successfully from analysis and score results.")
+            )
+            logger.info("Decision derived successfully from analysis and score results.")
 
             return decision_result
 
@@ -131,11 +172,20 @@ class DecisionEngine:
                 raise
             raise DecisionEngineError(f"Failed to calculate decision: {e}") from e
 
+    # -------------------------------------------------------------------------
+    # Internal Validation & Helper Methods
+    # -------------------------------------------------------------------------
+
     def _validate_inputs(self, analysis: AnalysisResult, score: ScoreResult) -> None:
+        """
+        Validates the structure and property bounds of input results.
+
+        Fail-closed boundary: ScoreResult.score must be finite before it can
+        influence decision category or confidence. NaN is especially dangerous
+        because ordinary range comparisons do not reject it.
+        """
         if analysis.market_state not in {"BULLISH", "BEARISH", "NEUTRAL"}:
-            raise InvalidDecisionData(
-                f"Invalid market_state value ({analysis.market_state}) in AnalysisResult."
-            )
+            raise InvalidDecisionData(f"Invalid market_state value ({analysis.market_state}) in AnalysisResult.")
 
         try:
             score_value = float(score.score)
@@ -150,13 +200,16 @@ class DecisionEngine:
             )
 
         if score_value < -100.0 or score_value > 100.0:
-            raise InvalidScoreData(
-                f"Invalid score value ({score.score}) in ScoreResult. Expected -100 to 100."
-            )
+            raise InvalidScoreData(f"Invalid score value ({score.score}) in ScoreResult. Expected -100 to 100.")
 
     def _calculate_confidence(self, score_value: float) -> float:
+        """
+        Converts absolute score magnitude (-100 to 100) into a confidence percentage (0 to 100).
+        """
         normalized_magnitude = abs(score_value)
         return float(max(0.0, min(100.0, normalized_magnitude)))
 
 
+# =============================================================================
 # End Of File
+# =============================================================================
