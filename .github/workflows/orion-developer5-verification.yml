@@ -41,7 +41,9 @@ jobs:
             tests.test_report_contract \
             tests.test_pipeline_execution_e2e \
             tests.test_decision_execution_bridge \
-            tests.test_verification_gates -v
+            tests.test_verification_gates \
+            tests.test_orchestrator_stage_failure_boundary \
+            tests.test_orchestrator_validation_order -v
 
       - name: Final repository parity gate
         env:
