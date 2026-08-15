@@ -18,7 +18,11 @@
 
 ## Final changed-path decisions
 
-All **66 net changed paths** between main and the published integration HEAD are explicitly accounted for below. For INCLUDED files, the recorded source identity is the exact approved package publication; where the integrated blob was re-read, the target blob is the preserved source blob.
+All **69 net changed paths** between main and the published integration HEAD are explicitly accounted for below.
+
+The 66 package/integration paths below are INCLUDED. Two deleted integration markers are EXCLUDED as intentional cleanup. `CENTRAL_INTEGRATION_GATE.md` is INCLUDED as the final gate artifact.
+
+### Included package/integration paths (66)
 
 | # | Target path | Owner | Source HEAD | Source blob SHA | Decision | Reason |
 |---:|---|---|---|---|---|---|
@@ -26,7 +30,7 @@ All **66 net changed paths** between main and the published integration HEAD are
 | 2 | `ORION-Project-Management/docs/CORE_INTELLIGENCE_HANDOFF.md` | CORE | `3b37ad94` | target blob = source blob | INCLUDED | Core handoff |
 | 3 | `ORION-Project-Management/docs/CORE_INTELLIGENCE_HARDENING_COMPLETION.md` | CORE | `3b37ad94` | target blob = source blob | INCLUDED | Core completion record |
 | 4 | `ORION-Project-Management/docs/CORE_INTELLIGENCE_INTEGRATION_MAP.md` | CORE | `3b37ad94` | target blob = source blob | INCLUDED | Core integration contract map |
-| 5 | `ORION-Project-Management/docs/FINAL_INTEGRATION_MANIFEST.md` | D1 CENTRAL INTEGRATION | integration HEAD | target blob = final manifest | INCLUDED | Final integration control document |
+| 5 | `ORION-Project-Management/docs/FINAL_INTEGRATION_MANIFEST.md` | D1 CENTRAL INTEGRATION | integration HEAD | target blob = manifest | INCLUDED | Final integration control document |
 | 6 | `ORION-Project-Management/docs/OPPORTUNITY_CONFIDENCE_FIX.md` | OPPORTUNITY | `0257a339` | target blob = source blob | INCLUDED | Approved confidence semantics |
 | 7 | `ORION-Project-Management/docs/OPPORTUNITY_HANDOFF.md` | OPPORTUNITY | `0257a339` | target blob = source blob | INCLUDED | Opportunity handoff |
 | 8 | `ORION-Project-Management/docs/ORION_CONTROL_INDEX.md` | D1 CENTRAL INTEGRATION | `1a276a43` | `1962d1625e0991a882737a48a6f251d4003f9709` | INCLUDED | Final shared control ownership; D6-compatible content |
@@ -88,6 +92,14 @@ All **66 net changed paths** between main and the published integration HEAD are
 | 64 | `tests/test_final_materialization_contract.py` | D4 | `a47d8ff4` | target blob = source blob | INCLUDED | Final materialization contract test |
 | 65 | `tools/orion_final_materialize.py` | D4 | `a47d8ff4` | target blob = source blob | INCLUDED | Final materialization implementation |
 | 66 | `tools/verify_repository_parity.py` | D5 | `12d72b2a` | target blob = source blob | INCLUDED | Repository parity verifier |
+| 67 | `ORION-Project-Management/docs/CENTRAL_INTEGRATION_GATE.md` | D1 CENTRAL INTEGRATION | integration HEAD | target blob = gate | INCLUDED | Final Central Integration gate |
+
+## EXCLUDED NET CHANGED PATHS
+
+| Target path | Owner | Source HEAD | Source blob SHA | Decision | Reason |
+|---|---|---|---|---|---|
+| `__integration_cleanup_marker__.txt` | D1 CENTRAL INTEGRATION | integration history | n/a | EXCLUDED | Intentional cleanup marker deletion; no production/package content. |
+| `__integration_probe__.txt` | D1 CENTRAL INTEGRATION | integration history | n/a | EXCLUDED | Intentional probe-marker deletion; no production/package content. |
 
 ## SHARED FILE OWNERSHIP
 
@@ -101,32 +113,33 @@ All **66 net changed paths** between main and the published integration HEAD are
 ## SPECIAL CASES
 
 - `python`: no net change at final HEAD; integration tree matches `main` for this path, so no integration action is required.
-- `ORION-Project-Management/OPERATIONAL_READINESS.md`: absent from final integration tree and not a net changed path at the final audit; no inclusion decision is required in the changed-path manifest.
+- `ORION-Project-Management/OPERATIONAL_READINESS.md`: absent from final integration tree and not a net changed path at final HEAD; no integration action is required.
 - `ORION-Project-Management/docs/ORION_RESTORE_ALL_BRANCH_SYNC.md` and `ORION-Project-Management/docs/ORION_SYNC_POLICY.md`: INCLUDED as D4 normative contracts only. Legacy operational tools are not integrated.
 - `pipeline.py`: D6 final reporting-aware failure semantics selected.
 - `test_pipeline_execution_e2e.py`: D6 final evidence-oriented version selected after D5/D6 compatibility review.
 
 ## EXCLUDED COLLATERAL
 
-No EXCLUDED path is present in the final net changed-path set. The following approved-source collateral was explicitly not published:
+The following approved-source collateral is explicitly NOT published:
 
 - `tools/orion_sync.bat`
 - `tools/orion_sync_safe.py`
 - `tools/orion_restore_gui.pyw`
 - `binansScanner/models/explosive_watchlist.py`
 - backup / `.bak` files
-- temporary/probe markers
+- temporary/probe artifacts except the two intentional marker deletions above
 - unrelated GUI/live execution wiring
 - historical branch-only artifacts
 
-## TREE AUDIT RESULT
+## FINAL TREE AUDIT
 
-- Net changed paths: **66**
-- Included decisions: **66**
-- Excluded net paths: **0**
+- Net changed paths: **69**
+- Included changed paths: **67**
+- Excluded changed paths: **2**
 - Missing manifest decisions: **0**
 - Shared files with multiple owners: **0**
 - Main mutations observed: **0**
 - Source-branch mutations observed: **0**
+- Current integration branch is directly based on main: **YES**
 
-Finalization of this manifest is tied to the final published branch HEAD recorded in the Central Integration Gate.
+**Final HEAD is recorded in CENTRAL_INTEGRATION_GATE.md after the last audit pass.**
