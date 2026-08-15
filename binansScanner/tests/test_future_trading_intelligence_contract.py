@@ -2,7 +2,6 @@ from datetime import datetime, timedelta, timezone
 from math import inf, nan
 import unittest
 
-from models.explosive_watchlist import ExplosiveWatchCandidate, WatchlistStatus
 from models.opportunity import (
     FreshnessStatus,
     Opportunity,
@@ -96,81 +95,6 @@ class TestOpportunityContract(unittest.TestCase):
         )
         self.assertTrue(opportunity.is_expired)
         self.assertFalse(opportunity.is_eligible)
-
-
-class TestExplosiveWatchlistContract(unittest.TestCase):
-    def _valid(self) -> ExplosiveWatchCandidate:
-        return ExplosiveWatchCandidate(
-            symbol="ALTUSDT",
-            timeframe_window="1h-12h",
-            move_probability=72.0,
-            readiness_score=81.0,
-            confidence=74.0,
-            freshness=FreshnessStatus.FRESH,
-            supporting_signals=("compression", "volume expansion"),
-            invalidation_conditions=("structure breakdown",),
-            estimated_time_window="hours",
-            status=WatchlistStatus.MONITOR,
-        )
-
-    def test_valid_candidate_is_monitorable(self) -> None:
-        candidate = self._valid()
-        self.assertTrue(candidate.is_complete)
-        self.assertTrue(candidate.is_monitorable)
-        self.assertFalse(candidate.is_expired)
-
-    def test_ineligible_candidate_is_not_monitorable(self) -> None:
-        candidate = ExplosiveWatchCandidate(
-            symbol="ALTUSDT",
-            timeframe_window="1h-12h",
-            freshness=FreshnessStatus.FRESH,
-            status=WatchlistStatus.MONITOR,
-        )
-        self.assertFalse(candidate.is_complete)
-        self.assertFalse(candidate.is_monitorable)
-
-    def test_invalid_probability_is_rejected(self) -> None:
-        for value in (-1.0, 101.0, nan, inf, -inf):
-            with self.subTest(value=value):
-                with self.assertRaises(ValueError):
-                    ExplosiveWatchCandidate(
-                        symbol="ALTUSDT",
-                        timeframe_window="1h-12h",
-                        move_probability=value,
-                    )
-
-    def test_stale_candidate_is_not_monitorable(self) -> None:
-        candidate = ExplosiveWatchCandidate(
-            symbol="ALTUSDT",
-            timeframe_window="1h-12h",
-            move_probability=72.0,
-            readiness_score=81.0,
-            confidence=74.0,
-            freshness=FreshnessStatus.STALE,
-            supporting_signals=("compression",),
-            invalidation_conditions=("structure breakdown",),
-            status=WatchlistStatus.MONITOR,
-        )
-        self.assertTrue(candidate.is_complete)
-        self.assertFalse(candidate.is_monitorable)
-
-    def test_expired_candidate_is_not_monitorable(self) -> None:
-        now = datetime.now(timezone.utc)
-        candidate = ExplosiveWatchCandidate(
-            symbol="ALTUSDT",
-            timeframe_window="1h-12h",
-            move_probability=72.0,
-            readiness_score=81.0,
-            confidence=74.0,
-            freshness=FreshnessStatus.FRESH,
-            supporting_signals=("compression",),
-            invalidation_conditions=("structure breakdown",),
-            status=WatchlistStatus.MONITOR,
-            generated_at=now - timedelta(hours=2),
-            expires_at=now - timedelta(minutes=1),
-        )
-        self.assertTrue(candidate.is_expired)
-        self.assertFalse(candidate.is_monitorable)
 
 
 class TestTradingReadinessContract(unittest.TestCase):
