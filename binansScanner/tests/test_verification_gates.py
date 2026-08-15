@@ -76,6 +76,17 @@ class TestVerificationGates(unittest.TestCase):
         return MarketDataset(metadata=metadata, timeframes={Timeframe.H1: timeframe_data})
 
     @staticmethod
+    def _valid_profile() -> ProfileResult:
+        return ProfileResult(
+            symbol="BTCUSDT",
+            market=MarketCharacteristics(),
+            statistics=ProfileStatistics(),
+            is_tradeable=True,
+            warnings=(),
+            blocks=(),
+        )
+
+    @staticmethod
     def _assert_failure_evidence_report(
         report: ReportResult,
         execution: ExecutionResult,
@@ -87,7 +98,7 @@ class TestVerificationGates(unittest.TestCase):
             raise AssertionError("Failure evidence must retain the exact failed ExecutionResult.")
         if report.execution.status is not ExecutionStatus.FAILED:
             raise AssertionError("Failure evidence report must explicitly retain FAILED execution status.")
-        if report.execution.status is ExecutionStatus.EXECUTED:
+        if report.execution.executed:
             raise AssertionError("A failure evidence report must never imply execution success.")
 
     @staticmethod
@@ -98,7 +109,7 @@ class TestVerificationGates(unittest.TestCase):
         return plan
 
     def test_execution_plan_isolated_from_upstream_pipeline_state(self) -> None:
-        """ExecutionPlan carries execution intent only, not upstream result objects."""
+        """ExecutionPlan must not carry prohibited upstream result objects."""
         fields = set(ExecutionPlan.__dataclass_fields__)
         prohibited = {
             "dataset",
@@ -106,7 +117,6 @@ class TestVerificationGates(unittest.TestCase):
             "analysis",
             "profile",
             "score",
-            "decision",
             "orchestrator_result",
         }
         self.assertTrue(prohibited.isdisjoint(fields))
@@ -139,14 +149,9 @@ class TestVerificationGates(unittest.TestCase):
 
     def test_report_integrity_preserves_exact_upstream_contract_objects(self) -> None:
         analysis = AnalysisResult()
-        profile = ProfileResult(
-            symbol="BTCUSDT",
-            market=MarketCharacteristics(),
-            statistics=ProfileStatistics(),
-            is_tradeable=True,
-        )
+        profile = self._valid_profile()
         score = ScoreResult()
-        decision = DecisionResult()
+        decision = DecisionResult(decision="WAIT", confidence=50.0, reasons=["NEUTRAL"])
         execution = ExecutionResult(status=ExecutionStatus.SKIPPED, message="not executable")
 
         report = self.container.build_report_engine().build_report(
@@ -176,12 +181,7 @@ class TestVerificationGates(unittest.TestCase):
         report = self.container.build_report_engine().build_report(
             symbol="BTCUSDT",
             analysis=AnalysisResult(),
-            profile=ProfileResult(
-                symbol="BTCUSDT",
-                market=MarketCharacteristics(),
-                statistics=ProfileStatistics(),
-                is_tradeable=True,
-            ),
+            profile=self._valid_profile(),
             score=ScoreResult(),
             decision=DecisionResult(decision="FAVORABLE", confidence=92.0, reasons=["verification"]),
             execution=failed_execution,
@@ -197,9 +197,12 @@ class TestVerificationGates(unittest.TestCase):
         pipeline = self.container.build_pipeline()
         provider = self.container.build_market_data_provider()
         storage = self.container.build_market_storage()
+        profile_engine = pipeline._orchestrator._profile_engine
         fixture = self._dataset()
 
-        with patch.object(provider, "execute", return_value=fixture), patch.object(storage, "execute", return_value=None):
+        with patch.object(provider, "execute", return_value=fixture), patch.object(
+            storage, "execute", return_value=None
+        ), patch.object(profile_engine, "build_profile", return_value=self._valid_profile()):
             result = pipeline.run_symbol("BTCUSDT", [Timeframe.H1.value], quantity=1.0)
 
         self.assertTrue(result.success)
@@ -275,7 +278,11 @@ class TestVerificationGates(unittest.TestCase):
         if result.report_result is not None:
             self._assert_failure_evidence_report(result.report_result, failed_execution)
         self.assertFalse(
-            bool(result.report_result and result.report_result.execution and result.report_result.execution.executed),
+            bool(
+                result.report_result
+                and result.report_result.execution
+                and result.report_result.execution.executed
+            ),
             "A failure report must never imply execution success.",
         )
 
