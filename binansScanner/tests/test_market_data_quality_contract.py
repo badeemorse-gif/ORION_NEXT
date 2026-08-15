@@ -1,0 +1,105 @@
+"""
+===============================================================================
+Badee Binance Scanner
+Architecture : ORION
+Module       : tests.test_market_data_quality_contract
+Version      : 1.1.0
+===============================================================================
+
+Contract tests for MarketDataset integrity, provenance, cadence, and freshness.
+===============================================================================
+"""
+
+from __future__ import annotations
+
+import unittest
+from datetime import datetime, timedelta, timezone
+
+import numpy as np
+import pandas as pd
+
+from data_quality import DataQualityError, DataQualityStatus, MarketDatasetQualityValidator
+from enums import DataHealth, Timeframe
+from models.market import MarketDataset, MarketMetadata, TimeframeData
+
+
+class TestMarketDatasetQualityContract(unittest.TestCase):
+    def setUp(self) -> None:
+        self.validator = MarketDatasetQualityValidator()
+
+    def _build_dataset(self, *, timeframe: Timeframe = Timeframe.H1, index: pd.DatetimeIndex | None = None) -> MarketDataset:
+        now = datetime(2026, 8, 14, 12, 0, tzinfo=timezone.utc)
+        if index is None:
+            index = pd.date_range("2026-08-14 09:00", periods=3, freq="1h", tz="UTC")
+        dataframe = pd.DataFrame({"open": [100.0, 101.0, 102.0], "high": [102.0, 103.0, 104.0], "low": [99.0, 100.0, 101.0], "close": [101.0, 102.0, 103.0], "volume": [10.0, 11.0, 12.0]}, index=index)
+        metadata = MarketMetadata(symbol="BTCUSDT", exchange="BINANCE", source="BINANCE_API", cache_version="1.0.0", downloaded_at=now - timedelta(minutes=1), last_updated_at=now)
+        timeframe_data = TimeframeData(timeframe=timeframe, dataframe=dataframe, data_health=DataHealth.POOR, candles_count=len(dataframe), first_timestamp=dataframe.index[0].to_pydatetime(), last_timestamp=dataframe.index[-1].to_pydatetime())
+        dataset = MarketDataset(metadata=metadata)
+        dataset.add_timeframe(timeframe_data)
+        return dataset
+
+    def _assert_non_numeric_column_is_invalid(self, column: str) -> None:
+        dataset = self._build_dataset()
+        timeframe_data = dataset.get_timeframe(Timeframe.H1)
+        assert timeframe_data is not None
+        timeframe_data.dataframe[column] = ["not-a-number", "still-invalid", "invalid"]
+        report = self.validator.validate(dataset)
+        self.assertEqual(report.status, DataQualityStatus.INVALID)
+        self.assertFalse(report.is_valid)
+        self.assertTrue(any("non-numeric OHLCV columns" in issue and column in issue for issue in report.issues))
+        with self.assertRaises(DataQualityError):
+            self.validator.assert_valid(dataset)
+
+    def test_non_numeric_open_is_invalid(self): self._assert_non_numeric_column_is_invalid("open")
+    def test_non_numeric_high_is_invalid(self): self._assert_non_numeric_column_is_invalid("high")
+    def test_non_numeric_low_is_invalid(self): self._assert_non_numeric_column_is_invalid("low")
+    def test_non_numeric_close_is_invalid(self): self._assert_non_numeric_column_is_invalid("close")
+    def test_non_numeric_volume_is_invalid(self): self._assert_non_numeric_column_is_invalid("volume")
+
+    def test_valid_dataset_is_accepted(self):
+        report = self.validator.validate(self._build_dataset(), required_timeframes=(Timeframe.H1,), now=datetime(2026, 8, 14, 12, 0, tzinfo=timezone.utc))
+        self.assertEqual(report.status, DataQualityStatus.VALID)
+        self.assertTrue(report.is_valid)
+        self.assertEqual(report.issues, ())
+
+    def test_missing_required_timeframe_is_fail_closed(self):
+        dataset = self._build_dataset()
+        report = self.validator.validate(dataset, required_timeframes=(Timeframe.H1, Timeframe.M15), now=datetime(2026, 8, 14, 12, 0, tzinfo=timezone.utc))
+        self.assertEqual(report.status, DataQualityStatus.MISSING)
+        with self.assertRaises(DataQualityError):
+            self.validator.assert_valid(dataset, required_timeframes=(Timeframe.H1, Timeframe.M15), now=datetime(2026, 8, 14, 12, 0, tzinfo=timezone.utc))
+
+    def test_timeframe_gap_is_invalid(self):
+        index = pd.DatetimeIndex(["2026-08-14 09:00+00:00", "2026-08-14 10:00+00:00", "2026-08-14 12:00+00:00"])
+        report = self.validator.validate(self._build_dataset(index=index))
+        self.assertEqual(report.status, DataQualityStatus.INVALID)
+        self.assertTrue(any("cadence/gap" in issue for issue in report.issues))
+
+    def test_nan_and_infinity_are_invalid(self):
+        dataset = self._build_dataset()
+        timeframe_data = dataset.get_timeframe(Timeframe.H1)
+        assert timeframe_data is not None
+        timeframe_data.dataframe.loc[timeframe_data.dataframe.index[0], "close"] = np.nan
+        timeframe_data.dataframe.loc[timeframe_data.dataframe.index[1], "open"] = np.inf
+        report = self.validator.validate(dataset)
+        self.assertEqual(report.status, DataQualityStatus.INVALID)
+        self.assertFalse(report.is_valid)
+
+    def test_staleness_requires_an_explicit_caller_threshold(self):
+        dataset = self._build_dataset()
+        checked_at = datetime(2026, 8, 14, 15, 0, tzinfo=timezone.utc)
+        self.assertEqual(self.validator.validate(dataset, now=checked_at).status, DataQualityStatus.VALID)
+        report = self.validator.validate(dataset, now=checked_at, max_age=timedelta(minutes=30))
+        self.assertEqual(report.status, DataQualityStatus.STALE)
+        self.assertTrue(any("stale timeframe" in issue for issue in report.issues))
+
+    def test_provenance_chronology_is_enforced(self):
+        dataset = self._build_dataset()
+        dataset.metadata.last_updated_at = dataset.metadata.downloaded_at - timedelta(seconds=1)
+        report = self.validator.validate(dataset)
+        self.assertEqual(report.status, DataQualityStatus.INVALID)
+        self.assertTrue(any("provenance chronology" in issue for issue in report.issues))
+
+
+if __name__ == "__main__":
+    unittest.main()
