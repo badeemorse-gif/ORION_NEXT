@@ -18,16 +18,9 @@ from typing import Any, Optional
 
 from enums import Timeframe
 from models.profile import (
-    EMAAlignment,
-    MarketCharacteristics,
-    MarketPhaseType,
-    MomentumState,
-    ProfileResult,
-    RiskLevel,
-    TrendStrengthType,
-    TrendType,
-    VolatilityLevelType,
-    VolumeStrength,
+    EMAAlignment, MarketCharacteristics, MarketPhaseType, MomentumState,
+    ProfileResult, RiskLevel, TrendStrengthType, TrendType,
+    VolatilityLevelType, VolumeStrength,
 )
 
 
@@ -47,26 +40,18 @@ class ProfileIntelligenceResult:
 
     @property
     def is_directional(self) -> bool:
-        return self.recommendation in {
-            ProfileRecommendation.BULLISH.value,
-            ProfileRecommendation.BEARISH.value,
-        }
+        return self.recommendation in {ProfileRecommendation.BULLISH.value, ProfileRecommendation.BEARISH.value}
 
     @property
     def is_valid(self) -> bool:
         return (
-            self.recommendation in {
-                ProfileRecommendation.BULLISH.value,
-                ProfileRecommendation.BEARISH.value,
-                ProfileRecommendation.NEUTRAL.value,
-            }
-            and not self.blocked
-            and isfinite(self.confidence)
-            and 0.0 <= self.confidence <= 100.0
+            self.recommendation in {ProfileRecommendation.BULLISH.value, ProfileRecommendation.BEARISH.value, ProfileRecommendation.NEUTRAL.value}
+            and not self.blocked and isfinite(self.confidence) and 0.0 <= self.confidence <= 100.0
         )
 
 
 class ProfileIntelligence:
+    """Deterministic interpreter for the canonical ProfileResult."""
     _VALID_TIMEFRAMES = {item.value for item in Timeframe}
     _VALID_TRENDS = {item.value for item in TrendType}
     _VALID_MOMENTUM = {item.value for item in MomentumState}
@@ -76,7 +61,6 @@ class ProfileIntelligence:
     _VALID_TREND_STRENGTH = {item.value for item in TrendStrengthType}
     _VALID_VOLATILITY = {item.value for item in VolatilityLevelType}
     _VALID_VOLUME = {item.value for item in VolumeStrength}
-
     _BULLISH_MOMENTUM = {MomentumState.STRONG_BUY.value, MomentumState.BUY.value}
     _BEARISH_MOMENTUM = {MomentumState.STRONG_SELL.value, MomentumState.SELL.value}
 
@@ -84,38 +68,17 @@ class ProfileIntelligence:
         invalid_reason = self._validate_profile(profile)
         if invalid_reason is not None:
             return self._blocked(invalid_reason)
-
         assert profile is not None
         market = profile.market
-
         if any(timeframe.characteristics.risk_level == RiskLevel.EXTREME.value for timeframe in profile.timeframes):
-            return ProfileIntelligenceResult(
-                recommendation=ProfileRecommendation.NEUTRAL.value,
-                confidence=0.0,
-                reasons=("Extreme market risk in one or more timeframes blocks directional profile intelligence.",),
-                blocked=True,
-            )
-
+            return ProfileIntelligenceResult(ProfileRecommendation.NEUTRAL.value, 0.0, ("Extreme market risk in one or more timeframes blocks directional profile intelligence.",), True)
         if market.risk_level == RiskLevel.EXTREME.value:
-            return ProfileIntelligenceResult(
-                recommendation=ProfileRecommendation.NEUTRAL.value,
-                confidence=0.0,
-                reasons=("Extreme market risk blocks directional profile intelligence.",),
-                blocked=True,
-            )
-
+            return ProfileIntelligenceResult(ProfileRecommendation.NEUTRAL.value, 0.0, ("Extreme market risk blocks directional profile intelligence.",), True)
         if market.trend == TrendType.BULLISH.value and market.momentum in self._BULLISH_MOMENTUM:
             return self._directional_result(ProfileRecommendation.BULLISH.value, profile, "Trend and momentum are aligned bullishly.")
-
         if market.trend == TrendType.BEARISH.value and market.momentum in self._BEARISH_MOMENTUM:
             return self._directional_result(ProfileRecommendation.BEARISH.value, profile, "Trend and momentum are aligned bearishly.")
-
-        return ProfileIntelligenceResult(
-            recommendation=ProfileRecommendation.NEUTRAL.value,
-            confidence=self._safe_confidence(profile),
-            reasons=("Profile conditions do not support a validated directional recommendation.",),
-            blocked=False,
-        )
+        return ProfileIntelligenceResult(ProfileRecommendation.NEUTRAL.value, self._safe_confidence(profile), ("Profile conditions do not support a validated directional recommendation.",), False)
 
     def analyze(self, profile: Optional[ProfileResult]) -> ProfileIntelligenceResult:
         return self.evaluate(profile)
@@ -124,14 +87,13 @@ class ProfileIntelligence:
         confidence = self._safe_confidence(profile)
         if confidence <= 0.0:
             return self._blocked("Directional profile intelligence requires positive confidence across the complete profile.")
-        return ProfileIntelligenceResult(recommendation=recommendation, confidence=confidence, reasons=(reason,), blocked=False)
+        return ProfileIntelligenceResult(recommendation, confidence, (reason,), False)
 
     def _safe_confidence(self, profile: ProfileResult) -> float:
         values = (profile.market.confidence, profile.statistics.confidence_limit, *(timeframe.characteristics.confidence for timeframe in profile.timeframes))
         if any(not self._finite_number(value) for value in values):
             return 0.0
-        confidence = min(values)
-        return min(max(float(confidence), 0.0), 100.0)
+        return min(max(float(min(values)), 0.0), 100.0)
 
     def _validate_profile(self, profile: Optional[ProfileResult]) -> Optional[str]:
         if profile is None:
@@ -148,20 +110,22 @@ class ProfileIntelligence:
             return "ProfileResult contains no timeframe profiles."
         if profile.market is None or profile.statistics is None:
             return "ProfileResult contains incomplete canonical market/statistics data."
-
         market_reason = self._validate_characteristics(profile.market, "market")
         if market_reason is not None:
             return market_reason
         statistics_reason = self._validate_statistics(profile.statistics)
         if statistics_reason is not None:
             return statistics_reason
-
+        seen_timeframes: set[str] = set()
         for timeframe in profile.timeframes:
             timeframe_name = getattr(timeframe, "timeframe", None)
             if not isinstance(timeframe_name, str) or not timeframe_name:
                 return "ProfileResult contains a malformed timeframe profile."
             if timeframe_name not in self._VALID_TIMEFRAMES:
                 return f"ProfileResult contains unsupported timeframe: {timeframe_name!r}."
+            if timeframe_name in seen_timeframes:
+                return f"ProfileResult contains duplicate timeframe: {timeframe_name}."
+            seen_timeframes.add(timeframe_name)
             characteristics = getattr(timeframe, "characteristics", None)
             if not isinstance(characteristics, MarketCharacteristics):
                 return f"ProfileResult contains invalid characteristics in timeframe {timeframe_name}."
@@ -251,10 +215,8 @@ class ProfileIntelligence:
         if isinstance(value, bool) or not isinstance(value, Integral):
             return None
         integer_value = int(value)
-        if integer_value < 0:
-            return None
-        return integer_value
+        return integer_value if integer_value >= 0 else None
 
     @staticmethod
     def _blocked(reason: str) -> ProfileIntelligenceResult:
-        return ProfileIntelligenceResult(recommendation=ProfileRecommendation.BLOCKED.value, confidence=0.0, reasons=(reason,), blocked=True)
+        return ProfileIntelligenceResult(ProfileRecommendation.BLOCKED.value, 0.0, (reason,), True)
