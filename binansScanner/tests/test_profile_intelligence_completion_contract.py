@@ -5,6 +5,8 @@ from models.profile import MarketCharacteristics, ProfileResult, ProfileStatisti
 
 
 class TestProfileIntelligenceCompletionContract(unittest.TestCase):
+    REQUIRED_TIMEFRAMES = ("1d", "4h", "1h")
+
     def _profile(self, names):
         characteristics = MarketCharacteristics(
             trend="Bullish",
@@ -34,17 +36,21 @@ class TestProfileIntelligenceCompletionContract(unittest.TestCase):
             is_tradeable=True,
         )
 
-    def test_missing_required_timeframe_blocks(self):
-        result = ProfileIntelligence().evaluate(self._profile(["1d", "4h"]))
-        self.assertTrue(result.blocked)
-        self.assertEqual(result.recommendation, "Blocked")
+    def test_each_required_timeframe_is_contractually_mandatory(self):
+        for missing in self.REQUIRED_TIMEFRAMES:
+            with self.subTest(missing=missing):
+                supplied = [name for name in self.REQUIRED_TIMEFRAMES if name != missing]
+                result = ProfileIntelligence().evaluate(self._profile(supplied))
+                self.assertTrue(result.blocked)
+                self.assertEqual(result.recommendation, "Blocked")
+                self.assertIn(missing, result.reasons[0])
 
     def test_duplicate_timeframe_blocks(self):
         result = ProfileIntelligence().evaluate(self._profile(["1d", "4h", "1h", "1h"]))
         self.assertTrue(result.blocked)
 
     def test_complete_required_timeframes_can_be_actionable(self):
-        result = ProfileIntelligence().evaluate(self._profile(["1d", "4h", "1h"]))
+        result = ProfileIntelligence().evaluate(self._profile(list(self.REQUIRED_TIMEFRAMES)))
         self.assertFalse(result.blocked)
         self.assertTrue(result.is_directional)
 
