@@ -1,29 +1,49 @@
 Option Explicit
 
-' Canonical safe ORION synchronization launcher.
-Dim shell, fso, toolsDir, scriptPath, command
+Dim shell, fso, scriptDir, pyw, scriptPath, cmd, rc, branchArg
+
 Set shell = CreateObject("WScript.Shell")
 Set fso = CreateObject("Scripting.FileSystemObject")
-toolsDir = fso.GetParentFolderName(WScript.ScriptFullName)
-scriptPath = fso.BuildPath(toolsDir, "orion_safe_sync_gui.pyw")
+
+scriptDir = fso.GetParentFolderName(WScript.ScriptFullName)
+scriptPath = scriptDir & "\orion_restore_gui.pyw"
+
 If Not fso.FileExists(scriptPath) Then
-    MsgBox "ORION Safe Sync file is missing:" & vbCrLf & scriptPath, vbCritical, "ORION Safe Sync"
+    MsgBox "ORION Restore file not found:" & vbCrLf & scriptPath, vbCritical, "ORION Restore"
     WScript.Quit 1
 End If
-shell.CurrentDirectory = toolsDir
+
+pyw = "pythonw.exe"
+
 On Error Resume Next
-Err.Clear
-command = "pythonw.exe " & Chr(34) & scriptPath & Chr(34)
-shell.Run command, 0, False
-If Err.Number <> 0 Then
+rc = shell.Run("""" & pyw & """ --version", 0, True)
+
+If Err.Number <> 0 Or rc <> 0 Then
     Err.Clear
-    command = "pyw.exe " & Chr(34) & scriptPath & Chr(34)
-    shell.Run command, 0, False
+    pyw = "pyw.exe"
+    rc = shell.Run("""" & pyw & """ --version", 0, True)
+
+    If Err.Number <> 0 Or rc <> 0 Then
+        On Error GoTo 0
+        MsgBox "Python (pythonw.exe / pyw.exe) was not found." & vbCrLf & vbCrLf & _
+               "Please verify that Python is installed and available in PATH.", _
+               vbCritical, "ORION Restore"
+        WScript.Quit 1
+    End If
 End If
-If Err.Number <> 0 Then
-    MsgBox "ORION Safe Sync could not start." & vbCrLf & scriptPath, vbCritical, "ORION Safe Sync"
-    WScript.Quit 1
-End If
+
 On Error GoTo 0
-Set fso = Nothing
+
+branchArg = ""
+If WScript.Arguments.Count > 0 Then
+    branchArg = Trim(WScript.Arguments(0))
+End If
+
+cmd = """" & pyw & """ """ & scriptPath & """"
+If branchArg <> "" Then
+    cmd = cmd & " """ & branchArg & """"
+End If
+shell.Run cmd, 0, False
+
 Set shell = Nothing
+Set fso = Nothing
