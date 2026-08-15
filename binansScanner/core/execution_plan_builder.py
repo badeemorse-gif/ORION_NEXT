@@ -27,12 +27,13 @@ class ExecutionPlanBuilder:
         decision_name = str(decision.decision).strip().upper()
         side = self._DECISION_TO_SIDE.get(decision_name, ExecutionSide.NONE)
         price = self._latest_close(dataset)
+        quantity = 0.0 if side in (ExecutionSide.HOLD, ExecutionSide.NONE) else 1.0
 
         return ExecutionPlan(
             symbol=dataset.symbol,
             side=side,
             price=price,
-            quantity=1.0,
+            quantity=quantity,
             confidence=float(decision.confidence),
             reason="; ".join(decision.reasons),
             decision=decision_name,
