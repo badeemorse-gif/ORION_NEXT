@@ -3,8 +3,8 @@
 Badee Binance Scanner
 Architecture : ORION
 Module       : engines.decision_engine
-Version      : 1.1.0
-Status       : ORION Production V1.1 REFACTORED
+Version      : 1.2.0
+Status       : ORION Production V1.2 REFACTORED
 ===============================================================================
 
 Decision Engine for transforming objective AnalysisResult and ScoreResult
@@ -15,6 +15,7 @@ insights into structured analytical decision statuses without order execution.
 from __future__ import annotations
 
 import logging
+import math
 from typing import Any, Optional
 
 from models.analysis import AnalysisResult
@@ -93,14 +94,8 @@ class DecisionEngine:
             },
         )
 
-    # -------------------------------------------------------------------------
-    # Public Methods
-    # -------------------------------------------------------------------------
-
     def decide(self, analysis: AnalysisResult, score: ScoreResult) -> DecisionResult:
-        """
-        Derives a structured DecisionResult from given AnalysisResult and ScoreResult.
-        """
+        """Derives a structured DecisionResult from given AnalysisResult and ScoreResult."""
         if analysis is None:
             raise InvalidDecisionData("AnalysisResult is None. Cannot make a decision.")
         if score is None:
@@ -113,7 +108,6 @@ class DecisionEngine:
             reasons: list[str] = []
             warnings: list[str] = list(analysis.warnings)
 
-            # Accumulate factors and signals into reasons
             if score.factors:
                 reasons.extend(score.factors)
             if analysis.signals:
@@ -121,13 +115,11 @@ class DecisionEngine:
                     if sig not in reasons:
                         reasons.append(sig)
 
-            # Check for potential conflict between score category and market state
             if score.category in {"STRONG_BULLISH", "BULLISH"} and analysis.market_state == "BEARISH":
                 warnings.append("CONFLICT_SCORE_BULLISH_STATE_BEARISH")
             elif score.category in {"STRONG_BEARISH", "BEARISH"} and analysis.market_state == "BULLISH":
                 warnings.append("CONFLICT_SCORE_BEARISH_STATE_BULLISH")
 
-            # Core Decision Logic Rules
             if score.category == "STRONG_BULLISH" and analysis.market_state == "BULLISH":
                 decision = "FAVORABLE"
                 if "STRONG_SCORE" not in reasons:
@@ -141,8 +133,10 @@ class DecisionEngine:
                 if "NEUTRAL_OR_MIXED_CONDITIONS" not in reasons:
                     reasons.append("NEUTRAL_OR_MIXED_CONDITIONS")
 
-            # Calculate normalized confidence (0 to 100) based on absolute score magnitude
-            confidence = self._calculate_confidence(score.score)
+            if decision == "WAIT":
+                confidence = 0.0
+            else:
+                confidence = self._calculate_confidence(score.score)
 
             decision_result = DecisionResult(
                 decision=decision,
@@ -165,24 +159,28 @@ class DecisionEngine:
                 raise
             raise DecisionEngineError(f"Failed to calculate decision: {e}") from e
 
-    # -------------------------------------------------------------------------
-    # Internal Validation & Helper Methods
-    # -------------------------------------------------------------------------
-
     def _validate_inputs(self, analysis: AnalysisResult, score: ScoreResult) -> None:
-        """
-        Validates the structure and property bounds of input results.
-        """
+        """Validate structure and property bounds of input results."""
         if analysis.market_state not in {"BULLISH", "BEARISH", "NEUTRAL"}:
             raise InvalidDecisionData(f"Invalid market_state value ({analysis.market_state}) in AnalysisResult.")
 
-        if score.score < -100.0 or score.score > 100.0:
+        try:
+            score_value = float(score.score)
+        except (TypeError, ValueError) as exc:
+            raise InvalidScoreData(
+                f"Invalid score value ({score.score}) in ScoreResult. Expected a finite number from -100 to 100."
+            ) from exc
+
+        if not math.isfinite(score_value):
+            raise InvalidScoreData(
+                f"Invalid score value ({score.score}) in ScoreResult. Expected a finite number from -100 to 100."
+            )
+
+        if score_value < -100.0 or score_value > 100.0:
             raise InvalidScoreData(f"Invalid score value ({score.score}) in ScoreResult. Expected -100 to 100.")
 
     def _calculate_confidence(self, score_value: float) -> float:
-        """
-        Converts absolute score magnitude (-100 to 100) into a confidence percentage (0 to 100).
-        """
+        """Convert absolute score magnitude (-100 to 100) into confidence 0..100."""
         normalized_magnitude = abs(score_value)
         return float(max(0.0, min(100.0, normalized_magnitude)))
 
