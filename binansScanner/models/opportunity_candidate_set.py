@@ -12,8 +12,11 @@ from dataclasses import dataclass
 
 from .opportunity import Opportunity
 
+
 @dataclass(slots=True, frozen=True)
 class OpportunityCandidateSet:
+    """Immutable collection of distinct future opportunity candidates."""
+
     opportunities: tuple[Opportunity, ...]
 
     def __post_init__(self) -> None:
@@ -22,9 +25,11 @@ class OpportunityCandidateSet:
             raise ValueError("opportunities must contain at least one candidate")
         if any(not isinstance(candidate, Opportunity) for candidate in candidates):
             raise ValueError("opportunities must contain only Opportunity instances")
+
         identities = [(candidate.symbol, candidate.timeframe, candidate.direction) for candidate in candidates]
         if len(set(identities)) != len(identities):
             raise ValueError("opportunities must not contain duplicate symbol/timeframe/direction candidates")
+
         object.__setattr__(self, "opportunities", candidates)
 
     def __len__(self) -> int:
