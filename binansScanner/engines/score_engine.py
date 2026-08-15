@@ -15,6 +15,7 @@ normalized numerical scores and categories without direct data-frame access.
 from __future__ import annotations
 
 import logging
+import math
 from dataclasses import dataclass
 from typing import Any, Optional
 
@@ -23,10 +24,6 @@ from models.score import ScoreResult
 
 base_logger = logging.getLogger(__name__)
 
-
-# =============================================================================
-# Constants & Configuration Dataclasses
-# =============================================================================
 
 @dataclass(frozen=True)
 class ScoreWeights:
@@ -39,7 +36,6 @@ class ScoreWeights:
 class ScoreThresholds:
     MAX_SCORE: float = 100.0
     MIN_SCORE: float = -100.0
-
     STRONG_BULLISH: float = 60.0
     BULLISH: float = 20.0
     NEUTRAL_UPPER: float = 20.0
@@ -48,262 +44,93 @@ class ScoreThresholds:
     STRONG_BEARISH: float = -60.0
 
 
-# =============================================================================
-# Custom Exceptions
-# =============================================================================
-
 class ScoreEngineError(Exception):
-    """Base exception for all score engine related errors."""
     pass
 
 
 class InvalidScoreData(ScoreEngineError):
-    """Raised when analysis result data structure or scoring bounds are invalid."""
     pass
 
 
-# =============================================================================
-# Logger Adapter
-# =============================================================================
-
 class LoggerAdapter(logging.LoggerAdapter):
-    """
-    Custom LoggerAdapter to inject contextual information into every log record.
-    """
-
-    def process(
-        self,
-        msg: str,
-        kwargs: Any,
-    ) -> tuple[str, dict[str, Any]]:
+    def process(self, msg: str, kwargs: Any) -> tuple[str, dict[str, Any]]:
         context = self.extra or {}
-        context_str = " | ".join(
-            f"{k}={v}"
-            for k, v in context.items()
-            if v is not None
-        )
+        context_str = " | ".join(f"{k}={v}" for k, v in context.items() if v is not None)
+        return (f"[{context_str}] {msg}" if context_str else msg), kwargs
 
-        if context_str:
-            formatted_msg = f"[{context_str}] {msg}"
-        else:
-            formatted_msg = msg
-
-        return formatted_msg, kwargs
-
-
-# =============================================================================
-# Score Engine
-# =============================================================================
 
 class ScoreEngine:
-    """
-    Stateless score engine operating exclusively on AnalysisResult instances
-    without reading DataFrames or executing trades.
-    """
+    """Stateless score engine operating exclusively on AnalysisResult."""
 
     def __init__(self) -> None:
-        self.logger = LoggerAdapter(
-            base_logger,
-            {"operation": "init"},
-        )
-
+        self.logger = LoggerAdapter(base_logger, {"operation": "init"})
         self.weights = ScoreWeights()
         self.thresholds = ScoreThresholds()
 
-    def _get_logger(
-        self,
-        operation: Optional[str] = None,
-        score: Optional[float] = None,
-        category: Optional[str] = None,
-    ) -> LoggerAdapter:
-        return LoggerAdapter(
-            base_logger,
-            {
-                "operation": operation,
-                "score": score,
-                "category": category,
-            },
-        )
-
-    # -------------------------------------------------------------------------
-    # Public Methods
-    # -------------------------------------------------------------------------
+    def _get_logger(self, operation: Optional[str] = None, score: Optional[float] = None, category: Optional[str] = None) -> LoggerAdapter:
+        return LoggerAdapter(base_logger, {"operation": operation, "score": score, "category": category})
 
     def calculate(self, analysis: AnalysisResult) -> ScoreResult:
-        """
-        Calculate a ScoreResult from an AnalysisResult.
-        """
         if analysis is None:
-            raise InvalidScoreData(
-                "AnalysisResult is None. Cannot calculate score."
-            )
-
+            raise InvalidScoreData("AnalysisResult is None. Cannot calculate score.")
         self._validate_analysis(analysis)
-
         try:
-            factors: list[str] = list(analysis.signals)
-            warnings: list[str] = list(analysis.warnings)
-
-            # 1. Market State Score Contribution
-            state_score = 0.0
-
-            if analysis.market_state == "BULLISH":
-                state_score = 30.0
-            elif analysis.market_state == "BEARISH":
-                state_score = -30.0
-
-            # 2. Strength Contribution
-            #
-            # Strength is represented as a magnitude from 0 to 100.
-            # It is centered around 50:
-            #
-            #   0   -> -100
-            #   50  ->    0
-            #   100 -> +100
-            #
-            # The market_state determines the directional interpretation.
-            strength_val = max(
-                0.0,
-                min(100.0, analysis.strength),
-            )
-
+            factors = list(analysis.signals)
+            warnings = list(analysis.warnings)
+            state_score = 30.0 if analysis.market_state == "BULLISH" else -30.0 if analysis.market_state == "BEARISH" else 0.0
+            strength_val = max(0.0, min(100.0, float(analysis.strength)))
             centered_strength = (strength_val * 2.0) - 100.0
-
             if analysis.market_state == "BEARISH":
-                strength_contribution = (
-                    -abs(centered_strength)
-                    * self.weights.STRENGTH
-                )
+                strength_contribution = -abs(centered_strength) * self.weights.STRENGTH
+            elif analysis.market_state == "BULLISH":
+                strength_contribution = centered_strength * self.weights.STRENGTH
             else:
-                strength_contribution = (
-                    centered_strength
-                    * self.weights.STRENGTH
-                )
+                strength_contribution = 0.0
 
-            # 3. Signals Modifier Contributions
+            positive_signals = {"EMA_ALIGNMENT_BULLISH", "MOMENTUM_POSITIVE", "STRONG_TREND"}
+            negative_signals = {"EMA_ALIGNMENT_BEARISH", "MOMENTUM_NEGATIVE", "WEAK_TREND"}
             signal_modifier = 0.0
-
-            positive_signals = {
-                "EMA_ALIGNMENT_BULLISH",
-                "MOMENTUM_POSITIVE",
-                "STRONG_TREND",
-            }
-
-            negative_signals = {
-                "EMA_ALIGNMENT_BEARISH",
-                "MOMENTUM_NEGATIVE",
-                "WEAK_TREND",
-            }
-
             for sig in analysis.signals:
                 if sig in positive_signals:
                     signal_modifier += 10.0
                 elif sig in negative_signals:
                     signal_modifier -= 10.0
 
-            # 4. Combine weighted components
-            raw_score = (
-                (state_score * self.weights.MARKET_STATE)
-                + strength_contribution
-                + (signal_modifier * self.weights.SIGNALS)
-            )
-
+            raw_score = (state_score * self.weights.MARKET_STATE) + strength_contribution + (signal_modifier * self.weights.SIGNALS)
             total_score = self._normalize(raw_score)
-
-            # 5. Classify normalized score
             category = self._classify_score(total_score)
-
-            score_result = ScoreResult(
-                score=total_score,
-                category=category,
-                factors=factors,
-                warnings=warnings,
-            )
-
-            logger = self._get_logger(
-                operation="calculate",
-                score=total_score,
-                category=category,
-            )
-
-            logger.info(
-                "Score calculated successfully from AnalysisResult."
-            )
-
-            return score_result
-
-        except Exception as e:
-            if isinstance(e, ScoreEngineError):
+            result = ScoreResult(score=total_score, category=category, factors=factors, warnings=warnings)
+            self._get_logger(operation="calculate", score=total_score, category=category).info("Score calculated successfully from AnalysisResult.")
+            return result
+        except Exception as exc:
+            if isinstance(exc, ScoreEngineError):
                 raise
+            raise ScoreEngineError(f"Failed to calculate score from analysis result: {exc}") from exc
 
-            raise ScoreEngineError(
-                f"Failed to calculate score from analysis result: {e}"
-            ) from e
-
-    # -------------------------------------------------------------------------
-    # Internal Validation & Helper Methods
-    # -------------------------------------------------------------------------
-
-    def _validate_analysis(
-        self,
-        analysis: AnalysisResult,
-    ) -> None:
-        """
-        Validate analysis result properties and bounds.
-        """
-        if analysis.market_state not in {
-            "BULLISH",
-            "BEARISH",
-            "NEUTRAL",
-        }:
-            raise InvalidScoreData(
-                f"Invalid market_state value "
-                f"({analysis.market_state}) in AnalysisResult."
-            )
-
-        if analysis.strength < 0.0 or analysis.strength > 100.0:
-            raise InvalidScoreData(
-                f"Invalid strength value "
-                f"({analysis.strength}) in AnalysisResult. "
-                f"Expected 0 to 100."
-            )
+    def _validate_analysis(self, analysis: AnalysisResult) -> None:
+        if analysis.market_state not in {"BULLISH", "BEARISH", "NEUTRAL"}:
+            raise InvalidScoreData(f"Invalid market_state value ({analysis.market_state}) in AnalysisResult.")
+        try:
+            strength = float(analysis.strength)
+        except (TypeError, ValueError) as exc:
+            raise InvalidScoreData(f"Invalid strength value ({analysis.strength}) in AnalysisResult. Expected a finite number from 0 to 100.") from exc
+        if not math.isfinite(strength):
+            raise InvalidScoreData(f"Invalid strength value ({analysis.strength}) in AnalysisResult. Expected a finite number from 0 to 100.")
+        if strength < 0.0 or strength > 100.0:
+            raise InvalidScoreData(f"Invalid strength value ({analysis.strength}) in AnalysisResult. Expected 0 to 100.")
 
     def _classify_score(self, score: float) -> str:
-        """
-        Classifies numerical score into standard market categories.
-        """
         if score >= self.thresholds.STRONG_BULLISH:
             return "STRONG_BULLISH"
-
-        elif score >= self.thresholds.BULLISH:
+        if score >= self.thresholds.BULLISH:
             return "BULLISH"
-
-        elif (
-            score > self.thresholds.NEUTRAL_LOWER
-            and score < self.thresholds.NEUTRAL_UPPER
-        ):
+        if self.thresholds.NEUTRAL_LOWER < score < self.thresholds.NEUTRAL_UPPER:
             return "NEUTRAL"
-
-        elif score <= self.thresholds.STRONG_BEARISH:
+        if score <= self.thresholds.STRONG_BEARISH:
             return "STRONG_BEARISH"
-
-        elif score <= self.thresholds.BEARISH:
+        if score <= self.thresholds.BEARISH:
             return "BEARISH"
-
         return "NEUTRAL"
 
     def _normalize(self, value: float) -> float:
-        """
-        Clamps value strictly within boundaries.
-        """
-        return float(
-            max(
-                self.thresholds.MIN_SCORE,
-                min(self.thresholds.MAX_SCORE, value),
-            )
-        )
-
-
-# =============================================================================
-# End Of File
-# =============================================================================
+        return float(max(self.thresholds.MIN_SCORE, min(self.thresholds.MAX_SCORE, value)))
