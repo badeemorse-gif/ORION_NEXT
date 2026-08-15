@@ -1,4 +1,9 @@
-"""Future evaluation boundary for Scalping Opportunity selection."""
+"""Future evaluation boundary for Scalping Opportunity selection.
+
+The evaluation contract deliberately contains no scoring formula, ranking
+threshold, or execution intent. It only prevents an engine from marking an
+ineligible Opportunity as accepted.
+"""
 
 from __future__ import annotations
 
@@ -8,12 +13,16 @@ from enum import Enum
 
 from .opportunity import Opportunity
 
+
 class OpportunityEvaluationStatus(str, Enum):
     ACCEPTED = "ACCEPTED"
     REJECTED = "REJECTED"
 
+
 @dataclass(slots=True, frozen=True)
 class OpportunityEvaluation:
+    """Consumer-facing result of a future opportunity evaluation."""
+
     opportunity: Opportunity
     status: OpportunityEvaluationStatus
     reasons: tuple[str, ...] = ()
