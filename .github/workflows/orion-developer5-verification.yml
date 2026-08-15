@@ -1,0 +1,49 @@
+name: ORION Developer 5 Verification
+
+on:
+  push:
+    branches:
+      - developer5/verification-e2e-parity-final
+  pull_request:
+
+jobs:
+  verification:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout exact repository revision
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install verification dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install numpy pandas pandas-ta python-binance requests
+          if [ -f binansScanner/requirements.txt ]; then pip install -r binansScanner/requirements.txt; fi
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+
+      - name: Repository parity gate
+        env:
+          GITHUB_SHA: ${{ github.sha }}
+        run: python tools/verify_repository_parity.py
+
+      - name: Developer 5 contract and E2E regression gate
+        working-directory: binansScanner
+        env:
+          PYTHONPATH: .
+        run: |
+          python -m unittest \
+            tests.test_report_contract \
+            tests.test_pipeline_execution_e2e \
+            tests.test_decision_execution_bridge \
+            tests.test_verification_gates -v
+
+      - name: Final repository parity gate
+        env:
+          GITHUB_SHA: ${{ github.sha }}
+        run: python tools/verify_repository_parity.py
