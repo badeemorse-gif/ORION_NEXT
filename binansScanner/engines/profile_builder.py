@@ -61,37 +61,99 @@ CRITICAL_PROFILE_INDICATORS: tuple[str, ...] = (
     "mfi_14", "atr_14",
 )
 
+# -----------------------------------------------------------------------------
+# Compatibility export
+# -----------------------------------------------------------------------------
+#
+# Existing consumers that still import MarketProfile from this module should
+# receive the canonical domain model instead of a second local definition.
+#
+# New code must import MarketCharacteristics from models.profile directly.
+#
 MarketProfile = MarketCharacteristics
 
 
 class ProfileBuilder:
-    """Build canonical MarketCharacteristics from a single market DataFrame."""
+    """
+    Build canonical MarketCharacteristics from a single market DataFrame.
+
+    All feature extraction and classification logic remains here.
+    The domain result itself is owned by models.profile.
+    """
 
     def build(self, df: pd.DataFrame) -> MarketCharacteristics:
+        """
+        Build a MarketCharacteristics instance from one canonical DataFrame.
+
+        Empty or missing input is safe and returns the canonical default
+        MarketCharacteristics object.
+        """
+
         if df is None or df.empty:
             return MarketCharacteristics()
 
         self._validate_intelligence_input(df)
         latest = df.iloc[-1]
+
         trend_features = self._detect_trend(df, latest)
         trend_strength_features = self._detect_trend_strength(df, latest)
         volatility_features = self._detect_volatility(df, latest)
         momentum_features = self._detect_momentum(df, latest)
         volume_features = self._detect_volume_strength(df, latest)
-        support, resistance = self._detect_support_resistance(df, latest)
-        price_location_features = self._detect_price_location(df, latest, support, resistance)
-        risk_features = self._detect_risk(df, latest, volatility_features)
+
+        support, resistance = self._detect_support_resistance(
+            df,
+            latest,
+        )
+
+        price_location_features = self._detect_price_location(
+            df,
+            latest,
+            support,
+            resistance,
+        )
+
+        risk_features = self._detect_risk(
+            df,
+            latest,
+            volatility_features,
+        )
 
         trend = self._classify_trend(trend_features)
-        trend_strength = self._classify_trend_strength(trend_strength_features)
-        volatility, volatility_level, volatility_score = self._classify_volatility(volatility_features)
-        momentum, momentum_score = self._classify_momentum(momentum_features)
-        volume_strength, volume_score = self._classify_volume(volume_features)
-        market_phase = self._classify_phase(trend_features, trend)
-        risk_level = self._classify_risk(risk_features)
-        price_location = self._classify_price_location(price_location_features)
+
+        trend_strength = self._classify_trend_strength(
+            trend_strength_features,
+        )
+
+        volatility, volatility_level, volatility_score = (
+            self._classify_volatility(
+                volatility_features,
+            )
+        )
+
+        momentum, momentum_score = self._classify_momentum(
+            momentum_features,
+        )
+
+        volume_strength, volume_score = self._classify_volume(
+            volume_features,
+        )
+
+        market_phase = self._classify_phase(
+            trend_features,
+            trend,
+        )
+
+        risk_level = self._classify_risk(
+            risk_features,
+        )
+
+        price_location = self._classify_price_location(
+            price_location_features,
+        )
 
         trend_score = trend_features["trend_score"]
+
         confidence = self._calculate_confidence(
             trend_score=trend_score,
             momentum_score=momentum_score,
@@ -103,8 +165,13 @@ class ProfileBuilder:
         close = float(latest.get("close", 0.0))
         volume = float(latest.get("volume", 0.0))
         liquidity = float(volume * close)
-        ema_alignment = self._classify_ema_alignment(latest)
+
+        ema_alignment = self._classify_ema_alignment(
+            latest,
+        )
+
         timestamp: Optional[datetime] = None
+
         if isinstance(df.index, pd.DatetimeIndex) and len(df.index) > 0:
             timestamp = df.index[-1].to_pydatetime()
 
@@ -124,9 +191,15 @@ class ProfileBuilder:
             risk_level=risk_level,
             confidence=confidence,
             timestamp=timestamp,
-            distance_to_support=price_location_features["distance_to_support"],
-            distance_to_resistance=price_location_features["distance_to_resistance"],
-            distance_to_ema200=price_location_features["distance_to_ema200"],
+            distance_to_support=price_location_features[
+                "distance_to_support"
+            ],
+            distance_to_resistance=price_location_features[
+                "distance_to_resistance"
+            ],
+            distance_to_ema200=price_location_features[
+                "distance_to_ema200"
+            ],
             trend_score=trend_score,
             momentum_score=momentum_score,
             volume_score=volume_score,
@@ -135,52 +208,122 @@ class ProfileBuilder:
 
     def _validate_intelligence_input(self, df: pd.DataFrame) -> None:
         """Reject incomplete indicator intelligence before classification."""
-        missing = [name for name in CRITICAL_PROFILE_INDICATORS if name not in df.columns]
+        missing = [
+            name
+            for name in CRITICAL_PROFILE_INDICATORS
+            if name not in df.columns
+        ]
         if missing:
-            raise ValueError("Profile intelligence blocked: missing critical indicators: " + ", ".join(missing))
+            raise ValueError(
+                "Profile intelligence blocked: missing critical indicators: "
+                + ", ".join(missing)
+            )
 
         metadata = df.attrs.get("indicator_result")
         if metadata is None:
-            raise ValueError("Profile intelligence blocked: indicator metadata is missing.")
+            raise ValueError(
+                "Profile intelligence blocked: indicator metadata is missing."
+            )
         if not isinstance(metadata, IndicatorResult):
-            raise ValueError("Profile intelligence blocked: invalid indicator metadata.")
+            raise ValueError(
+                "Profile intelligence blocked: invalid indicator metadata."
+            )
         if metadata.quality != "SUFFICIENT" or metadata.failed_indicators:
-            raise ValueError("Profile intelligence blocked: indicator metadata reports failed or insufficient indicators.")
+            raise ValueError(
+                "Profile intelligence blocked: indicator metadata reports "
+                "failed or insufficient indicators."
+            )
 
         calculated = set(metadata.calculated_indicators)
-        incomplete = [name for name in CRITICAL_PROFILE_INDICATORS if name not in calculated]
+        incomplete = [
+            name
+            for name in CRITICAL_PROFILE_INDICATORS
+            if name not in calculated
+        ]
         if incomplete:
-            raise ValueError("Profile intelligence blocked: calculated critical indicators are incomplete: " + ", ".join(incomplete))
+            raise ValueError(
+                "Profile intelligence blocked: calculated critical indicators are incomplete: "
+                + ", ".join(incomplete)
+            )
 
         latest = df.iloc[-1]
-        invalid = [name for name in CRITICAL_PROFILE_INDICATORS if not np.isfinite(float(latest[name]))]
+        invalid = [
+            name
+            for name in CRITICAL_PROFILE_INDICATORS
+            if not np.isfinite(float(latest[name]))
+        ]
         if invalid:
-            raise ValueError("Profile intelligence blocked: invalid critical indicators: " + ", ".join(invalid))
+            raise ValueError(
+                "Profile intelligence blocked: invalid critical indicators: "
+                + ", ".join(invalid)
+            )
 
-        if len(df) >= 5 and not np.isfinite(df["ema_20"].tail(5).astype(float).to_numpy()).all():
-            raise ValueError("Profile intelligence blocked: invalid ema_20 slope history.")
+        if len(df) >= 5 and not np.isfinite(
+            df["ema_20"].tail(5).astype(float).to_numpy()
+        ).all():
+            raise ValueError(
+                "Profile intelligence blocked: invalid ema_20 slope history."
+            )
 
-    def _detect_trend(self, df: pd.DataFrame, latest: pd.Series) -> dict[str, Any]:
+    def _detect_trend(
+        self,
+        df: pd.DataFrame,
+        latest: pd.Series,
+    ) -> dict[str, Any]:
         close = float(latest.get("close", 0.0))
         ema_20 = float(latest.get("ema_20", close))
         ema_50 = float(latest.get("ema_50", close))
         ema_100 = float(latest.get("ema_100", close))
         ema_200 = float(latest.get("ema_200", close))
-        ema_20_prev = float(df["ema_20"].iloc[-5]) if "ema_20" in df.columns and len(df) >= 5 else ema_20
+
+        if "ema_20" in df.columns and len(df) >= 5:
+            ema_20_prev = float(df["ema_20"].iloc[-5])
+        else:
+            ema_20_prev = ema_20
+
         slope_20 = (ema_20 - ema_20_prev) / 5.0
-        bullish_alignment = (close > ema_20 > ema_50 > ema_100 > ema_200) and slope_20 > 0
-        bearish_alignment = (close < ema_20 < ema_50 < ema_100 < ema_200) and slope_20 < 0
+
+        bullish_alignment = (
+            close > ema_20 > ema_50 > ema_100 > ema_200
+        ) and slope_20 > 0
+
+        bearish_alignment = (
+            close < ema_20 < ema_50 < ema_100 < ema_200
+        ) and slope_20 < 0
+
         adx = float(latest.get("adx_14", 20.0))
+
         trend_score = 75.0 if bullish_alignment or bearish_alignment else 40.0
-        return {"close": close, "ema_20": ema_20, "ema_50": ema_50, "ema_200": ema_200, "slope_20": slope_20, "bullish_alignment": bullish_alignment, "bearish_alignment": bearish_alignment, "adx": adx, "trend_score": trend_score, "agreement": 1.0 if bullish_alignment or bearish_alignment else 0.5}
+
+        return {
+            "close": close,
+            "ema_20": ema_20,
+            "ema_50": ema_50,
+            "ema_200": ema_200,
+            "slope_20": slope_20,
+            "bullish_alignment": bullish_alignment,
+            "bearish_alignment": bearish_alignment,
+            "adx": adx,
+            "trend_score": trend_score,
+            "agreement": 1.0 if bullish_alignment or bearish_alignment else 0.5,
+        }
 
     def _detect_trend_strength(self, df: pd.DataFrame, latest: pd.Series) -> dict[str, Any]:
         adx = float(latest.get("adx_14", 20.0))
         close = float(latest.get("close", 1.0))
         ema_20 = float(latest.get("ema_20", close))
         ema_50 = float(latest.get("ema_50", close))
-        spacing = abs(ema_20 - ema_50) / close * 100.0 if close > 0 else 0.0
-        slope = float(df["ema_20"].iloc[-1]) - float(df["ema_20"].iloc[-3]) if "ema_20" in df.columns and len(df) >= 3 else 0.0
+
+        if close > 0:
+            spacing = abs(ema_20 - ema_50) / close * 100.0
+        else:
+            spacing = 0.0
+
+        if "ema_20" in df.columns and len(df) >= 3:
+            slope = float(df["ema_20"].iloc[-1]) - float(df["ema_20"].iloc[-3])
+        else:
+            slope = 0.0
+
         return {"adx": adx, "spacing": spacing, "slope": slope}
 
     def _detect_volatility(self, df: pd.DataFrame, latest: pd.Series) -> dict[str, Any]:
@@ -190,9 +333,15 @@ class ProfileBuilder:
         bb_width = float(latest.get("bb_bandwidth", 1.0))
         kc_upper = float(latest.get("kc_upper", close))
         kc_lower = float(latest.get("kc_lower", close))
-        kc_width = (kc_upper - kc_lower) / close * 100.0 if close > 0 else 0.0
+        kc_width = ((kc_upper - kc_lower) / close) * 100.0 if close > 0 else 0.0
         volatility_score = float(np.clip(atr_pct * 25.0, 0.0, 100.0))
-        return {"atr": atr, "atr_pct": atr_pct, "bb_width": bb_width, "kc_width": kc_width, "volatility_score": volatility_score}
+        return {
+            "atr": atr,
+            "atr_pct": atr_pct,
+            "bb_width": bb_width,
+            "kc_width": kc_width,
+            "volatility_score": volatility_score,
+        }
 
     def _detect_momentum(self, df: pd.DataFrame, latest: pd.Series) -> dict[str, Any]:
         rsi = float(latest.get("rsi_14", 50.0))
@@ -201,14 +350,26 @@ class ProfileBuilder:
         roc = float(latest.get("roc_10", 0.0))
         mom = float(latest.get("momentum_10", 0.0))
         momentum_score = float(np.clip(rsi, 0.0, 100.0))
-        return {"rsi": rsi, "macd": macd, "macd_signal": macd_signal, "roc": roc, "mom": mom, "momentum_score": momentum_score}
+        return {
+            "rsi": rsi,
+            "macd": macd,
+            "macd_signal": macd_signal,
+            "roc": roc,
+            "mom": mom,
+            "momentum_score": momentum_score,
+        }
 
     def _detect_volume_strength(self, df: pd.DataFrame, latest: pd.Series) -> dict[str, Any]:
         mfi = float(latest.get("mfi_14", 50.0))
         cmf = float(latest.get("cmf_20", 0.0))
         obv = float(latest.get("obv", 0.0))
         volume_score = float(np.clip(mfi, 0.0, 100.0))
-        return {"mfi": mfi, "cmf": cmf, "obv": obv, "volume_score": volume_score}
+        return {
+            "mfi": mfi,
+            "cmf": cmf,
+            "obv": obv,
+            "volume_score": volume_score,
+        }
 
     def _detect_support_resistance(self, df: pd.DataFrame, latest: pd.Series) -> tuple[float, float]:
         lows = df["low"].tail(20) if "low" in df.columns else pd.Series(dtype=float)
@@ -227,8 +388,17 @@ class ProfileBuilder:
             distance_to_resistance = (resistance - close) / close * 100.0
             distance_to_ema200 = (close - ema_200) / close * 100.0
         else:
-            distance_to_support = distance_to_resistance = distance_to_ema200 = 0.0
-        return {"distance_to_support": distance_to_support, "distance_to_resistance": distance_to_resistance, "distance_to_ema200": distance_to_ema200, "close": close, "support": support, "resistance": resistance}
+            distance_to_support = 0.0
+            distance_to_resistance = 0.0
+            distance_to_ema200 = 0.0
+        return {
+            "distance_to_support": distance_to_support,
+            "distance_to_resistance": distance_to_resistance,
+            "distance_to_ema200": distance_to_ema200,
+            "close": close,
+            "support": support,
+            "resistance": resistance,
+        }
 
     def _detect_risk(self, df: pd.DataFrame, latest: pd.Series, volatility_features: dict[str, Any]) -> dict[str, Any]:
         atr_pct = volatility_features["atr_pct"]
@@ -238,7 +408,11 @@ class ProfileBuilder:
         ema_20 = float(latest.get("ema_20", close))
         ema_50 = float(latest.get("ema_50", close))
         trend_conflict = abs(ema_20 - ema_50) / close > 0.05 if close > 0 else False
-        return {"atr_pct": atr_pct, "momentum_conflict": momentum_conflict, "trend_conflict": trend_conflict}
+        return {
+            "atr_pct": atr_pct,
+            "momentum_conflict": momentum_conflict,
+            "trend_conflict": trend_conflict,
+        }
 
     def _classify_trend(self, features: dict[str, Any]) -> str:
         if features["bullish_alignment"]:
@@ -261,9 +435,13 @@ class ProfileBuilder:
     def _classify_phase(self, trend_features: dict[str, Any], trend: str) -> str:
         adx = trend_features["adx"]
         if trend == TrendType.BULLISH.value:
-            return MarketPhaseType.MARKUP.value if adx > 25 else MarketPhaseType.ACCUMULATION.value
+            if adx > 25:
+                return MarketPhaseType.MARKUP.value
+            return MarketPhaseType.ACCUMULATION.value
         if trend == TrendType.BEARISH.value:
-            return MarketPhaseType.MARKDOWN.value if adx > 25 else MarketPhaseType.DISTRIBUTION.value
+            if adx > 25:
+                return MarketPhaseType.MARKDOWN.value
+            return MarketPhaseType.DISTRIBUTION.value
         return MarketPhaseType.RANGE.value
 
     def _classify_volatility(self, features: dict[str, Any]) -> tuple[float, str, float]:
@@ -340,12 +518,26 @@ class ProfileBuilder:
         return EMAAlignment.NONE.value
 
     def _calculate_confidence(self, trend_score: float, momentum_score: float, volume_score: float, volatility_score: float, agreement: float) -> float:
-        confidence = ((trend_score * 0.30) + (momentum_score * 0.25) + (volume_score * 0.20) + ((100.0 - volatility_score) * 0.15) + (agreement * 100.0 * 0.10))
+        confidence = (
+            (trend_score * 0.30)
+            + (momentum_score * 0.25)
+            + (volume_score * 0.20)
+            + ((100.0 - volatility_score) * 0.15)
+            + (agreement * 100.0 * 0.10)
+        )
         return float(np.clip(confidence, 0.0, 100.0))
 
 
 __all__ = [
-    "EMAAlignment", "MarketCharacteristics", "MarketPhaseType", "MarketProfile",
-    "MomentumState", "ProfileBuilder", "RiskLevel", "TrendStrengthType",
-    "TrendType", "VolatilityLevelType", "VolumeStrength",
+    "EMAAlignment",
+    "MarketCharacteristics",
+    "MarketPhaseType",
+    "MarketProfile",
+    "MomentumState",
+    "ProfileBuilder",
+    "RiskLevel",
+    "TrendStrengthType",
+    "TrendType",
+    "VolatilityLevelType",
+    "VolumeStrength",
 ]
