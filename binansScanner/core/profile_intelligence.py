@@ -53,6 +53,7 @@ class ProfileIntelligenceResult:
 class ProfileIntelligence:
     """Deterministic interpreter for the canonical ProfileResult."""
     _VALID_TIMEFRAMES = {item.value for item in Timeframe}
+    _REQUIRED_TIMEFRAMES = frozenset({"1d", "4h", "1h"})
     _VALID_TRENDS = {item.value for item in TrendType}
     _VALID_MOMENTUM = {item.value for item in MomentumState}
     _VALID_RISKS = {item.value for item in RiskLevel}
@@ -142,6 +143,10 @@ class ProfileIntelligence:
                 return f"ProfileResult contains no candle coverage in timeframe {timeframe_name}."
             if missing_candles >= candles_count:
                 return f"ProfileResult contains incomplete candle coverage in timeframe {timeframe_name}."
+        missing_required = self._REQUIRED_TIMEFRAMES.difference(seen_timeframes)
+        if missing_required:
+            missing = ", ".join(sorted(missing_required, key=("1d", "4h", "1h").index))
+            return f"ProfileResult is missing required intelligence timeframe(s): {missing}."
         return None
 
     def _validate_characteristics(self, characteristics: Any, prefix: str) -> Optional[str]:
@@ -220,3 +225,6 @@ class ProfileIntelligence:
     @staticmethod
     def _blocked(reason: str) -> ProfileIntelligenceResult:
         return ProfileIntelligenceResult(ProfileRecommendation.BLOCKED.value, 0.0, (reason,), True)
+
+
+__all__ = ["ProfileIntelligence", "ProfileIntelligenceResult", "ProfileRecommendation"]
