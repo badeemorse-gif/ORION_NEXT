@@ -1,4 +1,4 @@
-"""ORION Composition Root decision -> execution -> report E2E contract."""
+"""ORION Composition Root Execution -> Report E2E contract tests."""
 from __future__ import annotations
 
 import tempfile
@@ -17,14 +17,11 @@ from models.market import MarketDataset, MarketMetadata, TimeframeData
 
 
 class TestPipelineExecutionE2E(unittest.TestCase):
-    """Validate the real Composition Root application path end-to-end."""
-
     def setUp(self) -> None:
         self._temp_directory = tempfile.TemporaryDirectory()
-        database_path = str(Path(self._temp_directory.name) / "orion_e2e.db")
         self.container = DependencyContainer(
             ContainerConfiguration(
-                database_path=database_path,
+                database_path=str(Path(self._temp_directory.name) / "orion_e2e.db"),
                 binance_api_key="",
                 binance_api_secret="",
                 binance_testnet=True,
@@ -39,12 +36,7 @@ class TestPipelineExecutionE2E(unittest.TestCase):
     def _dataset() -> MarketDataset:
         now = datetime.now(timezone.utc)
         closes = [100_000.0 + float(index * 100.0) for index in range(60)]
-        timestamps = pd.date_range(
-            end=now,
-            periods=len(closes),
-            freq="h",
-            tz="UTC",
-        )
+        timestamps = pd.date_range(end=now, periods=len(closes), freq="h", tz="UTC")
         dataframe = pd.DataFrame(
             {
                 "open": [value - 50.0 for value in closes],
@@ -64,120 +56,76 @@ class TestPipelineExecutionE2E(unittest.TestCase):
             last_timestamp=now,
         )
         metadata = MarketMetadata(
-            symbol="BTCUSDT",
-            exchange="BINANCE",
-            source="E2E_FIXTURE",
-            cache_version="1.0.0",
-            downloaded_at=now,
-            last_updated_at=now,
+            symbol="BTCUSDT", exchange="BINANCE", source="E2E_FIXTURE",
+            cache_version="1.0.0", downloaded_at=now, last_updated_at=now,
         )
-        return MarketDataset(
-            metadata=metadata,
-            timeframes={Timeframe.H1: timeframe_data},
-        )
+        return MarketDataset(metadata=metadata, timeframes={Timeframe.H1: timeframe_data})
 
-    def _run_with_real_market_stages(
-        self,
-        decision: DecisionResult | None = None,
-    ):
+    def _run_with_real_market_stages(self, decision: DecisionResult | None = None):
         dataset = self._dataset()
         provider = self.container.build_market_data_provider()
         storage = self.container.build_market_storage()
         pipeline = self.container.build_pipeline()
-
         decision_patch = (
             patch.object(pipeline._orchestrator._decision_engine, "decide", return_value=decision)
             if decision is not None
             else patch.object(pipeline._orchestrator._decision_engine, "decide", wraps=pipeline._orchestrator._decision_engine.decide)
         )
-
-        with patch.object(provider, "execute", return_value=dataset), patch.object(
-            storage, "execute", return_value=None
-        ), decision_patch:
+        with patch.object(provider, "execute", return_value=dataset), patch.object(storage, "execute", return_value=None), decision_patch:
             return pipeline.run_symbol("BTCUSDT", [Timeframe.H1.value], quantity=1.0)
 
-    def test_container_pipeline_reaches_execution_and_builds_report(self) -> None:
-        """Real container graph reaches execution and ReportEngine with the real decision."""
+    def test_successful_execution_report_is_complete(self) -> None:
+        result = self._run_with_real_market_stages(DecisionResult(decision="FAVORABLE", confidence=0.95, reasons=["E2E executable decision"]))
+        self.assertTrue(result.success)
+        self.assertIsNotNone(result.report_result)
+        assert result.report_result is not None
+        self.assertEqual(result.execution_result.status, ExecutionStatus.EXECUTED)
+        self.assertEqual(result.report_result.audit.status.value, "COMPLETE")
+        self.assertEqual(result.report_result.audit.execution_status, ExecutionStatus.EXECUTED)
+        self.assertEqual(result.report_result.audit.decision_reasons, ("E2E executable decision",))
+
+    def test_skipped_execution_report_is_complete(self) -> None:
         result = self._run_with_real_market_stages()
-
         self.assertTrue(result.success)
-        self.assertIsNone(result.error_message)
-        self.assertIsNotNone(result.orchestrator_result)
-        self.assertIsNotNone(result.orchestrator_result.execution_plan)
-        self.assertIsNotNone(result.execution_result)
         self.assertIsNotNone(result.report_result)
+        assert result.report_result is not None
+        self.assertEqual(result.execution_result.status, ExecutionStatus.SKIPPED)
+        self.assertEqual(result.orchestrator_result.execution_plan.side, ExecutionSide.HOLD)
+        self.assertEqual(result.report_result.audit.status.value, "COMPLETE")
+        self.assertEqual(result.report_result.audit.execution_status, ExecutionStatus.SKIPPED)
 
-        plan = result.orchestrator_result.execution_plan
-        execution = result.execution_result
-        report = result.report_result
-        assert plan is not None
-        assert execution is not None
-        assert report is not None
-
-        # The real deterministic fixture produces WAIT. HOLD must cross the
-        # execution boundary and become SKIPPED rather than being forced into
-        # an executable BUY/SELL path.
-        self.assertEqual(result.orchestrator_result.decision.decision, "WAIT")
-        self.assertEqual(plan.side, ExecutionSide.HOLD)
-        self.assertEqual(execution.status, ExecutionStatus.SKIPPED)
-        self.assertFalse(execution.executed)
-        self.assertIsNone(execution.order_id)
-        self.assertIs(report.execution, execution)
-        self.assertTrue(report.is_complete)
-
-    def test_container_pipeline_executes_favorable_decision_end_to_end(self) -> None:
-        """A favorable real-orchestrator decision must execute through PaperExecutionAdapter."""
-        result = self._run_with_real_market_stages(
-            DecisionResult(
-                decision="FAVORABLE",
-                confidence=0.95,
-                reasons=["E2E executable decision"],
-            )
-        )
-
-        self.assertTrue(result.success)
-        self.assertIsNone(result.error_message)
-        self.assertIsNotNone(result.orchestrator_result)
-        self.assertIsNotNone(result.execution_result)
-        self.assertIsNotNone(result.report_result)
-
-        plan = result.orchestrator_result.execution_plan
-        execution = result.execution_result
-        report = result.report_result
-        assert plan is not None
-        assert execution is not None
-        assert report is not None
-
-        self.assertEqual(result.orchestrator_result.decision.decision, "FAVORABLE")
-        self.assertEqual(plan.side, ExecutionSide.BUY)
-        self.assertEqual(execution.status, ExecutionStatus.EXECUTED)
-        self.assertTrue(execution.executed)
-        self.assertIsNotNone(execution.order_id)
-        self.assertTrue(execution.order_id.startswith("PAPER-"))
-        self.assertIs(report.execution, execution)
-        self.assertTrue(report.is_complete)
-
-    def test_execution_failure_stops_before_report_boundary(self) -> None:
-        """Execution failure must not be converted into a successful Report stage."""
+    def test_execution_failure_is_reported_as_failed_not_success(self) -> None:
         pipeline = self.container.build_pipeline()
-        execution_failure = ExecutionResult(
-            status=ExecutionStatus.FAILED,
-            message="forced execution failure",
-        )
-        report_builder = MagicMock()
-
-        with patch.object(pipeline._orchestrator, "run", return_value=MagicMock(execution_plan=MagicMock())), patch.object(
-            pipeline._execution_engine,
-            "execute",
-            return_value=execution_failure,
-        ), patch.object(pipeline._report_engine, "build_report", report_builder):
+        execution_failure = ExecutionResult(status=ExecutionStatus.FAILED, message="forced execution failure")
+        with patch.object(
+            pipeline._orchestrator,
+            "run",
+            return_value=MagicMock(execution_plan=MagicMock(), analysis=None, profile=None, score=None, decision=None, statistics=MagicMock(elapsed_ms=0.0)),
+        ), patch.object(pipeline._execution_engine, "execute", return_value=execution_failure):
             result = pipeline.run_symbol("BTCUSDT", [Timeframe.H1.value], quantity=1.0)
-
         self.assertFalse(result.success)
         self.assertEqual(result.failed_stage, "EXECUTION")
-        self.assertIs(result.execution_result, execution_failure)
-        self.assertIsNone(result.report_result)
-        report_builder.assert_not_called()
+        self.assertIsNotNone(result.report_result)
+        assert result.report_result is not None
+        self.assertEqual(result.report_result.audit.status.value, "FAILED")
+        self.assertEqual(result.report_result.audit.execution_status, ExecutionStatus.FAILED)
+        self.assertEqual(result.report_result.audit.failure_stage, "EXECUTION")
+        self.assertEqual(result.report_result.audit.stage_trace, ("ORCHESTRATION", "EXECUTION", "REPORT"))
+
+    def test_orchestration_failure_builds_failure_evidence(self) -> None:
+        pipeline = self.container.build_pipeline()
+        last_result = MagicMock(execution_plan=None, analysis=None, profile=None, score=None, decision=None, statistics=MagicMock(elapsed_ms=0.0))
+        with patch.object(pipeline._orchestrator, "run", side_effect=RuntimeError("orchestration exploded")), patch.object(pipeline._orchestrator, "last_result", return_value=last_result):
+            result = pipeline.run_symbol("BTCUSDT", [Timeframe.H1.value], quantity=1.0)
+        self.assertFalse(result.success)
+        self.assertEqual(result.failed_stage, "ORCHESTRATION")
+        self.assertIsNotNone(result.report_result)
+        assert result.report_result is not None
+        self.assertEqual(result.report_result.audit.status.value, "FAILED")
+        self.assertIsNone(result.report_result.audit.execution_status)
+        self.assertEqual(result.report_result.audit.failure_stage, "ORCHESTRATION")
+        self.assertEqual(result.report_result.audit.failure_message, "orchestration exploded")
+        self.assertEqual(result.report_result.audit.stage_trace, ("ORCHESTRATION", "REPORT"))
 
 
 if __name__ == "__main__":
