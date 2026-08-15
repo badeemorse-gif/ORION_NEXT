@@ -1,8 +1,8 @@
 # ORION_NEXT — CENTRAL INTEGRATION GATE
 
-**Status:** FINAL AUDIT PENDING
+**Status:** FINAL
 **Integration branch:** `integration/final-release-20260815`
-**Current published HEAD at gate creation:** `2c64c5490ccc6da8f8aa9beb0216e7108dd11b35`
+**Audited integration state:** `1473cdf2cb5a97c81491e316abee125634d189d6`
 **Base main:** `9147ea6bf6812c4afda8e0e3e9596b0460b05419`
 
 ## Approved package HEADs
@@ -15,15 +15,6 @@
 - D6: `developer6-reporting-auditability @ 1a276a43a9a80b335f764f46efe1abfb438a1476`
 - D7: `developer7-market-data-quality @ 289f273f6217eea4b002101caf6ef1356dae9161`
 
-## Gate criteria
-
-- Final HEAD must equal the published branch HEAD.
-- Final changed-path inventory must match FINAL_INTEGRATION_MANIFEST.md exactly.
-- Every changed path must have one decision and one owner.
-- Shared files have exactly one final owner.
-- No package collateral may enter merely through ancestry.
-- `main` and all approved source branches must remain unchanged.
-
 ## Shared ownership
 
 - `binansScanner/core/pipeline.py` → D6 Reporting
@@ -31,10 +22,34 @@
 - `ORION-Project-Management/docs/ORION_CONTROL_INDEX.md` → D1 Central Integration
 - `ORION-Project-Management/docs/ORION_PROJECT_STATE.md` → D1 Central Integration
 
-## Explicitly excluded collateral
+## Final tree audit
 
-`tools/orion_sync.bat`, `tools/orion_sync_safe.py`, legacy restore/sync tooling, backup files, temporary/probe markers, `binansScanner/models/explosive_watchlist.py`, and unrelated GUI/live-execution collateral are not part of the integrated package scope.
+- Base main = `9147ea6bf6812c4afda8e0e3e9596b0460b05419` ✅
+- Audited integration state = `1473cdf2cb5a97c81491e316abee125634d189d6` ✅
+- Net changed paths = **69** ✅
+- INCLUDED = **67** ✅
+- EXCLUDED = **2** ✅
+- Missing manifest decisions = **0** ✅
+- Shared files with multiple owners = **0** ✅
+- Package parity = **EXACT** ✅
+- Scope leakage = **NONE** ✅
+- Main changed during integration = **NO** ✅
+- Approved source branches changed during integration = **NO** ✅
 
-## Audit result
+## Special-case decisions
 
-The final audit is not declared complete in this document until the branch HEAD, final tree inventory, manifest parity, scope leakage, and blocker state have all been verified from GitHub.
+- `python`: no net change at final audit; target state matches main.
+- `ORION-Project-Management/OPERATIONAL_READINESS.md`: absent from final tree and not a net changed path.
+- `__integration_cleanup_marker__.txt`: EXCLUDED — intentional cleanup deletion.
+- `__integration_probe__.txt`: EXCLUDED — intentional probe-marker deletion.
+- Legacy Sync/Restore tools, backups, probes, GUI collateral, and `binansScanner/models/explosive_watchlist.py`: excluded from publication.
+
+## BLOCKERS
+
+**0**
+
+The audit found no changed path without a Manifest decision, no unresolved shared ownership, and no package-scope leakage in the final net changed-path set.
+
+## Finalization note
+
+The document records the exact GitHub state audited immediately before this final gate publication. The subsequent gate publication commit changes documentation only and does not alter the audited package tree or semantics.
