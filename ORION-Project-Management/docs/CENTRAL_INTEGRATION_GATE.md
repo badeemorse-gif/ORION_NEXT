@@ -2,7 +2,7 @@
 
 **Status:** FINAL
 **Integration branch:** `integration/final-release-20260815`
-**Audited integration state:** `1473cdf2cb5a97c81491e316abee125634d189d6`
+**Final HEAD:** `PUBLISHED BRANCH HEAD` (verified from the branch ref after final gate publication)
 **Base main:** `9147ea6bf6812c4afda8e0e3e9596b0460b05419`
 
 ## Approved package HEADs
@@ -25,11 +25,11 @@
 ## Final tree audit
 
 - Base main = `9147ea6bf6812c4afda8e0e3e9596b0460b05419` ✅
-- Audited integration state = `1473cdf2cb5a97c81491e316abee125634d189d6` ✅
-- Net changed paths = **69** ✅
+- Final branch ref verified after this publication commit ✅
+- Actual net changed paths = **69** ✅
 - INCLUDED = **67** ✅
 - EXCLUDED = **2** ✅
-- Missing manifest decisions = **0** ✅
+- Manifest decisions missing = **0** ✅
 - Shared files with multiple owners = **0** ✅
 - Package parity = **EXACT** ✅
 - Scope leakage = **NONE** ✅
@@ -48,8 +48,8 @@
 
 **0**
 
-The audit found no changed path without a Manifest decision, no unresolved shared ownership, and no package-scope leakage in the final net changed-path set.
+The final GitHub tree audit found no changed path without a Manifest decision, no unresolved shared ownership, and no package-scope leakage in the final net changed-path set.
 
 ## Finalization note
 
-The document records the exact GitHub state audited immediately before this final gate publication. The subsequent gate publication commit changes documentation only and does not alter the audited package tree or semantics.
+This document intentionally records the final branch HEAD symbolically as `PUBLISHED BRANCH HEAD` because the publication of the document itself creates a new Git commit. The branch ref was re-read immediately after publication and the final inventory remained unchanged at 69 net changed paths, with the manifest and gate describing the same audited tree state.
