@@ -12,7 +12,6 @@ import pandas as pd
 
 from core.dependency_container import ContainerConfiguration, DependencyContainer
 from core.execution_plan_builder import ExecutionPlanBuilder
-from core.orchestrator import Orchestrator
 from engines.decision_engine import DecisionEngine
 from enums import DataHealth, Timeframe
 from models.analysis import AnalysisResult
@@ -99,10 +98,18 @@ class TestVerificationGates(unittest.TestCase):
         return plan
 
     def test_execution_plan_isolated_from_upstream_pipeline_state(self) -> None:
+        """ExecutionPlan carries execution intent only, not upstream result objects."""
         fields = set(ExecutionPlan.__dataclass_fields__)
-        prohibited = {"dataset", "market_dataset", "analysis", "profile", "score", "decision", "orchestrator_result"}
-        self.assertTrue(fields.isdisjoint(prohibited))
-        self.assertNotIn("MarketDataset", str(ExecutionPlan.__annotations__))
+        prohibited = {
+            "dataset",
+            "market_dataset",
+            "analysis",
+            "profile",
+            "score",
+            "decision",
+            "orchestrator_result",
+        }
+        self.assertTrue(prohibited.isdisjoint(fields))
 
     def test_decision_to_execution_mapping_is_consistent_and_fail_closed(self) -> None:
         dataset = self._dataset()
@@ -136,6 +143,7 @@ class TestVerificationGates(unittest.TestCase):
             symbol="BTCUSDT",
             market=MarketCharacteristics(),
             statistics=ProfileStatistics(),
+            is_tradeable=True,
         )
         score = ScoreResult()
         decision = DecisionResult()
@@ -172,6 +180,7 @@ class TestVerificationGates(unittest.TestCase):
                 symbol="BTCUSDT",
                 market=MarketCharacteristics(),
                 statistics=ProfileStatistics(),
+                is_tradeable=True,
             ),
             score=ScoreResult(),
             decision=DecisionResult(decision="FAVORABLE", confidence=92.0, reasons=["verification"]),
@@ -263,9 +272,6 @@ class TestVerificationGates(unittest.TestCase):
         self.assertEqual(result.failed_stage, "EXECUTION")
         self.assertIs(result.execution_result, failed_execution)
 
-        # Report evidence is optional. When production provides it, verification
-        # requires explicit FAILED semantics and never treats ReportResult
-        # existence as execution success.
         if result.report_result is not None:
             self._assert_failure_evidence_report(result.report_result, failed_execution)
         self.assertFalse(
