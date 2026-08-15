@@ -16,8 +16,6 @@
   طريقة التنفيذ والمراجعة والاختبار والتسليم والتكامل المؤجل.
 - ARCHITECTURE → `ORION_ARCHITECTURE.md`
   المعمارية الحالية وحدود الطبقات والعقود.
-- EXECUTION → REPORT CONTRACT → `ORION_EXECUTION_REPORT_CONTRACT.md`
-  العقد الوحيد لعلاقة ExecutionResult بـReportResult، وحالات COMPLETE/INCOMPLETE/FAILED وأدلة الفشل.
 - PROJECT STATE → `ORION_PROJECT_STATE.md`
   الحالة الحالية فقط.
 - ROADMAP → `ORION_ROADMAP.md`
@@ -48,7 +46,7 @@
 - رسالة ORION عادية → GPT EXECUTION RULES + CONTROL INDEX.
 - أمر 1 → EXECUTION RULES + CONTROL INDEX + PROJECT STATE + ROADMAP ثم الوثائق المطلوبة فقط.
 - مراجعة تطوير → EXECUTION RULES + CONTROL INDEX + الحالة عند الحاجة + ARCHITECTURE/FINDINGS والكود المتأثر.
-- Workflow/Sync أو Final Materialization → EXECUTION RULES + CONTROL INDEX + WORK PROTOCOL + RESTORE/ALL SYNC CONTRACT + FINAL MATERIALIZATION CONTRACT.
+- Workflow/Sync → EXECUTION RULES + CONTROL INDEX + WORK PROTOCOL + RESTORE/ALL SYNC CONTRACT + FINAL MATERIALIZATION CONTRACT عند تأثر MAIN/ALL أو finalization.
 - مراجعة شاملة/تعارض → مراجعة موسعة للوثائق والكود والاختبارات المتأثرة.
 
 ## سياسة التطوير والمزامنة الحالية
