@@ -14,6 +14,7 @@ from enums import DataHealth, Timeframe
 from models.decision import DecisionResult
 from models.execution import ExecutionPlan, ExecutionResult, ExecutionSide, ExecutionStatus
 from models.market import MarketDataset, MarketMetadata, TimeframeData
+from models.profile import MarketCharacteristics, ProfileResult, ProfileStatistics
 from models.report import ReportResult
 
 
@@ -78,6 +79,17 @@ class TestPipelineExecutionE2E(unittest.TestCase):
         )
 
     @staticmethod
+    def _valid_profile() -> ProfileResult:
+        return ProfileResult(
+            symbol="BTCUSDT",
+            market=MarketCharacteristics(),
+            statistics=ProfileStatistics(),
+            is_tradeable=True,
+            warnings=(),
+            blocks=(),
+        )
+
+    @staticmethod
     def _assert_failure_evidence_report(report: ReportResult, execution: ExecutionResult) -> None:
         assert report.execution is execution
         assert report.execution.status is ExecutionStatus.FAILED
@@ -91,16 +103,21 @@ class TestPipelineExecutionE2E(unittest.TestCase):
         provider = self.container.build_market_data_provider()
         storage = self.container.build_market_storage()
         pipeline = self.container.build_pipeline()
+        profile_engine = pipeline._orchestrator._profile_engine
 
         decision_patch = (
             patch.object(pipeline._orchestrator._decision_engine, "decide", return_value=decision)
             if decision is not None
-            else patch.object(pipeline._orchestrator._decision_engine, "decide", wraps=pipeline._orchestrator._decision_engine.decide)
+            else patch.object(
+                pipeline._orchestrator._decision_engine,
+                "decide",
+                wraps=pipeline._orchestrator._decision_engine.decide,
+            )
         )
 
         with patch.object(provider, "execute", return_value=dataset), patch.object(
             storage, "execute", return_value=None
-        ), decision_patch:
+        ), patch.object(profile_engine, "build_profile", return_value=self._valid_profile()), decision_patch:
             return pipeline.run_symbol("BTCUSDT", [Timeframe.H1.value], quantity=1.0)
 
     def test_container_pipeline_reaches_execution_and_builds_report(self) -> None:
