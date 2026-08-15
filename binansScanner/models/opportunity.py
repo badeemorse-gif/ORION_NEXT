@@ -11,9 +11,11 @@ from enum import Enum
 from math import isfinite
 from typing import Optional
 
+
 class OpportunityDirection(str, Enum):
     LONG = "LONG"
     SHORT = "SHORT"
+
 
 class OpportunityStatus(str, Enum):
     CANDIDATE = "CANDIDATE"
@@ -22,10 +24,12 @@ class OpportunityStatus(str, Enum):
     REJECTED = "REJECTED"
     BLOCKED = "BLOCKED"
 
+
 class FreshnessStatus(str, Enum):
     FRESH = "FRESH"
     STALE = "STALE"
     UNKNOWN = "UNKNOWN"
+
 
 class RiskState(str, Enum):
     ACCEPTABLE = "ACCEPTABLE"
@@ -33,11 +37,13 @@ class RiskState(str, Enum):
     UNACCEPTABLE = "UNACCEPTABLE"
     UNKNOWN = "UNKNOWN"
 
+
 @dataclass(slots=True, frozen=True)
 class OpportunityRisk:
     state: RiskState = RiskState.UNKNOWN
     invalidation: Optional[str] = None
     notes: tuple[str, ...] = ()
+
 
 @dataclass(slots=True, frozen=True)
 class Opportunity:
@@ -72,12 +78,27 @@ class Opportunity:
 
     @property
     def is_complete(self) -> bool:
-        return (self.entry_candidate is not None and self.confidence is not None and self.setup_quality is not None and bool(self.supporting_evidence) and self.risk.state is not RiskState.UNKNOWN and self.freshness is not FreshnessStatus.UNKNOWN)
+        return (
+            self.entry_candidate is not None
+            and self.confidence is not None
+            and self.setup_quality is not None
+            and bool(self.supporting_evidence)
+            and self.risk.state is not RiskState.UNKNOWN
+            and self.freshness is not FreshnessStatus.UNKNOWN
+        )
 
     @property
     def is_eligible(self) -> bool:
-        return (self.is_complete and self.status is OpportunityStatus.ACTIVE and self.freshness is FreshnessStatus.FRESH and self.risk.state is RiskState.ACCEPTABLE and not self.is_expired)
+        return (
+            self.is_complete
+            and self.status is OpportunityStatus.ACTIVE
+            and self.freshness is FreshnessStatus.FRESH
+            and self.risk.state is RiskState.ACCEPTABLE
+            and not self.is_expired
+        )
 
     @property
     def is_expired(self) -> bool:
-        return self.status is OpportunityStatus.EXPIRED or (self.expires_at is not None and datetime.now(timezone.utc) >= self.expires_at)
+        return self.status is OpportunityStatus.EXPIRED or (
+            self.expires_at is not None and datetime.now(timezone.utc) >= self.expires_at
+        )
