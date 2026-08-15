@@ -148,6 +148,7 @@ class TestDecisionExecutionBridge(unittest.TestCase):
         self.assertIsNotNone(plan)
         assert plan is not None
         self.assertEqual(plan.side, ExecutionSide.HOLD)
+        self.assertEqual(plan.quantity, 0.0)
 
         result = self.execution_engine.execute(plan)
 
