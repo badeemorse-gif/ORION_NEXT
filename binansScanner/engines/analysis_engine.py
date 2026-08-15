@@ -8,27 +8,8 @@ Status       : Canonical Analysis Contract
 ===============================================================================
 
 Analysis layer.
-
-Responsibilities:
-    - consume canonical MarketDataset data;
-    - consume canonical indicator columns;
-    - derive market-state observations;
-    - calculate analysis-level strength;
-    - return AnalysisResult.
-
-Explicit non-responsibilities:
-    - no Binance/provider access;
-    - no persistence;
-    - no profile construction;
-    - no score calculation;
-    - no decision making;
-    - no execution;
-    - no reporting;
-    - no mutation of MarketDataset domain state.
-
 ===============================================================================
 """
-
 from __future__ import annotations
 
 import logging
@@ -43,7 +24,10 @@ from models.market import MarketDataset, TimeframeData
 
 logger = logging.getLogger(__name__)
 
+
 class AnalysisEngine:
+    """Canonical ORION analysis engine."""
+
     REQUIRED_INDICATORS: tuple[str, ...] = (
         "ema_9", "ema_20", "ema_50", "rsi_14", "adx_14", "momentum_5",
     )
@@ -55,24 +39,31 @@ class AnalysisEngine:
         self.default_timeframe = self._normalize_timeframe(default_timeframe)
 
     def analyze(self, dataset: MarketDataset) -> AnalysisResult:
+        """Analyze a canonical MarketDataset without mutating it."""
         if not isinstance(dataset, MarketDataset):
             raise TypeError("AnalysisEngine.analyze expects MarketDataset.")
         if not dataset.timeframes:
             return AnalysisResult(market_state="NEUTRAL", strength=0.0, warnings=["EMPTY_DATASET"])
         timeframe_data, timeframe = self._select_primary_timeframe(dataset)
-        if timeframe_data is None or timeframe is None or timeframe_data.dataframe is None or timeframe_data.dataframe.empty:
+        if timeframe_data is None or timeframe is None:
             return AnalysisResult(market_state="NEUTRAL", strength=0.0, warnings=["NO_VALID_TIMEFRAME_DATA"])
         dataframe = timeframe_data.dataframe
+        if dataframe is None or dataframe.empty:
+            return AnalysisResult(market_state="NEUTRAL", strength=0.0, warnings=["NO_VALID_TIMEFRAME_DATA"])
         signals: list[str] = []
         warnings: list[str] = []
         missing_indicators = self._missing_required_indicators(dataframe)
         if missing_indicators:
             logger.warning("Missing required indicators for %s: %s", timeframe.value, missing_indicators)
-            return AnalysisResult(market_state="NEUTRAL", strength=0.0, signals=["LOW_CONFIDENCE_DATA"], warnings=["MISSING_REQUIRED_INDICATORS"])
+            warnings.append("MISSING_REQUIRED_INDICATORS")
+            signals.append("LOW_CONFIDENCE_DATA")
+            return AnalysisResult(market_state="NEUTRAL", strength=0.0, signals=signals, warnings=warnings)
         invalid_indicators = self._invalid_required_indicators(dataframe)
         if invalid_indicators:
             logger.warning("Invalid required indicators for %s: %s", timeframe.value, invalid_indicators)
-            return AnalysisResult(market_state="NEUTRAL", strength=0.0, signals=["LOW_CONFIDENCE_DATA"], warnings=["INVALID_REQUIRED_INDICATORS"])
+            warnings.append("INVALID_REQUIRED_INDICATORS")
+            signals.append("LOW_CONFIDENCE_DATA")
+            return AnalysisResult(market_state="NEUTRAL", strength=0.0, signals=signals, warnings=warnings)
         market_state = self._determine_market_state(dataframe, signals)
         strength = self._calculate_market_strength(dataframe, signals)
         return AnalysisResult(market_state=market_state, strength=round(strength, 2), signals=signals, warnings=warnings)
@@ -111,8 +102,9 @@ class AnalysisEngine:
         latest = dataframe.iloc[-1]
         invalid: list[str] = []
         for indicator in self.REQUIRED_INDICATORS:
+            value = latest[indicator]
             try:
-                numeric_value = float(latest[indicator])
+                numeric_value = float(value)
             except (TypeError, ValueError):
                 invalid.append(indicator)
                 continue
@@ -165,5 +157,6 @@ class AnalysisEngine:
         if not components:
             return 50.0
         return min(max(sum(components) / len(components), 0.0), 100.0)
+
 
 __all__ = ["AnalysisEngine"]
