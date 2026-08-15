@@ -10,7 +10,10 @@ import pandas as pd
 
 from core.orchestrator import Orchestrator, OrchestratorConfig, PipelineError, PipelineStage
 from enums import DataHealth, Timeframe
+from models.analysis import AnalysisResult
 from models.market import MarketDataset, MarketMetadata, TimeframeData
+from models.profile import MarketCharacteristics, ProfileResult, ProfileStatistics
+from models.score import ScoreResult
 
 
 class TestOrchestratorStageFailureBoundary(TestCase):
@@ -41,16 +44,37 @@ class TestOrchestratorStageFailureBoundary(TestCase):
         provider = MagicMock()
         provider.execute.return_value = dataset
         storage = MagicMock()
+
         validation = MagicMock()
         validation.validate_dataset.return_value = MagicMock()
+
         indicator = MagicMock()
         indicator.calculate_dataset.return_value = dataset
+
+        # Valid downstream fixtures are used so a later fault injection is not
+        # hidden by an unrelated production gate before the requested stage.
         analysis = MagicMock()
-        analysis.analyze.return_value = MagicMock()
+        analysis.analyze.return_value = AnalysisResult(
+            market_state="NEUTRAL",
+            strength=0.0,
+            signals=[],
+        )
+
         profile = MagicMock()
-        profile.build_profile.return_value = MagicMock()
+        profile.build_profile.return_value = ProfileResult(
+            symbol="BTCUSDT",
+            market=MarketCharacteristics(),
+            statistics=ProfileStatistics(),
+            is_tradeable=True,
+        )
+
         score = MagicMock()
-        score.calculate.return_value = MagicMock()
+        score.calculate.return_value = ScoreResult(
+            score=0.0,
+            category="NEUTRAL",
+            factors=[],
+        )
+
         decision = MagicMock()
         decision_result = MagicMock()
         decision_result.decision = "WAIT"
