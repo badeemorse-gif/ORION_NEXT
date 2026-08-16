@@ -98,6 +98,8 @@ class TestPipelineExecutionE2E(unittest.TestCase):
     def _run_with_real_market_stages(
         self,
         decision: DecisionResult | None = None,
+        *,
+        quantity: float = 1.0,
     ):
         dataset = self._dataset()
         provider = self.container.build_market_data_provider()
@@ -118,11 +120,11 @@ class TestPipelineExecutionE2E(unittest.TestCase):
         with patch.object(provider, "execute", return_value=dataset), patch.object(
             storage, "execute", return_value=None
         ), patch.object(profile_engine, "build_profile", return_value=self._valid_profile()), decision_patch:
-            return pipeline.run_symbol("BTCUSDT", [Timeframe.H1.value], quantity=1.0)
+            return pipeline.run_symbol("BTCUSDT", [Timeframe.H1.value], quantity=quantity)
 
     def test_container_pipeline_reaches_execution_and_builds_report(self) -> None:
-        """Real container graph reaches execution and ReportEngine with the real decision."""
-        result = self._run_with_real_market_stages()
+        """WAIT reaches HOLD with zero quantity and is skipped with a complete report."""
+        result = self._run_with_real_market_stages(quantity=0.0)
 
         self.assertTrue(result.success)
         self.assertIsNone(result.error_message)
@@ -154,7 +156,8 @@ class TestPipelineExecutionE2E(unittest.TestCase):
                 decision="FAVORABLE",
                 confidence=0.95,
                 reasons=["E2E executable decision"],
-            )
+            ),
+            quantity=1.0,
         )
 
         self.assertTrue(result.success)
