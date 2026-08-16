@@ -15,6 +15,8 @@ from models.profile import (
 
 
 class TestProfileIntelligence(unittest.TestCase):
+    REQUIRED_TIMEFRAMES = ("1d", "4h", "1h")
+
     def _profile(
         self,
         *,
@@ -60,15 +62,27 @@ class TestProfileIntelligence(unittest.TestCase):
 
         profiles = ()
         if timeframes:
-            profiles = (
+            profile_names = list(self.REQUIRED_TIMEFRAMES)
+            if timeframe_name not in self.REQUIRED_TIMEFRAMES:
+                profile_names[-1] = timeframe_name
+            profiles = tuple(
                 TimeframeProfile(
-                    timeframe=timeframe_name,
-                    characteristics=timeframe_characteristics or market,
-                    candles_count=timeframe_candles_count,
+                    timeframe=name,
+                    characteristics=(
+                        timeframe_characteristics
+                        if name == timeframe_name and timeframe_characteristics is not None
+                        else market
+                    ),
+                    candles_count=(
+                        timeframe_candles_count if name == timeframe_name else 100
+                    ),
                     first_timestamp=datetime(2026, 1, 1, tzinfo=timezone.utc),
                     last_timestamp=datetime(2026, 1, 2, tzinfo=timezone.utc),
-                    missing_candles=timeframe_missing_candles,
-                ),
+                    missing_candles=(
+                        timeframe_missing_candles if name == timeframe_name else 0
+                    ),
+                )
+                for name in profile_names
             )
 
         return ProfileResult(
