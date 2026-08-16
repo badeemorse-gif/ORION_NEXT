@@ -35,7 +35,7 @@ class TestSignalObservationWorkflow(unittest.TestCase):
         ):
             rc = observe.command_start(args)
         self.assertEqual(rc, 0)
-        return self.root / "signal-observations" / "EXP-20260817T000000ZZ-0123456789ab"
+        return self.root / "signal-observations" / "EXP-20260817T000000Z-0123456789ab"
 
     def test_start_creates_immutable_identity_artifacts(self) -> None:
         directory = self._start()
@@ -84,6 +84,30 @@ class TestSignalObservationWorkflow(unittest.TestCase):
         )
         with self.assertRaises(RuntimeError):
             observe.command_record(record_args)
+
+    def test_replay_reuses_immutable_inputs_but_creates_new_session(self) -> None:
+        directory = self._start()
+        sid = json.loads((directory / "session.json").read_text(encoding="utf-8"))["session_id"]
+        with mock.patch.object(observe, "utc_now", return_value="2026-08-17T00:10:00Z"):
+            self.assertEqual(observe.command_stop(mock.Mock(artifact_root=str(self.root), session_id=sid)), 0)
+        with mock.patch.object(observe, "utc_now", return_value="2026-08-17T00:20:00Z"), mock.patch.object(
+            observe.secrets, "token_hex", return_value="fedcba987654"
+        ):
+            self.assertEqual(observe.command_replay(mock.Mock(artifact_root=str(self.root), session_id=sid)), 0)
+        replay_dir = self.root / "signal-observations" / "EXP-20260817T002000Z-fedcba987654"
+        self.assertTrue(replay_dir.is_dir())
+        replay_session = json.loads((replay_dir / "session.json").read_text(encoding="utf-8"))
+        self.assertNotEqual(sid, replay_session["session_id"])
+        self.assertEqual(replay_session["baseline_commit"], self.baseline)
+        self.assertEqual(replay_session["configuration_fingerprint"], json.loads((directory / "configuration_fingerprint.json").read_text(encoding="utf-8"))["configuration_fingerprint"])
+        self.assertEqual(
+            (directory / "configuration_input.json").read_bytes(),
+            (replay_dir / "configuration_input.json").read_bytes(),
+        )
+        self.assertEqual(
+            (directory / "universe_input.json").read_bytes(),
+            (replay_dir / "universe_input.json").read_bytes(),
+        )
 
     def test_artifact_root_inside_repository_is_refused(self) -> None:
         with mock.patch.object(observe, "REPO_ROOT", Path(self.tmp.name) / "repo"):
