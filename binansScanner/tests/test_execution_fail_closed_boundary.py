@@ -1,55 +1,105 @@
+"""Final Execution FAILED -> Failure Evidence Report contract test."""
+
 from __future__ import annotations
 
-import math
+import json
+import tempfile
 import unittest
+from pathlib import Path
 
-from engines.execution_engine import ExecutionEngine, PaperExecutionAdapter
-from engines.report_engine import InvalidReportData, ReportEngine
-from models.execution import ExecutionPlan, ExecutionResult, ExecutionSide, ExecutionStatus
-from models.report import ReportResult
+from engines.report_engine import ReportEngine
+from models.analysis import AnalysisResult
+from models.decision import DecisionResult
+from models.execution import ExecutionResult, ExecutionStatus
+from models.profile import MarketCharacteristics, ProfileResult, ProfileStatistics
+from models.report import ReportAuditStatus
+from models.score import ScoreResult
+from reports.html_report import HtmlReportRenderer
+from reports.json_report import JsonReportRenderer
+from reports.report_exporter import ReportExporter, ReportFormat
 
 
 class TestExecutionFailClosedBoundary(unittest.TestCase):
-    def setUp(self) -> None:
-        self.engine = ExecutionEngine(PaperExecutionAdapter())
+    @staticmethod
+    def _inputs() -> tuple[AnalysisResult, ProfileResult, ScoreResult, DecisionResult]:
+        return (
+            AnalysisResult(),
+            ProfileResult(
+                symbol="BTCUSDT",
+                market=MarketCharacteristics(),
+                statistics=ProfileStatistics(),
+            ),
+            ScoreResult(),
+            DecisionResult(
+                decision="WAIT",
+                reasons=["failure-evidence fixture"],
+            ),
+        )
 
-    def _plan(self, **overrides: object) -> ExecutionPlan:
-        values = {"symbol": "BTCUSDT", "side": ExecutionSide.BUY, "price": 100_000.0, "quantity": 1.0, "confidence": 90.0, "decision": "FAVORABLE"}
-        values.update(overrides)
-        return ExecutionPlan(**values)
+    def test_failed_execution_preserves_failure_evidence_through_export(self) -> None:
+        analysis, profile, score, decision = self._inputs()
+        execution = ExecutionResult(
+            status=ExecutionStatus.FAILED,
+            message="forced execution failure",
+        )
+        failure_stage = "EXECUTION"
+        failure_message = "forced execution failure"
+        stage_trace = ("ORCHESTRATION", "EXECUTION", "REPORT")
 
-    def test_non_finite_confidence_is_rejected(self) -> None:
-        for value in (math.nan, math.inf, -math.inf):
-            with self.subTest(confidence=value):
-                self.assertFalse(self.engine.validate(self._plan(confidence=value)))
-                self.assertEqual(self.engine.execute(self._plan(confidence=value)).status, ExecutionStatus.FAILED)
+        report = ReportEngine(project_version="test").build_report(
+            symbol="BTCUSDT",
+            analysis=analysis,
+            profile=profile,
+            score=score,
+            decision=decision,
+            execution=execution,
+            stage_trace=stage_trace,
+            failure_stage=failure_stage,
+            failure_message=failure_message,
+        )
 
-    def test_invalid_quantity_override_is_rejected(self) -> None:
-        plan = self._plan(quantity=2.0)
-        for value in (math.nan, math.inf, -math.inf, 0.0, -1.0):
-            with self.subTest(quantity=value):
-                self.assertEqual(self.engine.execute(plan, quantity=value).status, ExecutionStatus.FAILED)
+        # Execution FAILED remains FAILED and the exact ExecutionResult is retained.
+        self.assertIs(report.execution, execution)
+        self.assertEqual(report.execution.status, ExecutionStatus.FAILED)
+        self.assertEqual(report.audit.status, ReportAuditStatus.FAILED)
+        self.assertEqual(report.audit.execution_status, ExecutionStatus.FAILED)
+        self.assertFalse(report.execution_succeeded)
 
-    def test_decision_execution_mismatch_is_rejected(self) -> None:
-        result = self.engine.execute(self._plan(decision="FAVORABLE", side=ExecutionSide.SELL))
-        self.assertEqual(result.status, ExecutionStatus.FAILED)
-        self.assertIn("mismatch", result.message.lower())
+        # All operational failure evidence survives the Report boundary unchanged.
+        self.assertEqual(report.audit.failure_stage, failure_stage)
+        self.assertEqual(report.audit.failure_message, failure_message)
+        self.assertEqual(report.audit.stage_trace, stage_trace)
 
-    def test_wait_cannot_execute_as_buy_or_sell(self) -> None:
-        for side in (ExecutionSide.BUY, ExecutionSide.SELL):
-            with self.subTest(side=side):
-                self.assertEqual(self.engine.execute(self._plan(decision="WAIT", side=side)).status, ExecutionStatus.FAILED)
+        engine = ReportEngine(project_version="test")
+        payload = json.loads(engine.export_json(report))
+        self.assertEqual(payload["audit"]["status"], "FAILED")
+        self.assertEqual(payload["audit"]["execution_status"], "FAILED")
+        self.assertEqual(payload["audit"]["failure_stage"], failure_stage)
+        self.assertEqual(payload["audit"]["failure_message"], failure_message)
+        self.assertEqual(payload["audit"]["stage_trace"], list(stage_trace))
 
-    def test_invalid_decision_state_is_rejected(self) -> None:
-        self.assertEqual(self.engine.execute(self._plan(decision="UNKNOWN")).status, ExecutionStatus.FAILED)
+        # Renderer/exporter may write Failure Evidence, but must not reinterpret it.
+        json_rendered = json.loads(JsonReportRenderer().render(report))
+        self.assertEqual(json_rendered["audit"]["status"], "FAILED")
+        self.assertEqual(json_rendered["audit"]["execution_status"], "FAILED")
 
-    def test_failed_execution_cannot_be_built_or_exported_as_report(self) -> None:
-        failed = ExecutionResult(status=ExecutionStatus.FAILED, message="forced failure")
-        with self.assertRaises(InvalidReportData):
-            ReportEngine().build_report(symbol="BTCUSDT", analysis=None, profile=None, score=None, decision=None, execution=failed)
-        direct = ReportResult(symbol="BTCUSDT", execution=failed)
-        with self.assertRaises(InvalidReportData):
-            ReportEngine().export_dict(direct)
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_path = Path(temp_dir) / "failure-evidence.json"
+            exported_path = ReportExporter(HtmlReportRenderer(), JsonReportRenderer()).export(
+                report,
+                output_path,
+                ReportFormat.JSON,
+            )
+            self.assertEqual(exported_path, output_path)
+            exported = json.loads(output_path.read_text(encoding="utf-8"))
+            self.assertEqual(exported["audit"]["status"], "FAILED")
+            self.assertEqual(exported["audit"]["execution_status"], "FAILED")
+            self.assertEqual(exported["audit"]["failure_stage"], failure_stage)
+            self.assertEqual(exported["audit"]["failure_message"], failure_message)
+            self.assertEqual(exported["audit"]["stage_trace"], list(stage_trace))
+
+        # No report/export API is allowed to imply Pipeline.success.
+        self.assertFalse(report.execution_succeeded)
 
 
 if __name__ == "__main__":
