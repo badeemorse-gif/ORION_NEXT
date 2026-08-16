@@ -10,7 +10,11 @@ import pandas as pd
 
 from core.orchestrator import Orchestrator, OrchestratorConfig, PipelineError, PipelineStage
 from enums import DataHealth, Timeframe
+from models.analysis import AnalysisResult
+from models.decision import DecisionResult
 from models.market import MarketDataset, MarketMetadata, TimeframeData
+from models.profile import MarketCharacteristics, ProfileResult, ProfileStatistics, TimeframeProfile
+from models.score import ScoreResult
 
 
 class TestOrchestratorValidationOrder(TestCase):
@@ -60,7 +64,7 @@ class TestOrchestratorValidationOrder(TestCase):
         self.assertEqual(orchestrator.statistics().current_stage, PipelineStage.VALIDATION)
 
     def test_valid_dataset_is_persisted_after_validation(self) -> None:
-        """A valid dataset reaches storage only after successful validation."""
+        """A canonical valid analysis fixture must reach and prove the storage boundary."""
         dataset = self._dataset()
         provider = MagicMock()
         provider.execute.return_value = dataset
@@ -70,18 +74,53 @@ class TestOrchestratorValidationOrder(TestCase):
 
         indicator = MagicMock()
         indicator.calculate_dataset.return_value = dataset
+        canonical_analysis = AnalysisResult(
+            market_state="NEUTRAL",
+            strength=0.0,
+            signals=["VALIDATION_ORDER_FIXTURE"],
+            warnings=[],
+        )
         analysis = MagicMock()
-        analysis.analyze.return_value = MagicMock()
+        analysis.analyze.return_value = canonical_analysis
+        profile_characteristics = MarketCharacteristics(
+            trend="Neutral",
+            momentum="Neutral",
+            confidence=50.0,
+            trend_score=50.0,
+            momentum_score=50.0,
+            volume_score=50.0,
+            volatility_score=50.0,
+        )
         profile = MagicMock()
-        profile.build_profile.return_value = MagicMock()
+        profile.build_profile.return_value = ProfileResult(
+            symbol="BTCUSDT",
+            market=profile_characteristics,
+            statistics=ProfileStatistics(
+                health_score=100.0,
+                confidence_limit=50.0,
+                completion_ratio=1.0,
+                total_candles=100,
+                missing_candles=0,
+            ),
+            timeframes=(
+                TimeframeProfile(timeframe="1d", characteristics=profile_characteristics, candles_count=100, missing_candles=0),
+                TimeframeProfile(timeframe="4h", characteristics=profile_characteristics, candles_count=100, missing_candles=0),
+                TimeframeProfile(timeframe="1h", characteristics=profile_characteristics, candles_count=100, missing_candles=0),
+            ),
+            is_tradeable=True,
+        )
         score = MagicMock()
-        score.calculate.return_value = MagicMock()
+        score.calculate.return_value = ScoreResult(
+            score=0.0,
+            category="NEUTRAL",
+            factors=["VALIDATION_ORDER_FIXTURE"],
+        )
         decision = MagicMock()
-        decision_result = MagicMock()
-        decision_result.decision = "WAIT"
-        decision_result.confidence = 50.0
-        decision_result.reasons = ["test"]
-        decision.decide.return_value = decision_result
+        decision.decide.return_value = DecisionResult(
+            decision="WAIT",
+            confidence=50.0,
+            reasons=["VALIDATION_ORDER_FIXTURE"],
+        )
 
         orchestrator = Orchestrator(
             provider=provider, storage=storage, indicator_engine=indicator,
@@ -94,6 +133,10 @@ class TestOrchestratorValidationOrder(TestCase):
 
         validation.validate_dataset.assert_called_once_with(dataset)
         storage.execute.assert_called_once_with(dataset)
+        analysis.analyze.assert_called_once_with(dataset)
+        profile.build_profile.assert_called_once_with(dataset)
+        score.calculate.assert_called_once_with(canonical_analysis)
+        decision.decide.assert_called_once_with(canonical_analysis, score.calculate.return_value)
         self.assertTrue(result.statistics.success)
         self.assertEqual(result.statistics.current_stage, PipelineStage.FINISHED)
 
