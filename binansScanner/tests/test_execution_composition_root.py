@@ -21,6 +21,21 @@ class TestExecutionCompositionRoot(unittest.TestCase):
         self.assertIsInstance(self.engine._adapter, PaperExecutionAdapter)
         self.assertIs(self.engine._trade_executor._adapter, self.engine._adapter)
 
+    def test_credentials_do_not_activate_live_execution(self) -> None:
+        container = DependencyContainer(
+            ContainerConfiguration(
+                paper_trading_enabled=True,
+                binance_api_key="unused-paper-key",
+                binance_api_secret="unused-paper-secret",
+                binance_testnet=False,
+            )
+        )
+        try:
+            engine = container.build_execution_engine()
+            self.assertIsInstance(engine._adapter, PaperExecutionAdapter)
+        finally:
+            container.reset()
+
     def test_buy_and_sell_execute_through_real_composition_root(self) -> None:
         for side, decision in ((ExecutionSide.BUY, "FAVORABLE"), (ExecutionSide.SELL, "UNFAVORABLE")):
             with self.subTest(side=side):
