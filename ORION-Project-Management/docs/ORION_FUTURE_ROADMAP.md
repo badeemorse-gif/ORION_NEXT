@@ -1,6 +1,6 @@
 # ORION — FUTURE ROADMAP
 
-الإصدار: 1.1
+الإصدار: 1.2
 الحالة: ACTIVE — FUTURE PLANNING ONLY
 المشروع: ORION
 
@@ -67,33 +67,77 @@ Exit
 ↓
 Audit / Report
 
-### F — Backtesting / Replay / Validation
+#### E.1 — Experimental Trading Bot isolation
 
-اختبار المنهج تاريخيًا وإعادة تشغيل السيناريوهات وقياس الأداء والمخاطر والتنفيذ.
+البوت التجريبي طبقة مستقلة downstream عن Intelligence وDecision وExecution contracts الحالية.
 
-### G — Live Trading Readiness
+لا يضيف `1s` إلى `ProfileIntelligence` ولا يغير أطر الذكاء الأساسية `1d / 4h / 1h`.
+وظيفة `1-second` هنا هي **Trade Tracking Resolution** فقط، وليست Intelligence Timeframe.
 
-Security + Risk Limits + Emergency Stop + Audit + Monitoring + Paper Validation + Operational Verification.
+البوت التجريبي يجب أن يعتمد على **Persistent Trade Journal** حتى لا تتطلب معرفة نتيجة الصفقة بقاء التطبيق أو الجهاز قيد التشغيل طوال فترة الصفقة.
 
-### H — Production ORION
+عند إعادة التشغيل، يجب أن يستطيع النظام استعادة الصفقة المفتوحة من السجل، وإعادة بناء حالتها باستخدام بيانات السوق المتاحة، دون اختراع بيانات مفقودة.
 
-الصورة النهائية المتكاملة:
+#### E.2 — Trade lifecycle timestamps
 
-Desktop Application
-↓
-Market Scanner
-↓
-Scalping Opportunity Engine
-↓
-Independent Explosive Coin Radar
-↓
-Decision / Risk Management
-↓
-Paper / Approved Live Execution
-↓
-Position Management
-↓
-Reports / Audit / Monitoring
+لكل صفقة تجريبية يجب حفظ الأحداث الزمنية الأساسية على الأقل:
+
+- `entry_order_placed_at` — لحظة وضع أمر الدخول وانتظار تحقق السعر.
+- `entry_filled_at` — لحظة تنفيذ/امتلاء أمر الدخول فعليًا.
+- `exit_order_placed_at` — لحظة وضع أمر الخروج، عند استخدام أمر خروج مستقل.
+- `exit_filled_at` — لحظة تنفيذ/امتلاء الخروج النهائي.
+
+يجب عدم الخلط بين **وضع أمر الدخول** وبين **الدخول الفعلي**.
+
+#### E.3 — Required duration metrics
+
+يجب أن يحسب Trade Journal ثلاث مدد مستقلة:
+
+`order_to_entry_duration`
+= `entry_order_placed_at → entry_filled_at`
+
+وهي مدة انتظار السوق حتى تنفيذ الدخول الفعلي.
+
+`entry_to_exit_duration`
+= `entry_filled_at → exit_filled_at`
+
+وهي **مدة الصفقة الفعلية** من الشراء/البيع الفعلي حتى الخروج الفعلي.
+
+`order_to_exit_duration`
+= `entry_order_placed_at → exit_filled_at`
+
+وهي المدة الكاملة من لحظة وضع أمر الدخول حتى إغلاق الصفقة نهائيًا، بما في ذلك فترة انتظار التنفيذ قبل الدخول.
+
+هذه المقاييس مطلوبة للمقارنة عبر عدد كبير من الصفقات بهدف معرفة:
+
+- كم يستغرق وصول السعر إلى نقطة الدخول بعد وضع الأمر؟
+- كم تستمر الصفقة بعد الدخول الفعلي؟
+- كم تستغرق دورة الصفقة كاملة من أول أمر دخول حتى الخروج؟
+
+#### E.4 — Time resolution and recovery
+
+الحد الأدنى المعتمد لتتبع دورة حياة الصفقة التجريبية هو **1 second**.
+
+تعرض الواجهة الوقت بدقة ثانية واحدة كحد أدنى، بينما يجوز الاحتفاظ داخليًا بـtimestamps أدق لأغراض التدقيق والحساب.
+
+لا تُستخدم الشموع الأكبر من 1s لتحديد دقة دورة حياة الصفقة عندما تكون الدقة الزمنية المطلوبة هي الثانية.
+
+إذا لم تتوفر بيانات 1-second أو كانت البيانات ناقصة بعد إعادة التشغيل، فلا يجوز تصنيع أو استنتاج أحداث غير مثبتة؛ يجب تسجيل حالة recovery غير مكتملة/محجوبة وفق عقد البوت المستقبلي.
+
+لا يُشترط حل ترتيب الأحداث داخل نفس الثانية؛ الثانية هي الحد الأدنى المعتمد للدقة التشغيلية لهذا البوت.
+
+#### E.5 — Separation from intelligence semantics
+
+Experimental Trading Bot لا يعيد حساب `Indicator / Analysis / Profile / Score / Decision` ولا يغير Decision بعد صدورها.
+
+وظيفته:
+
+Decision / approved execution intent
+→ Trade lifecycle tracking
+→ Persistent journal
+→ Position state
+→ Exit
+→ Outcome / duration / audit
 
 ==================================================
 4. قواعد حماية المستقبل
@@ -105,6 +149,8 @@ Reports / Audit / Monitoring
 - Explosion Radar يظل مستقلًا عن Scalping Opportunity Engine.
 - Trading Bot لا يبدأ Live Trading لمجرد اكتمال الكود.
 - GUI لا تصبح مركز النظام.
+- 1-second tracking خاص بدورة حياة الصفقة التجريبية ولا يحول `1s` إلى required intelligence timeframe.
+- لا يجوز اعتبار نجاح عملية recovery دليلًا على نجاح الصفقة أو Pipeline؛ recovery يعيد evidence فقط.
 
 ==================================================
 5. علاقة هذه الوثيقة بالتنفيذ
