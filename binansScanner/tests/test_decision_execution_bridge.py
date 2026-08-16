@@ -156,6 +156,16 @@ class TestDecisionExecutionBridge(unittest.TestCase):
         self.assertFalse(result.executed)
         self.assertIsNone(result.order_id)
 
+    def test_unknown_decision_is_rejected_before_execution_plan_creation(self) -> None:
+        decision = DecisionResult(
+            decision="UNSPECIFIED",
+            confidence=50.0,
+            reasons=["UNKNOWN_DECISION"],
+        )
+
+        with self.assertRaisesRegex(ValueError, "Unsupported execution decision: UNSPECIFIED"):
+            self.plan_builder.build(self.dataset, decision)
+
 
 if __name__ == "__main__":
     unittest.main()
