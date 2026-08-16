@@ -58,6 +58,7 @@ class TestOrchestratorStageFailureBoundary(TestCase):
             market_state="NEUTRAL",
             strength=0.0,
             signals=[],
+            warnings=[],
         )
 
         profile = MagicMock()
@@ -66,6 +67,8 @@ class TestOrchestratorStageFailureBoundary(TestCase):
             market=MarketCharacteristics(),
             statistics=ProfileStatistics(),
             is_tradeable=True,
+            warnings=(),
+            blocks=(),
         )
 
         score = MagicMock()
@@ -117,6 +120,12 @@ class TestOrchestratorStageFailureBoundary(TestCase):
             (PipelineStage.DECISION, "DECISION", []),
         ]
 
+        preceding = {
+            "PROFILE": ["indicator", "analysis"],
+            "SCORE": ["indicator", "analysis", "profile"],
+            "DECISION": ["indicator", "analysis", "profile", "score"],
+        }
+
         for expected_stage, failing_stage, downstream in stage_order:
             with self.subTest(stage=failing_stage):
                 orchestrator, mocks = self._orchestrator(failing_stage)
@@ -131,6 +140,17 @@ class TestOrchestratorStageFailureBoundary(TestCase):
                     orchestrator.last_result().execution_plan,
                     "A failed orchestration must not expose an ExecutionPlan as if planning completed.",
                 )
+
+                for name in preceding.get(failing_stage, []):
+                    method = {
+                        "indicator": mocks["indicator"].calculate_dataset,
+                        "analysis": mocks["analysis"].analyze,
+                        "profile": mocks["profile"].build_profile,
+                        "score": mocks["score"].calculate,
+                        "decision": mocks["decision"].decide,
+                    }[name]
+                    method.assert_called_once()
+
                 for name in downstream:
                     method = {
                         "indicator": mocks["indicator"].calculate_dataset,
