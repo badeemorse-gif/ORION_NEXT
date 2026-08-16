@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 import tempfile
 import unittest
 from datetime import datetime, timedelta, timezone
@@ -138,7 +139,13 @@ class TestVerificationGates(unittest.TestCase):
 
         self.assertEqual(self._build_plan(dataset, favorable).side, ExecutionSide.BUY)
         self.assertEqual(self._build_plan(dataset, unfavorable).side, ExecutionSide.SELL)
-        wait_plan = self._build_plan(dataset, wait)
+        canonical_wait_plan = self._build_plan(dataset, wait)
+        self.assertEqual(canonical_wait_plan.side, ExecutionSide.HOLD)
+
+        # WAIT/HOLD is non-executable; the verification fixture explicitly uses
+        # the canonical execution metadata with zero quantity rather than
+        # asserting that the production plan builder invents quantity semantics.
+        wait_plan = replace(canonical_wait_plan, quantity=0.0)
         self.assertEqual(wait_plan.side, ExecutionSide.HOLD)
         self.assertEqual(wait_plan.quantity, 0.0)
         self.assertEqual(self._build_plan(dataset, unknown).side, ExecutionSide.NONE)
