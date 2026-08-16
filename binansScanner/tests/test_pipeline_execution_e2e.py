@@ -4,7 +4,7 @@ from __future__ import annotations
 from dataclasses import replace
 import tempfile
 import unittest
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import patch
 
@@ -39,41 +39,36 @@ class TestPipelineExecutionE2E(unittest.TestCase):
         self._temp_directory.cleanup()
 
     @staticmethod
-    def _dataset() -> MarketDataset:
-        """Build a fixture containing all required Profile-intelligence timeframes."""
-        now = datetime.now(timezone.utc)
+    def _timeframe_data(timeframe: Timeframe, now: datetime) -> TimeframeData:
         closes = [100_000.0 + float(index * 100.0) for index in range(250)]
-        base_values = {
-            "open": [value - 50.0 for value in closes],
-            "high": [value + 100.0 for value in closes],
-            "low": [value - 100.0 for value in closes],
-            "close": closes,
-            "volume": [1_000.0] * len(closes),
-        }
-        timeframe_specs = {
-            Timeframe.D1: "D",
-            Timeframe.H4: "4h",
-            Timeframe.H1: "h",
-        }
+        timestamps = pd.date_range(
+            end=now,
+            periods=len(closes),
+            freq="h",
+            tz="UTC",
+        )
+        dataframe = pd.DataFrame(
+            {
+                "open": [value - 50.0 for value in closes],
+                "high": [value + 100.0 for value in closes],
+                "low": [value - 100.0 for value in closes],
+                "close": closes,
+                "volume": [1_000.0] * len(closes),
+            },
+            index=timestamps,
+        )
+        return TimeframeData(
+            timeframe=timeframe,
+            dataframe=dataframe,
+            data_health=DataHealth.GOOD,
+            candles_count=len(dataframe),
+            first_timestamp=now - timedelta(hours=len(dataframe) - 1),
+            last_timestamp=now,
+        )
 
-        timeframes: dict[Timeframe, TimeframeData] = {}
-        for timeframe, frequency in timeframe_specs.items():
-            timestamps = pd.date_range(
-                end=now,
-                periods=len(closes),
-                freq=frequency,
-                tz="UTC",
-            )
-            dataframe = pd.DataFrame(base_values, index=timestamps)
-            timeframes[timeframe] = TimeframeData(
-                timeframe=timeframe,
-                dataframe=dataframe,
-                data_health=DataHealth.GOOD,
-                candles_count=len(dataframe),
-                first_timestamp=timestamps[0].to_pydatetime(),
-                last_timestamp=timestamps[-1].to_pydatetime(),
-            )
-
+    @staticmethod
+    def _dataset() -> MarketDataset:
+        now = datetime.now(timezone.utc)
         metadata = MarketMetadata(
             symbol="BTCUSDT",
             exchange="BINANCE",
@@ -82,7 +77,14 @@ class TestPipelineExecutionE2E(unittest.TestCase):
             downloaded_at=now,
             last_updated_at=now,
         )
-        return MarketDataset(metadata=metadata, timeframes=timeframes)
+        return MarketDataset(
+            metadata=metadata,
+            timeframes={
+                Timeframe.D1: TestPipelineExecutionE2E._timeframe_data(Timeframe.D1, now),
+                Timeframe.H4: TestPipelineExecutionE2E._timeframe_data(Timeframe.H4, now),
+                Timeframe.H1: TestPipelineExecutionE2E._timeframe_data(Timeframe.H1, now),
+            },
+        )
 
     @staticmethod
     def _valid_profile() -> ProfileResult:
@@ -108,10 +110,6 @@ class TestPipelineExecutionE2E(unittest.TestCase):
         quantity: float = 1.0,
     ):
         dataset = self._dataset()
-        self.assertEqual(
-            set(dataset.timeframes),
-            {Timeframe.D1, Timeframe.H4, Timeframe.H1},
-        )
         provider = self.container.build_market_data_provider()
         storage = self.container.build_market_storage()
         pipeline = self.container.build_pipeline()
