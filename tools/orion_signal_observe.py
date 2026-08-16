@@ -113,7 +113,7 @@ def command_start(args: argparse.Namespace) -> int:
     if not isinstance(configuration, dict):
         fail("configuration JSON must be an object")
     universe_raw = universe_path.read_bytes()
-    universe = load_json(universe_path)
+    load_json(universe_path)
     baseline = validate_commit(args.baseline)
 
     config_bytes = canonical_json(configuration)
@@ -130,7 +130,7 @@ def command_start(args: argparse.Namespace) -> int:
         fail(f"Session directory already exists: {directory}")
     directory.mkdir(parents=True)
 
-    # The original input is preserved as an immutable artifact for replay.
+    # Preserve the original bytes for exact replay.
     (directory / "configuration_input.json").write_bytes(config_path.read_bytes())
     (directory / "universe_input.json").write_bytes(universe_raw)
 
@@ -239,6 +239,21 @@ def command_stop(args: argparse.Namespace) -> int:
     return 0
 
 
+def command_replay(args: argparse.Namespace) -> int:
+    artifact_root = resolve_artifact_root(Path(args.artifact_root or DEFAULT_ARTIFACT_ROOT))
+    directory, session = load_session(artifact_root / "signal-observations", args.session_id)
+    if session.get("status") != "STOPPED":
+        fail("Replay requires a STOPPED source session")
+    replay_args = argparse.Namespace(
+        artifact_root=str(artifact_root),
+        config=str(directory / "configuration_input.json"),
+        universe_file=str(directory / "universe_input.json"),
+        universe_id=session["universe_id"],
+        baseline=session["baseline_commit"],
+    )
+    return command_start(replay_args)
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="ORION reproducible Signal observation workflow")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -264,6 +279,11 @@ def build_parser() -> argparse.ArgumentParser:
     stop.add_argument("--session-id", required=True)
     stop.add_argument("--artifact-root")
     stop.set_defaults(func=command_stop)
+
+    replay = sub.add_parser("replay", help="Start a new session from a stopped session's immutable inputs")
+    replay.add_argument("--session-id", required=True)
+    replay.add_argument("--artifact-root")
+    replay.set_defaults(func=command_replay)
     return parser
 
 
