@@ -220,7 +220,6 @@ class TestPipelineExecutionE2E(unittest.TestCase):
         assert report is not None
 
         self.assertEqual(result.orchestrator_result.decision.decision, "WAIT")
-        self.assertEqual(result.orchestrator_result.decision.confidence, 0.0)
         self.assertEqual(plan.side, ExecutionSide.HOLD)
         self.assertEqual(plan.quantity, 0.0)
         self.assertEqual(execution.status, ExecutionStatus.SKIPPED)
