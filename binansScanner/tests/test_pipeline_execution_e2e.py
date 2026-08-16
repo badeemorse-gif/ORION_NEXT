@@ -15,7 +15,7 @@ from enums import DataHealth, Timeframe
 from models.decision import DecisionResult
 from models.execution import ExecutionPlan, ExecutionResult, ExecutionSide, ExecutionStatus
 from models.market import MarketDataset, MarketMetadata, TimeframeData
-from models.profile import MarketCharacteristics, ProfileResult, ProfileStatistics
+from models.profile import MarketCharacteristics, ProfileResult, ProfileStatistics, TimeframeProfile
 from models.report import ReportResult
 
 
@@ -88,10 +88,29 @@ class TestPipelineExecutionE2E(unittest.TestCase):
 
     @staticmethod
     def _valid_profile() -> ProfileResult:
+        now = datetime.now(timezone.utc)
+        timeframes = tuple(
+            TimeframeProfile(
+                timeframe=timeframe.value,
+                characteristics=MarketCharacteristics(),
+                candles_count=250,
+                first_timestamp=now - timedelta(hours=249),
+                last_timestamp=now,
+                data_health=DataHealth.GOOD,
+                missing_candles=0,
+                warnings=(),
+            )
+            for timeframe in (Timeframe.D1, Timeframe.H4, Timeframe.H1)
+        )
         return ProfileResult(
             symbol="BTCUSDT",
             market=MarketCharacteristics(),
-            statistics=ProfileStatistics(),
+            statistics=ProfileStatistics(
+                completion_ratio=1.0,
+                total_candles=750,
+                missing_candles=0,
+            ),
+            timeframes=timeframes,
             is_tradeable=True,
             warnings=(),
             blocks=(),
