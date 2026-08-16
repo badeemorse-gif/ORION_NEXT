@@ -3,10 +3,7 @@ from datetime import datetime, timezone
 
 import pandas as pd
 
-from engines.opportunity_relative_ranking import (
-    OpportunityRankingInput,
-    OpportunityRelativeRanker,
-)
+from engines.opportunity_relative_ranking import OpportunityRankingInput, OpportunityRelativeRanker
 from enums import DataHealth, Timeframe
 from models.market import MarketDataset, MarketMetadata, TimeframeData
 from models.opportunity import (
@@ -17,12 +14,7 @@ from models.opportunity import (
     OpportunityStatus,
     RiskState,
 )
-from models.profile import (
-    MarketCharacteristics,
-    ProfileResult,
-    ProfileStatistics,
-    TimeframeProfile,
-)
+from models.profile import MarketCharacteristics, ProfileResult, ProfileStatistics, TimeframeProfile
 from models.score import ScoreResult
 
 
@@ -44,12 +36,18 @@ class TestOpportunityRelativeRanking(unittest.TestCase):
         direction: OpportunityDirection = OpportunityDirection.LONG,
     ) -> OpportunityRankingInput:
         now = datetime(2026, 8, 17, tzinfo=timezone.utc)
+        selected_timeframe = Timeframe(timeframe)
         values = [volume_baseline, volume_baseline, volume_baseline, volume_last]
         close = [100.0, 100.5, 101.0, 101.5]
         frame = pd.DataFrame(
-            {"open": close, "high": [v + 1 for v in close], "low": [v - 1 for v in close],
-             "close": close, "volume": values},
-            index=pd.date_range("2026-08-17 00:00", periods=4, freq="5min", tz="UTC"),
+            {
+                "open": close,
+                "high": [v + 1 for v in close],
+                "low": [v - 1 for v in close],
+                "close": close,
+                "volume": values,
+            },
+            index=pd.date_range("2026-08-17 00:00", periods=4, freq=selected_timeframe.value, tz="UTC"),
         )
         dataset = MarketDataset(
             metadata=MarketMetadata(
@@ -64,7 +62,7 @@ class TestOpportunityRelativeRanking(unittest.TestCase):
         )
         dataset.add_timeframe(
             TimeframeData(
-                timeframe=Timeframe.M5,
+                timeframe=selected_timeframe,
                 dataframe=frame,
                 data_health=DataHealth.GOOD,
                 candles_count=len(frame),
@@ -114,22 +112,34 @@ class TestOpportunityRelativeRanking(unittest.TestCase):
         )
         return OpportunityRankingInput(
             opportunity=opportunity,
-            score=ScoreResult(score=score, category="BULLISH" if direction is OpportunityDirection.LONG else "BEARISH"),
+            score=ScoreResult(
+                score=score,
+                category="BULLISH" if direction is OpportunityDirection.LONG else "BEARISH",
+            ),
             profile=profile,
             dataset=dataset,
         )
 
     def test_raw_ties_are_broken_by_context(self) -> None:
         inputs = (
-            self._input(symbol="AAAUSDT", volume_last=10.0, liquidity=10.0, momentum="Neutral", trend="Sideways", ema_alignment="None", market_phase="Range"),
+            self._input(
+                symbol="AAAUSDT",
+                volume_last=10.0,
+                liquidity=10.0,
+                momentum="Neutral",
+                trend="Sideways",
+                ema_alignment="None",
+                market_phase="Range",
+            ),
             self._input(symbol="BBBUSDT", volume_last=30.0, liquidity=1000.0, momentum="Strong Buy"),
         )
         ranked = OpportunityRelativeRanker().rank(inputs)
+        by_symbol = {item.opportunity.symbol: item for item in ranked}
         self.assertEqual({item.raw_score for item in ranked}, {100.0})
-        self.assertNotEqual(ranked[0].composite_score, ranked[1].composite_score)
-        self.assertGreater(ranked[0].composite_score, ranked[1].composite_score)
-        self.assertEqual(ranked[0].relative_rank, 1)
-        self.assertEqual(ranked[1].relative_rank, 2)
+        self.assertNotEqual(by_symbol["AAAUSDT"].composite_score, by_symbol["BBBUSDT"].composite_score)
+        self.assertGreater(by_symbol["BBBUSDT"].composite_score, by_symbol["AAAUSDT"].composite_score)
+        self.assertEqual(by_symbol["BBBUSDT"].relative_rank, 1)
+        self.assertEqual(by_symbol["AAAUSDT"].relative_rank, 2)
 
     def test_relative_percentile_is_cohort_based(self) -> None:
         ranked = OpportunityRelativeRanker().rank(
@@ -150,7 +160,7 @@ class TestOpportunityRelativeRanking(unittest.TestCase):
                 self._input(symbol="A", timeframe="5m", direction=OpportunityDirection.LONG),
                 self._input(symbol="B", timeframe="5m", direction=OpportunityDirection.LONG),
                 self._input(symbol="C", timeframe="15m", direction=OpportunityDirection.LONG),
-                self._input(symbol="D", timeframe="5m", direction=OpportunityDirection.SHORT),
+                self._input(symbol="D", timeframe="5m", direction=OpportunityDirection.SHORT, momentum="Strong Sell"),
             )
         )
         peer_counts = {item.opportunity.symbol: item.peer_count for item in ranked}
@@ -160,7 +170,9 @@ class TestOpportunityRelativeRanking(unittest.TestCase):
         self.assertEqual(peer_counts["D"], 1)
 
     def test_short_momentum_is_directionally_inverted(self) -> None:
-        long_ranked = OpportunityRelativeRanker().rank((self._input(symbol="L", momentum="Strong Buy"),))[0]
+        long_ranked = OpportunityRelativeRanker().rank(
+            (self._input(symbol="L", momentum="Strong Buy"),)
+        )[0]
         short_ranked = OpportunityRelativeRanker().rank(
             (self._input(symbol="S", momentum="Strong Sell", direction=OpportunityDirection.SHORT),)
         )[0]
