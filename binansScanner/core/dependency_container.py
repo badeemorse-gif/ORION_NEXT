@@ -136,6 +136,8 @@ class DependencyContainer:
         return ValidationEngine()
 
     def _create_execution_adapter(self) -> ExecutionAdapter:
+        if not self._config.paper_trading_enabled:
+            raise ContainerError("Paper trading is disabled; live execution is fail-closed in this Phase A build.")
         return PaperExecutionAdapter()
 
     def _create_scheduler_service(self) -> SchedulerService:
