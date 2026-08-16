@@ -1,53 +1,54 @@
 # ORION_NEXT — FINAL INTEGRATION MANIFEST
 
-**Status:** FINAL — ROUND 5 DELTAS RECONCILED
+**Status:** FINAL — ROUND 6 RECONCILED
 **Integration branch:** `integration/final-release-20260815`
 **Base main:** `9147ea6bf6812c4afda8e0e3e9596b0460b05419`
-**Audited integration state before this manifest publication:** `ef51a1a9ef69e889634a68da4c9a73cf1690b1bc`
+**Current publication baseline:** `502f88b00f8bf5ee867ef01cc1cc131c4a09915f`
 
 ## Approved package sources
 
 | Owner | Source branch | Current approved HEAD used for this round |
 |---|---|---|
-| CORE | `phase2/core-intelligence-hardening` | `34b04cc021117b0e712a1dc2a1ff7c751f34948e` |
-| EXECUTION / D2 | `ops/execution-fail-closed` | `790eafaa04f335001c792888919921b906753ee5` |
+| CORE / D1 | `developer1/core-profile-test-reconciliation` | `7a8d5919af865d5d8cc323f56c39a78224327215` |
+| EXECUTION / D2 | `ops/execution-fail-closed` | `d98013aff8575adca3ce24f3c6c02aa5b4f242aa` |
 | OPPORTUNITY / D3 | `future/opportunity-intelligence-complete` | `9880043b138ae61dc07b1923b2bd40e6f7cee683` |
 | D4 | `developer4/sync-restore-final-materialization` | `a47d8ff429772debc0285a9b270d408479418977` |
-| D5 | `developer5/verification-e2e-parity-final` | `a530782a813de4d3c77a3e84a4d2a99c40d0354d` |
+| D5 | `developer5/verification-e2e-parity-final` | `ecc373a1b9b00668e5632ec5fc3a5a69c5910f27` |
 | D6 | `developer6-reporting-auditability` | `abc874aa40c8f3e09dafdf17f0f5587fa151c074` |
 | D7 | `developer7-market-data-quality` | `289f273f6217eea4b002101caf6ef1356dae9161` |
 
 ## Actual inventory
 
-The GitHub comparison from `main @ 9147ea6bf6812c4afda8e0e3e9596b0460b05419` to the post-publication integration state remains **71 net changed paths**. Round 5 changed existing package paths only; it did not introduce a new path outside the established 71-path inventory.
+The GitHub comparison from `main @ 9147ea6bf6812c4afda8e0e3e9596b0460b05419` to the current integration state contains **72 net changed paths**.
 
-**INCLUDED: 69**  
+**INCLUDED: 70**  
 **EXCLUDED: 2**
 
-The complete 71-path baseline inventory and prior owner/decision records remain the authoritative manifest body above. The following Round 5 ledger **supersedes prior source metadata for the listed paths** and is authoritative for the current publication:
+The two explicit exclusions are the integration cleanup/probe marker deletions. All other changed paths are package/documentation paths already covered by the established integration scope or by the Round 6 approved deltas below.
 
-## ROUND 5 DELTA LEDGER — AUTHORITATIVE
+## ROUND 6 DELTA LEDGER — AUTHORITATIVE
 
 | Target path | Owner | Source branch | Source HEAD | Source blob SHA | Decision | Reason |
 |---|---|---|---|---|---|---|
-| `binansScanner/core/profile_intelligence.py` | CORE | `phase2/core-intelligence-hardening` | `34b04cc021117b0e712a1dc2a1ff7c751f34948e` | `7d5e320a67282704476fb6d34a31b10e6f74981f` | INCLUDED | Required ProfileIntelligence timeframes `1d/4h/1h`; fail-closed gate; verified against approved blob. |
-| `binansScanner/tests/test_profile_intelligence_completion_contract.py` | CORE | `phase2/core-intelligence-hardening` | `34b04cc021117b0e712a1dc2a1ff7c751f34948e` | `16312cb3059538440665958f2fa9161b75e58d0d` | INCLUDED | Contract coverage for each missing required timeframe plus complete actionable profile; verified against approved blob. |
-| `binansScanner/tests/test_pipeline_execution_e2e.py` | D5 | `developer5/verification-e2e-parity-final` | `a530782a813de4d3c77a3e84a4d2a99c40d0354d` | `615b54c586544d6c7494ee0a9528bb725dc6f2b3` | INCLUDED | Latest D5 zero-quantity fixture reconciliation; preserves original plan builder during quantity-zero fixture execution. |
-| `binansScanner/tests/test_execution_fail_closed_boundary.py` | D6 | `developer6-reporting-auditability` | `abc874aa40c8f3e09dafdf17f0f5587fa151c074` | `d5d9a37844e146f15dd5147703c0425d214113f3` | INCLUDED | Final D6 Failure Evidence boundary test; supersedes the older D2 copy for this shared test path. |
+| `binansScanner/tests/test_profile_intelligence.py` | CORE / D1 | `developer1/core-profile-test-reconciliation` | `7a8d5919af865d5d8cc323f56c39a78224327215` | `18b435c1dc55608d542ea51de6d4a263b8c38b5b` | INCLUDED | Aligns valid directional ProfileIntelligence fixtures to required `1d/4h/1h` without changing fail-closed missing/duplicate/malformed cases. |
+| `binansScanner/core/execution_plan_builder.py` | EXECUTION / D2 | `ops/execution-fail-closed` | `d98013aff8575adca3ce24f3c6c02aa5b4f242aa` | `d642486f356b12bc08f47bce07adf7dbfa8c6e10` | INCLUDED | Rejects UNKNOWN/UNSPECIFIED decision metadata before ExecutionPlan creation; canonical FAVORABLE/UNFAVORABLE/WAIT mappings remain unchanged. |
+| `binansScanner/tests/test_decision_execution_bridge.py` | EXECUTION / D2 | `ops/execution-fail-closed` | `d98013aff8575adca3ce24f3c6c02aa5b4f242aa` | `b027c98a0a0e03caeb5c17956ba447eed0e686a9` | INCLUDED | Direct contract coverage for UNKNOWN/UNSPECIFIED rejection and canonical BUY/SELL/HOLD behavior. |
+| `binansScanner/docs/EXECUTION_UNKNOWN_DECISION_CONTRACT.md` | EXECUTION / D2 | `ops/execution-fail-closed` | `d98013aff8575adca3ce24f3c6c02aa5b4f242aa` | `c886dd438a2b6ebfc88ac068957fd1e2ee2fb1c2` | INCLUDED | Documents the fail-closed UNKNOWN decision boundary and canonical execution mapping. |
+| `binansScanner/tests/test_orchestrator_validation_order.py` | D5 | `developer5/verification-e2e-parity-final` | `ecc373a1b9b00668e5632ec5fc3a5a69c5910f27` | `23cbfe5b8a6ded6ea657d0d943f3fd1356e5f815` | INCLUDED | Latest D5 validation-order reconciliation using canonical AnalysisResult fixtures; no Production Logic change. |
 
 ## Shared ownership — final
 
 | Shared file | Owner | Final source decision |
 |---|---|---|
-| `binansScanner/core/pipeline.py` | D6 | Retained previously audited D6 production semantics. |
-| `binansScanner/tests/test_pipeline_execution_e2e.py` | D5 | Latest approved D5 verification reconciliation supersedes prior test copy. |
-| `binansScanner/tests/test_execution_fail_closed_boundary.py` | D6 | Latest approved D6 reporting/failure-evidence reconciliation supersedes prior D2 copy. |
+| `binansScanner/core/pipeline.py` | D6 | Retained previously audited D6 reporting/failure-evidence semantics. |
+| `binansScanner/tests/test_pipeline_execution_e2e.py` | D5 | Retained latest approved D5 E2E reconciliation already present on Integration. |
+| `binansScanner/tests/test_execution_fail_closed_boundary.py` | D6 | Retained latest approved D6 Failure Evidence reconciliation already present on Integration. |
 | `ORION-Project-Management/docs/ORION_CONTROL_INDEX.md` | D1 CENTRAL INTEGRATION | Final shared control ownership retained. |
 | `ORION-Project-Management/docs/ORION_PROJECT_STATE.md` | D1 CENTRAL INTEGRATION | Final integrated project state retained. |
 
 ## D2 / D3 publication rule
 
-D2 and D3 were **not re-published** in Round 5 because their current integration content was already present; no additional file-level write was required for those packages.
+D3 was not re-published in Round 6. D2 was updated only at the exact approved UNKNOWN-decision boundary paths listed above; no other Execution history or collateral was transferred.
 
 ## Excluded collateral
 
@@ -64,10 +65,10 @@ These remain explicitly EXCLUDED:
 
 ## Audit status
 
-- Actual net changed paths: **71**
-- Included: **69**
+- Actual net changed paths: **72**
+- Included: **70**
 - Excluded: **2**
-- Round 5 delta paths written: **4**
-- Each Round 5 delta was re-read from the Integration branch after publication and matched its approved source blob exactly.
-- No new path was introduced by Round 5.
+- Round 6 delta paths written: **5**
+- Every Round 6 target was re-read from the Integration branch after publication and matched the approved source content identity.
+- D2/D3 were not re-published outside the explicitly approved D2 UNKNOWN-decision paths.
 - No main/source branch was modified.
