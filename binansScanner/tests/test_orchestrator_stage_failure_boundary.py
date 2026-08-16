@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from unittest import TestCase
 from unittest.mock import MagicMock
 
@@ -10,7 +10,10 @@ import pandas as pd
 
 from core.orchestrator import Orchestrator, OrchestratorConfig, PipelineError, PipelineStage
 from enums import DataHealth, Timeframe
+from models.analysis import AnalysisResult
 from models.market import MarketDataset, MarketMetadata, TimeframeData
+from models.profile import MarketCharacteristics, ProfileResult, ProfileStatistics, TimeframeProfile
+from models.score import ScoreResult
 
 
 class TestOrchestratorStageFailureBoundary(TestCase):
@@ -36,26 +39,67 @@ class TestOrchestratorStageFailureBoundary(TestCase):
             },
         )
 
+    @staticmethod
+    def _valid_profile() -> ProfileResult:
+        now = datetime.now(timezone.utc)
+        timeframes = tuple(
+            TimeframeProfile(
+                timeframe=timeframe.value,
+                characteristics=MarketCharacteristics(),
+                candles_count=1,
+                first_timestamp=now,
+                last_timestamp=now,
+                data_health=DataHealth.GOOD,
+                missing_candles=0,
+                warnings=(),
+            )
+            for timeframe in (Timeframe.D1, Timeframe.H4, Timeframe.H1)
+        )
+        return ProfileResult(
+            symbol="BTCUSDT",
+            market=MarketCharacteristics(),
+            statistics=ProfileStatistics(completion_ratio=1.0, total_candles=3),
+            timeframes=timeframes,
+            is_tradeable=True,
+            warnings=(),
+            blocks=(),
+        )
+
     def _orchestrator(self, failing_stage: str):
         dataset = self._dataset()
         provider = MagicMock()
         provider.execute.return_value = dataset
         storage = MagicMock()
+
         validation = MagicMock()
         validation.validate_dataset.return_value = MagicMock()
+
         indicator = MagicMock()
         indicator.calculate_dataset.return_value = dataset
+
         analysis = MagicMock()
-        analysis.analyze.return_value = MagicMock()
+        analysis.analyze.return_value = AnalysisResult(
+            market_state="NEUTRAL",
+            strength=0.0,
+            signals=["STAGE_BOUNDARY_FIXTURE"],
+            warnings=[],
+        )
+
         profile = MagicMock()
-        profile.build_profile.return_value = MagicMock()
+        profile.build_profile.return_value = self._valid_profile()
+
         score = MagicMock()
-        score.calculate.return_value = MagicMock()
+        score.calculate.return_value = ScoreResult(
+            score=0.0,
+            category="NEUTRAL",
+            factors=["STAGE_BOUNDARY_FIXTURE"],
+        )
+
         decision = MagicMock()
         decision_result = MagicMock()
         decision_result.decision = "WAIT"
         decision_result.confidence = 50.0
-        decision_result.reasons = ["test"]
+        decision_result.reasons = ["STAGE_BOUNDARY_FIXTURE"]
         decision.decide.return_value = decision_result
 
         stages = {
@@ -93,6 +137,12 @@ class TestOrchestratorStageFailureBoundary(TestCase):
             (PipelineStage.DECISION, "DECISION", []),
         ]
 
+        preceding = {
+            "PROFILE": ["indicator", "analysis"],
+            "SCORE": ["indicator", "analysis", "profile"],
+            "DECISION": ["indicator", "analysis", "profile", "score"],
+        }
+
         for expected_stage, failing_stage, downstream in stage_order:
             with self.subTest(stage=failing_stage):
                 orchestrator, mocks = self._orchestrator(failing_stage)
@@ -107,6 +157,17 @@ class TestOrchestratorStageFailureBoundary(TestCase):
                     orchestrator.last_result().execution_plan,
                     "A failed orchestration must not expose an ExecutionPlan as if planning completed.",
                 )
+
+                for name in preceding.get(failing_stage, []):
+                    method = {
+                        "indicator": mocks["indicator"].calculate_dataset,
+                        "analysis": mocks["analysis"].analyze,
+                        "profile": mocks["profile"].build_profile,
+                        "score": mocks["score"].calculate,
+                        "decision": mocks["decision"].decide,
+                    }[name]
+                    method.assert_called_once()
+
                 for name in downstream:
                     method = {
                         "indicator": mocks["indicator"].calculate_dataset,
