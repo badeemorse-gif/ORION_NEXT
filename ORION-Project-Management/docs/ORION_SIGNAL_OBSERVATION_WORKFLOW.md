@@ -22,15 +22,17 @@ This workflow observes already-approved behavior. It does not change Signal, Sco
 
 ## 1. Run Configuration
 
-A run configuration is a canonical JSON document. It MUST include:
+A run configuration is a canonical JSON object supplied by the operator. It MUST contain only explicit experiment parameters; hidden defaults are prohibited.
+
+The session controller records:
 
 - `baseline_commit`: full 40-character Git commit SHA.
-- `configuration`: explicit experiment parameters; no hidden defaults.
-- `universe`: explicit list/identity of symbols or instruments under observation.
-- `start_at` and `stop_at`: UTC timestamps delimiting the observation window.
+- `configuration`: explicit experiment parameters.
+- `universe_id`: explicit or deterministically derived identity.
+- `universe_sha256`: SHA-256 of the exact universe input bytes.
 - `observer_version`: workflow/tool version.
 
-The configuration file is copied byte-for-byte into the session artifact directory before observation starts.
+The original `configuration_input.json` and `universe_input.json` bytes are preserved in the session artifact for replay.
 
 ## 2. Snapshot Identity
 
@@ -46,13 +48,11 @@ universe_sha256
 
 ## 3. Start / Stop Boundaries
 
-`START` is the moment the session manifest is created and persisted.
+`START` is the moment the session manifest is created and persisted. The session receives `started_at_utc`.
 
 `STOP` is an explicit command that records `stopped_at_utc` and changes the session state from `RUNNING` to `STOPPED`.
 
-Observations outside the recorded interval are not part of the session.
-
-The workflow refuses to stop an unknown session and refuses to start a second session using an existing session directory.
+Observations are accepted only while the session is `RUNNING`. An observation recorded after `STOP` is refused.
 
 ## 4. Experiment Session ID
 
@@ -71,21 +71,23 @@ The ID is the primary artifact key and appears in every observation record.
 Artifacts are isolated from source development trees. Default layout:
 
 ```text
-artifacts/
+ORION_OBSERVATION_ARTIFACTS/
 └── signal-observations/
     └── <experiment-session-id>/
         ├── session.json
         ├── run_config.json
+        ├── configuration_input.json
+        ├── universe_input.json
         ├── snapshot_identity.json
         ├── configuration_fingerprint.json
         └── observations.jsonl
 ```
 
-The workflow never writes these artifacts into `binansScanner/` or any production source directory.
+The workflow refuses an artifact root located inside `ORION_NEXT` or another Git checkout boundary. It never writes these artifacts into production source directories.
 
 ## 6. Configuration Fingerprint
 
-`configuration_fingerprint` is SHA-256 over canonical JSON serialization of the immutable run configuration.
+`configuration_fingerprint` is SHA-256 over canonical JSON serialization of the configuration object only.
 
 Canonicalization rules:
 
@@ -94,7 +96,7 @@ Canonicalization rules:
 - No insignificant whitespace.
 - Arrays retain declared order.
 
-Identical configuration input therefore produces the same fingerprint.
+Identical configuration content therefore produces the same fingerprint, independent of insignificant source formatting.
 
 ## 7. Observation Record
 
@@ -113,35 +115,68 @@ Every recorded Signal observation MUST contain:
 
 Additional fields are permitted only as experiment payload; the identity fields above are mandatory and immutable.
 
-## 8. Replaying the Same Experiment
+## 8. Operational Commands
 
-To replay an experiment exactly:
+Create a session:
 
-1. Use the recorded `baseline_commit`.
-2. Use the recorded `run_config.json` unchanged.
-3. Verify the recorded `configuration_fingerprint` matches the configuration file.
-4. Use the same `universe_id` and universe content.
-5. Use a newly generated Session ID for the replay; never reuse the previous Session ID.
-6. Compare observations by their recorded UTC timestamps and payloads.
+```text
+python tools/orion_signal_observe.py start \
+  --baseline <40-char-commit-sha> \
+  --config <configuration.json> \
+  --universe-file <universe.json>
+```
 
-A replay is not considered the same session; it is a new session with the same immutable inputs.
+Record a Signal:
 
-## 9. Operational Safety Checklist
+```text
+python tools/orion_signal_observe.py record \
+  --session-id <EXP-...> \
+  --signal BUY \
+  --observed-at 2026-08-17T00:05:00Z
+```
+
+Close the session:
+
+```text
+python tools/orion_signal_observe.py stop \
+  --session-id <EXP-...>
+```
+
+## 9. Replaying the Same Experiment
+
+A stopped session can be replayed without reusing its Session ID:
+
+```text
+python tools/orion_signal_observe.py replay \
+  --session-id <stopped-EXP-...>
+```
+
+Replay behavior is deterministic with respect to identity inputs:
+
+1. Reuse the recorded `baseline_commit`.
+2. Reuse the preserved `configuration_input.json` byte-for-byte.
+3. Reuse the preserved `universe_input.json` byte-for-byte.
+4. Preserve the same `universe_id` and configuration fingerprint.
+5. Generate a new Session ID and new UTC boundaries.
+6. Compare the new observations with the historical session using the two session IDs and timestamps.
+
+A replay is a new experiment session, never an overwrite of historical artifacts.
+
+## 10. Operational Safety Checklist
 
 Before START:
 
 - Confirm baseline is the intended full commit SHA.
 - Confirm the universe is explicit and immutable for the run.
 - Confirm configuration has no hidden defaults.
-- Confirm output target is under the observation artifact root and outside production source trees.
-- Confirm no live-trading credentials or order endpoints are enabled.
-- Confirm start/stop timestamps are UTC.
+- Confirm output target is outside production source trees and outside Git checkout boundaries.
+- Confirm live-trading credentials and order endpoints are disabled or unavailable.
+- Confirm all timestamps are UTC.
 
 During RUNNING:
 
-- Do not modify run configuration.
-- Do not replace the baseline identity.
-- Do not write production-source artifacts.
+- Do not modify run configuration or baseline identity.
+- Do not write artifacts into production source directories.
 - Do not submit live orders.
 - Append observations only to the active session artifact.
 
