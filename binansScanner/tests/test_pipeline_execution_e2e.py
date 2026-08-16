@@ -140,6 +140,7 @@ class TestPipelineExecutionE2E(unittest.TestCase):
 
         self.assertEqual(result.orchestrator_result.decision.decision, "WAIT")
         self.assertEqual(plan.side, ExecutionSide.HOLD)
+        self.assertEqual(plan.quantity, 0.0)
         self.assertEqual(execution.status, ExecutionStatus.SKIPPED)
         self.assertFalse(execution.executed)
         self.assertIsNone(execution.order_id)
