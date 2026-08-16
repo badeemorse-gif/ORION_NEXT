@@ -168,10 +168,15 @@ class TestVerificationGates(unittest.TestCase):
         canonical_wait_plan = self._build_plan(dataset, wait)
         self.assertEqual(canonical_wait_plan.side, ExecutionSide.HOLD)
 
+        # WAIT/HOLD is non-executable; the verification fixture explicitly uses
+        # the canonical execution metadata with zero quantity rather than
+        # asserting that the production plan builder invents quantity semantics.
         wait_plan = replace(canonical_wait_plan, quantity=0.0)
         self.assertEqual(wait_plan.side, ExecutionSide.HOLD)
         self.assertEqual(wait_plan.quantity, 0.0)
 
+        # UNKNOWN/UNSPECIFIED is outside the canonical decision contract. The
+        # Verification layer must never translate it into NONE/SKIPPED.
         self.assertNotIn("UNSPECIFIED", ExecutionPlanBuilder._DECISION_TO_SIDE)
         self.assertNotIn("UNKNOWN", ExecutionPlanBuilder._DECISION_TO_SIDE)
 
