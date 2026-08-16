@@ -1,9 +1,9 @@
 # ORION_NEXT — CENTRAL INTEGRATION GATE
 
-**Status:** FINAL — ROUND 7 RECONCILED
+**Status:** FINAL — ROUND 7 SOURCE IDENTITY RECONCILED
 **Integration branch:** `integration/final-release-20260815`
 **Base main:** `9147ea6bf6812c4afda8e0e3e9596b0460b05419`
-**Round 7 publication baseline:** `205145c1b43ed781ef673e833bc69fa6d48918d7`
+**Round 7 correction pre-gate HEAD:** `5e8b8dea4dc9d4dd1e73a15637e64c22dc8df62e`
 
 ## Approved package HEADs used by Round 7
 
@@ -13,30 +13,30 @@
 - D4: `developer4/sync-restore-final-materialization @ a47d8ff429772debc0285a9b270d408479418977`
 - D5 / ROUND 7 FINAL: `developer5/verification-e2e-parity-final @ 21440bea1d2e5b86e5cb8b97a90f6d1e2e726c9d`
 - D6: `developer6-reporting-auditability @ abc874aa40c8f3e09dafdf17f0f5587fa151c074`
-- D7: `developer7-market-data-quality @ 289f273f6217eea4b002101caf6ef6dae9161`
+- D7: `developer7-market-data-quality @ 289f273f6217eea4b002101caf6ef1356dae9161`
 
-## Round 7 publication audit
+## Round 7 exact source identity audit
 
 ### D5 FINAL — four approved files
 
-Published and re-read from Integration:
+| Target path | Source blob | Integration blob | Result |
+|---|---|---|---|
+| `binansScanner/tests/test_orchestrator_stage_failure_boundary.py` | `635b82c80f03ec61af7e6fc386c2872632e70251` | `635b82c80f03ec61af7e6fc386c2872632e70251` | MATCH |
+| `binansScanner/tests/test_orchestrator_validation_order.py` | `b190996717a18a2f056bc9170dbcb20450c56680` | `b190996717a18a2f056bc9170dbcb20450c56680` | MATCH |
+| `binansScanner/tests/test_pipeline_execution_e2e.py` | `a56ec4842494ea6a0c0225b3378a24dd8b191003` | `a56ec4842494ea6a0c0225b3378a24dd8b191003` | MATCH |
+| `binansScanner/tests/test_verification_gates.py` | `0cc44644bab2370f66fa661005c212cba9c3c558` | `0cc44644bab2370f66fa661005c212cba9c3c558` | MATCH |
 
-- `binansScanner/tests/test_orchestrator_stage_failure_boundary.py` → blob `8e7fd845346b7b1e382eb92290a550921aa264ee`
-- `binansScanner/tests/test_orchestrator_validation_order.py` → blob `2a11b1244aa1a70c20a46eed75038538e0889341`
-- `binansScanner/tests/test_pipeline_execution_e2e.py` → blob `a56ec4842494ea6a0c0225b3378a24dd8b191003`
-- `binansScanner/tests/test_verification_gates.py` → blob `5e64f9cbf8870a74af796a2a41f819209a37a1e2`
+All four files were fetched from the approved D5 HEAD and re-read directly from Integration after publication. Exact source identity is now established.
 
-The four target blobs were compared to the approved D5 HEAD `21440bea1d2e5b86e5cb8b97a90f6d1e2e726c9d` source content and matched. The source commit contains the canonical complete `1d/4h/1h` ProfileResult fixture in E2E coverage. fileciteturn56file0L3-L12
-
-The stage-boundary and validation-order fixtures use complete required timeframes; the E2E fixture covers canonical EXECUTED/SKIPPED behavior and preserved Failure Evidence; the verification gates keep Production semantics unchanged.
+The source content preserves complete `1d/4h/1h` ProfileResult fixtures, canonical EXECUTED/SKIPPED E2E behavior, stage-boundary fail-fast coverage, validation-order coverage, ExecutionPlan isolation, UNKNOWN/UNSPECIFIED verification constraints, and Failure Evidence semantics without changing Production Logic.
 
 ## Shared ownership — final
 
-- `binansScanner/core/pipeline.py` → D6 Reporting — unchanged in Round 7
-- `binansScanner/tests/test_pipeline_execution_e2e.py` → D5 Verification/E2E — updated by Round 7
-- `binansScanner/tests/test_execution_fail_closed_boundary.py` → D6 Reporting/Auditability — unchanged in Round 7
-- `ORION-Project-Management/docs/ORION_CONTROL_INDEX.md` → D1 Central Integration — unchanged in Round 7
-- `ORION-Project-Management/docs/ORION_PROJECT_STATE.md` → D1 Central Integration — unchanged in Round 7
+- `binansScanner/core/pipeline.py` → D6 Reporting — unchanged
+- `binansScanner/tests/test_pipeline_execution_e2e.py` → D5 Verification/E2E — exact D5 source identity
+- `binansScanner/tests/test_execution_fail_closed_boundary.py` → D6 Reporting/Auditability — unchanged
+- `ORION-Project-Management/docs/ORION_CONTROL_INDEX.md` → D1 Central Integration — unchanged
+- `ORION-Project-Management/docs/ORION_PROJECT_STATE.md` → D1 Central Integration — unchanged
 
 ## Final inventory audit
 
@@ -48,7 +48,7 @@ GitHub comparison from `main @ 9147ea6bf6812c4afda8e0e3e9596b0460b05419` to the 
 - **Manifest decisions missing: 0**
 - **Shared ownership conflicts: 0**
 
-Round 7 replaced content of four paths already present in the established package inventory. Therefore no new changed path entered the tree and the net inventory remains 72.
+The correction replaced content in four paths already present in the established 72-path inventory, so inventory cardinality did not change.
 
 ## Scope leakage
 
@@ -66,11 +66,11 @@ Explicit exclusions remain:
 
 **0**
 
-All Round 7 targets were re-read from Integration and their blobs match the approved D5 source content. No source branch or main was modified, and no package outside D5 was re-published.
+All four D5 target paths now have exact Source Blob = Integration Blob identity. No source branch or main was modified, and no package outside D5 was re-published.
 
 ## Finalization note
 
-Publishing this Gate document creates a new documentation commit. Therefore the authoritative FINAL HEAD is the Integration branch ref immediately after this Gate publication; that branch ref must be read again after publication and is the source of truth for the external audit report.
+Publishing this Gate document creates the final documentation commit. Therefore the authoritative FINAL HEAD is the Integration branch ref immediately after this publication; that branch ref must be read again after publication and is the source of truth for the external audit report.
 
 **PACKAGE PARITY = EXACT**
 **SCOPE LEAKAGE = NONE**
