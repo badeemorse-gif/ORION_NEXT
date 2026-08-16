@@ -1,84 +1,45 @@
 # ORION Phase A — Paper Execution Safety Boundary
 
-## Scope
+Phase A execution is paper-only. The execution entry path is:
 
-This document defines the execution safety boundary for Phase A signal-accuracy / score-calibration work.
+`DecisionResult → ExecutionPlanBuilder → ExecutionEngine → ExecutionAdapter`
 
-Phase A is **paper-only**. It may create canonical `ExecutionPlan` objects and run them through `PaperExecutionAdapter`, but it must not expose a configuration path that silently activates live order execution.
-
-## Canonical decision semantics
+Canonical decision semantics remain:
 
 - `FAVORABLE` → `BUY`
 - `UNFAVORABLE` → `SELL`
 - `WAIT` → `HOLD` with `quantity=0` → `SKIPPED`
 - `UNKNOWN` / `UNSPECIFIED` → rejected before `ExecutionPlan` creation
 
-These semantics are unchanged.
+The current composition root creates only `PaperExecutionAdapter`. The paper adapter validates locally and produces synthetic `PAPER-ORD-*` identifiers; it does not contact a live exchange.
 
-## Entry points reviewed
+## Configuration boundary
 
-The current execution path is:
+`ORION_TRADING_PAPER_TRADING` is loaded into `ContainerConfiguration.paper_trading_enabled`.
 
-`DecisionResult → ExecutionPlanBuilder → ExecutionEngine → ExecutionAdapter`
+- `true` → build the existing `PaperExecutionAdapter`.
+- `false` → fail closed with `ContainerError`.
 
-The composition root currently creates only `PaperExecutionAdapter` for the execution boundary.
+There is no fallback from `paper_trading_enabled=false` to a live execution implementation.
 
-`PaperExecutionAdapter` validates the request locally and returns synthetic `PAPER-ORD-*` identifiers. It does not contact a live exchange.
+Binance API credentials are provider-layer settings and are not consumed by `PaperExecutionAdapter`. `ORION_BINANCE_TESTNET` selects the Binance provider configuration for market-data/provider access; it is not an execution-mode switch and cannot activate live orders.
 
-## Paper / Live separation
+## Accidental-live paths
 
-The current repository does not contain a `LiveExecutionAdapter` or a live order-placement implementation. Consequently, live order submission is not an available execution path in this Phase A branch.
+The review found no `LiveExecutionAdapter` and no live order-placement implementation in the current Phase A branch. The previous risk was therefore configuration semantics: a future live executor could have been introduced behind the existing `paper_trading_enabled` flag without a separate boundary.
 
-The composition root now enforces this explicitly: when `paper_trading_enabled` is false, execution-engine construction fails closed with `ContainerError` rather than selecting or inventing a live executor.
+That path is now closed at the composition root. A future live implementation must introduce a separately reviewed execution boundary instead of reusing the Phase A paper path as an implicit bridge.
 
-This means a future live implementation cannot be activated merely by changing an existing boolean configuration value.
-
-## Configuration paths reviewed
-
-### `ORION_TRADING_PAPER_TRADING`
-
-This value is loaded into `ContainerConfiguration.paper_trading_enabled`.
-
-- `true`: the current composition root creates `PaperExecutionAdapter`.
-- `false`: the current composition root refuses to build an execution engine.
-
-There is no fallback from `false` to a live executor.
-
-### Binance credentials
-
-`ORION_BINANCE_API_KEY` and `ORION_BINANCE_API_SECRET` are accepted by `BinanceSettings` and passed to `BinanceProvider` for the market-data/provider layer.
-
-Those credentials are **not** used by `PaperExecutionAdapter` and cannot turn paper execution into live order placement.
-
-### `ORION_BINANCE_TESTNET`
-
-This setting controls the Binance provider configuration used by the market-data/provider layer. It is not an execution-mode switch.
-
-A value of `false` therefore does not activate live orders in the current execution boundary. Paper execution remains Paper execution.
-
-## Explicit guardrail
-
-The composition root is the authoritative execution-mode gate for the current phase:
+## Phase A guardrail
 
 `paper_trading_enabled == False` → **FAIL CLOSED**
 
-No live execution adapter is registered, constructed, or selected by configuration.
-
-Any future live execution must introduce a separately reviewed execution boundary rather than reusing this Phase A paper path as an implicit bridge.
+No execution adapter or execution engine is constructed after that failure.
 
 ## Prohibited Phase A behavior
 
-- No live credentials are required for execution.
-- No live order-placement API is called.
-- No live adapter is instantiated.
-- No configuration-only switch can activate live execution.
-- No `ExecutionSide.NONE` fallback is allowed for unknown decisions.
-
-## Verification requirements
-
-The execution composition-root tests must prove:
-
-1. default composition creates `PaperExecutionAdapter`;
-2. BUY and SELL still execute through the paper adapter;
-3. disabling paper trading fails closed at composition-root construction;
-4. no execution adapter or execution engine is created after that failure.
+- Live credentials used for order execution.
+- Live order-placement API calls.
+- Live adapter construction.
+- Configuration-only activation of live execution.
+- Unknown-decision fallback to `ExecutionSide.NONE` / `SKIPPED`.
