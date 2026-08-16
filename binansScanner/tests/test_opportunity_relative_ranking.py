@@ -19,6 +19,15 @@ from models.score import ScoreResult
 
 
 class TestOpportunityRelativeRanking(unittest.TestCase):
+    _PANDAS_FREQ = {
+        Timeframe.M1: "1min",
+        Timeframe.M5: "5min",
+        Timeframe.M15: "15min",
+        Timeframe.H1: "1h",
+        Timeframe.H4: "4h",
+        Timeframe.D1: "1D",
+    }
+
     def _input(
         self,
         *,
@@ -47,7 +56,12 @@ class TestOpportunityRelativeRanking(unittest.TestCase):
                 "close": close,
                 "volume": values,
             },
-            index=pd.date_range("2026-08-17 00:00", periods=4, freq=selected_timeframe.value, tz="UTC"),
+            index=pd.date_range(
+                "2026-08-17 00:00",
+                periods=4,
+                freq=self._PANDAS_FREQ[selected_timeframe],
+                tz="UTC",
+            ),
         )
         dataset = MarketDataset(
             metadata=MarketMetadata(
@@ -170,9 +184,7 @@ class TestOpportunityRelativeRanking(unittest.TestCase):
         self.assertEqual(peer_counts["D"], 1)
 
     def test_short_momentum_is_directionally_inverted(self) -> None:
-        long_ranked = OpportunityRelativeRanker().rank(
-            (self._input(symbol="L", momentum="Strong Buy"),)
-        )[0]
+        long_ranked = OpportunityRelativeRanker().rank((self._input(symbol="L", momentum="Strong Buy"),))[0]
         short_ranked = OpportunityRelativeRanker().rank(
             (self._input(symbol="S", momentum="Strong Sell", direction=OpportunityDirection.SHORT),)
         )[0]
