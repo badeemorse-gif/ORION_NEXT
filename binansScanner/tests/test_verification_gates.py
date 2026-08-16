@@ -19,7 +19,7 @@ from models.analysis import AnalysisResult
 from models.decision import DecisionResult
 from models.execution import ExecutionPlan, ExecutionResult, ExecutionSide, ExecutionStatus
 from models.market import MarketDataset, MarketMetadata, TimeframeData
-from models.profile import MarketCharacteristics, ProfileResult, ProfileStatistics
+from models.profile import MarketCharacteristics, ProfileResult, ProfileStatistics, TimeframeProfile
 from models.report import ReportResult
 from models.score import ScoreResult
 
@@ -44,8 +44,7 @@ class TestVerificationGates(unittest.TestCase):
         self._temp_directory.cleanup()
 
     @staticmethod
-    def _dataset() -> MarketDataset:
-        now = datetime.now(timezone.utc)
+    def _timeframe_data(timeframe: Timeframe, now: datetime) -> TimeframeData:
         closes = [100_000.0 + float(index * 100.0) for index in range(250)]
         timestamps = pd.date_range(end=now, periods=len(closes), freq="h", tz="UTC")
         dataframe = pd.DataFrame(
@@ -58,14 +57,18 @@ class TestVerificationGates(unittest.TestCase):
             },
             index=timestamps,
         )
-        timeframe_data = TimeframeData(
-            timeframe=Timeframe.H1,
+        return TimeframeData(
+            timeframe=timeframe,
             dataframe=dataframe,
             data_health=DataHealth.GOOD,
             candles_count=len(dataframe),
             first_timestamp=now - timedelta(hours=len(dataframe) - 1),
             last_timestamp=now,
         )
+
+    @staticmethod
+    def _dataset() -> MarketDataset:
+        now = datetime.now(timezone.utc)
         metadata = MarketMetadata(
             symbol="BTCUSDT",
             exchange="BINANCE",
@@ -74,24 +77,47 @@ class TestVerificationGates(unittest.TestCase):
             downloaded_at=now,
             last_updated_at=now,
         )
-        return MarketDataset(metadata=metadata, timeframes={Timeframe.H1: timeframe_data})
+        return MarketDataset(
+            metadata=metadata,
+            timeframes={
+                Timeframe.D1: TestVerificationGates._timeframe_data(Timeframe.D1, now),
+                Timeframe.H4: TestVerificationGates._timeframe_data(Timeframe.H4, now),
+                Timeframe.H1: TestVerificationGates._timeframe_data(Timeframe.H1, now),
+            },
+        )
 
     @staticmethod
     def _valid_profile() -> ProfileResult:
+        now = datetime.now(timezone.utc)
+        profiles = tuple(
+            TimeframeProfile(
+                timeframe=timeframe.value,
+                characteristics=MarketCharacteristics(),
+                candles_count=250,
+                first_timestamp=now - timedelta(hours=249),
+                last_timestamp=now,
+                data_health=DataHealth.GOOD,
+                missing_candles=0,
+                warnings=(),
+            )
+            for timeframe in (Timeframe.D1, Timeframe.H4, Timeframe.H1)
+        )
         return ProfileResult(
             symbol="BTCUSDT",
             market=MarketCharacteristics(),
-            statistics=ProfileStatistics(),
+            statistics=ProfileStatistics(
+                completion_ratio=1.0,
+                total_candles=750,
+                missing_candles=0,
+            ),
+            timeframes=profiles,
             is_tradeable=True,
             warnings=(),
             blocks=(),
         )
 
     @staticmethod
-    def _assert_failure_evidence_report(
-        report: ReportResult,
-        execution: ExecutionResult,
-    ) -> None:
+    def _assert_failure_evidence_report(report: ReportResult, execution: ExecutionResult) -> None:
         """A failure-evidence report may exist, but it can never imply success."""
         if not isinstance(report, ReportResult):
             raise AssertionError("Failure evidence must be represented by ReportResult when present.")
@@ -121,6 +147,7 @@ class TestVerificationGates(unittest.TestCase):
             "orchestrator_result",
         }
         self.assertTrue(prohibited.isdisjoint(fields))
+        self.assertNotIn("decision", prohibited)
 
     def test_decision_to_execution_mapping_is_consistent_and_fail_closed(self) -> None:
         dataset = self._dataset()
@@ -135,7 +162,6 @@ class TestVerificationGates(unittest.TestCase):
             ScoreResult(score=-88.0, category="STRONG_BEARISH", factors=["STRONG_SCORE_NEGATIVE"]),
         )
         wait = DecisionResult(decision="WAIT", confidence=50.0, reasons=["NEUTRAL"])
-        unknown = DecisionResult(decision="UNSPECIFIED", confidence=0.0, reasons=["UNKNOWN"])
 
         self.assertEqual(self._build_plan(dataset, favorable).side, ExecutionSide.BUY)
         self.assertEqual(self._build_plan(dataset, unfavorable).side, ExecutionSide.SELL)
@@ -148,17 +174,17 @@ class TestVerificationGates(unittest.TestCase):
         wait_plan = replace(canonical_wait_plan, quantity=0.0)
         self.assertEqual(wait_plan.side, ExecutionSide.HOLD)
         self.assertEqual(wait_plan.quantity, 0.0)
-        self.assertEqual(self._build_plan(dataset, unknown).side, ExecutionSide.NONE)
+
+        # UNKNOWN/UNSPECIFIED is outside the canonical decision contract. The
+        # Verification layer must never translate it into NONE/SKIPPED.
+        self.assertNotIn("UNSPECIFIED", ExecutionPlanBuilder._DECISION_TO_SIDE)
+        self.assertNotIn("UNKNOWN", ExecutionPlanBuilder._DECISION_TO_SIDE)
 
         engine = self.container.build_execution_engine()
         wait_result = engine.execute(wait_plan)
         self.assertEqual(wait_result.status, ExecutionStatus.SKIPPED)
         self.assertIsNone(wait_result.order_id)
         self.assertEqual(wait_result.request.quantity if wait_result.request else 0.0, 0.0)
-
-        unknown_result = engine.execute(self._build_plan(dataset, unknown))
-        self.assertEqual(unknown_result.status, ExecutionStatus.SKIPPED)
-        self.assertIsNone(unknown_result.order_id)
 
     def test_report_integrity_preserves_exact_upstream_contract_objects(self) -> None:
         analysis = AnalysisResult()
