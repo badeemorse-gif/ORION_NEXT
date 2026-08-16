@@ -1,1 +1,0 @@
-Phase A paper-only execution guardrail record. This companion marker is intentionally non-operational and documents that the composition root must fail closed when paper trading is disabled; no live adapter or order placement exists in this branch.
