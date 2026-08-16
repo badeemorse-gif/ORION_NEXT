@@ -13,7 +13,7 @@ from enums import DataHealth, Timeframe
 from models.analysis import AnalysisResult
 from models.decision import DecisionResult
 from models.market import MarketDataset, MarketMetadata, TimeframeData
-from models.profile import MarketCharacteristics, ProfileResult, ProfileStatistics
+from models.profile import MarketCharacteristics, ProfileResult, ProfileStatistics, TimeframeProfile
 from models.score import ScoreResult
 
 
@@ -36,6 +36,32 @@ class TestOrchestratorValidationOrder(TestCase):
                     first_timestamp=now, last_timestamp=now,
                 )
             },
+        )
+
+    @staticmethod
+    def _valid_profile() -> ProfileResult:
+        now = datetime.now(timezone.utc)
+        timeframes = tuple(
+            TimeframeProfile(
+                timeframe=timeframe.value,
+                characteristics=MarketCharacteristics(),
+                candles_count=1,
+                first_timestamp=now,
+                last_timestamp=now,
+                data_health=DataHealth.GOOD,
+                missing_candles=0,
+                warnings=(),
+            )
+            for timeframe in (Timeframe.D1, Timeframe.H4, Timeframe.H1)
+        )
+        return ProfileResult(
+            symbol="BTCUSDT",
+            market=MarketCharacteristics(),
+            statistics=ProfileStatistics(completion_ratio=1.0, total_candles=3),
+            timeframes=timeframes,
+            is_tradeable=True,
+            warnings=(),
+            blocks=(),
         )
 
     def _orchestrator(self, provider: MagicMock, storage: MagicMock, validation: MagicMock) -> Orchestrator:
@@ -69,7 +95,7 @@ class TestOrchestratorValidationOrder(TestCase):
         self.assertEqual(orchestrator.statistics().current_stage, PipelineStage.VALIDATION)
 
     def test_valid_dataset_is_persisted_after_validation(self) -> None:
-        """A canonical valid analysis fixture must reach and prove the storage boundary."""
+        """A canonical valid analysis/profile fixture must reach and prove the storage boundary."""
         dataset = self._dataset()
         provider = MagicMock()
         provider.execute.return_value = dataset
@@ -90,14 +116,8 @@ class TestOrchestratorValidationOrder(TestCase):
         analysis.analyze.return_value = canonical_analysis
 
         profile = MagicMock()
-        profile.build_profile.return_value = ProfileResult(
-            symbol="BTCUSDT",
-            market=MarketCharacteristics(),
-            statistics=ProfileStatistics(),
-            is_tradeable=True,
-            warnings=(),
-            blocks=(),
-        )
+        profile_result = self._valid_profile()
+        profile.build_profile.return_value = profile_result
 
         score = MagicMock()
         score.calculate.return_value = ScoreResult(
@@ -131,6 +151,11 @@ class TestOrchestratorValidationOrder(TestCase):
         storage.execute.assert_called_once_with(dataset)
         analysis.analyze.assert_called_once_with(dataset)
         profile.build_profile.assert_called_once_with(dataset)
+        self.assertEqual(profile_result.timeframe_count, 3)
+        self.assertEqual(
+            {item.timeframe for item in profile_result.timeframes},
+            {"1d", "4h", "1h"},
+        )
         score.calculate.assert_called_once_with(canonical_analysis)
         decision.decide.assert_called_once_with(canonical_analysis, score.calculate.return_value)
         self.assertTrue(result.statistics.success)
