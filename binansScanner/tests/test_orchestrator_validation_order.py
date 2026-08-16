@@ -18,6 +18,7 @@ from models.score import ScoreResult
 
 
 class TestOrchestratorValidationOrder(TestCase):
+    # Verification-only fixture: WAIT uses the current canonical confidence contract.
     def _dataset(self) -> MarketDataset:
         now = datetime.now(timezone.utc)
         dataframe = pd.DataFrame(
