@@ -1,6 +1,6 @@
 # ORION — FUTURE ROADMAP
 
-الإصدار: 1.1
+الإصدار: 1.2
 الحالة: ACTIVE — FUTURE PLANNING ONLY
 المشروع: ORION
 
@@ -96,7 +96,59 @@ Position Management
 Reports / Audit / Monitoring
 
 ==================================================
-4. قواعد حماية المستقبل
+4. Future Contract Decisions — 2026-08-11
+==================================================
+
+### 4.1 Trading Opportunity
+
+المستقبل يستخدم `Opportunity` كعقد مستقل لترشيح الفرص القريبة، وليس كبديل لـ Score أو Decision.
+
+العقد يحمل:
+- symbol و timeframe و direction
+- confidence و setup_quality و risk
+- entry candidate و invalidation و expected move عند توفرها
+- supporting evidence و market context
+- observed_at و expires_at و status
+
+القيم غير المتاحة تبقى `None` بدل اختراع fallback رقمي. صلاحية الفرصة الزمنية جزء من العقد.
+
+### 4.2 Explosive Watchlist
+
+`ExplosiveWatchCandidate` مستقل تمامًا عن `Opportunity`.
+
+العقد يمثل **PROBABILISTIC ESTIMATE** فقط، ويحتوي على:
+- strong-move probability
+- readiness score و confidence
+- supporting signals و invalidation conditions
+- optional time window و freshness
+
+لا يوجد في العقد ادعاء بموعد انفجار مؤكد أو عائد مضمون، ولا يدخل هذا الرادار في Score/Decision الحالي.
+
+### 4.3 Trading Bot Boundary
+
+المستقبل يفصل ORION Intelligence عن Bot Execution:
+
+ORION Intelligence
+↓
+Opportunity
+↓
+TradingReadiness
+↓
+Bot Decision
+↓
+Order Execution
+
+`TradingReadiness` هو gate معلوماتي مستقل. لا توجد منه أوامر Binance ولا live trading ولا wiring إلى Execution الحالي.
+
+لا تكون الفرصة مؤهلة مستقبلًا إلا إذا كانت:
+- intelligence مكتملة
+- confidence مقبولة
+- opportunity fresh
+- risk مقبول
+- market conditions صالحة
+
+==================================================
+5. قواعد حماية المستقبل
 ==================================================
 
 - لا تنفذ مرحلة مستقبلية مبكرًا لمجرد وجودها هنا.
@@ -105,9 +157,11 @@ Reports / Audit / Monitoring
 - Explosion Radar يظل مستقلًا عن Scalping Opportunity Engine.
 - Trading Bot لا يبدأ Live Trading لمجرد اكتمال الكود.
 - GUI لا تصبح مركز النظام.
+- لا تستخدم fallback رقميًا لإخفاء نقص intelligence المستقبلية.
+- لا تربط العقود المستقبلية بالـpipeline الحالي قبل اكتمال Core Intelligence واعتماد الـcontracts.
 
 ==================================================
-5. علاقة هذه الوثيقة بالتنفيذ
+6. علاقة هذه الوثيقة بالتنفيذ
 ==================================================
 
 ORION_ROADMAP.md
@@ -117,7 +171,7 @@ ORION_PROJECT_STATE.md
 → أين نحن الآن.
 
 ORION_FUTURE_ROADMAP.md
-→ إلى أين نريد أن نصل.
+→ إلى أين نريد أن نصل، والعقود المستقبلية التي تم تثبيت حدودها.
 
 وجود هذه الوثيقة لا يفرض على المطور أي تغيير في المرحلة الحالية.
 
