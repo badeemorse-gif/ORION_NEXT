@@ -69,7 +69,7 @@ class TestOrchestratorValidationOrder(TestCase):
         self.assertEqual(orchestrator.statistics().current_stage, PipelineStage.VALIDATION)
 
     def test_valid_dataset_is_persisted_after_validation(self) -> None:
-        """A valid dataset reaches storage only after successful validation."""
+        """A canonical valid analysis fixture must reach and prove the storage boundary."""
         dataset = self._dataset()
         provider = MagicMock()
         provider.execute.return_value = dataset
@@ -80,13 +80,14 @@ class TestOrchestratorValidationOrder(TestCase):
         indicator = MagicMock()
         indicator.calculate_dataset.return_value = dataset
 
-        analysis = MagicMock()
-        analysis.analyze.return_value = AnalysisResult(
+        canonical_analysis = AnalysisResult(
             market_state="NEUTRAL",
             strength=0.0,
-            signals=[],
+            signals=["VALIDATION_ORDER_FIXTURE"],
             warnings=[],
         )
+        analysis = MagicMock()
+        analysis.analyze.return_value = canonical_analysis
 
         profile = MagicMock()
         profile.build_profile.return_value = ProfileResult(
@@ -102,14 +103,14 @@ class TestOrchestratorValidationOrder(TestCase):
         score.calculate.return_value = ScoreResult(
             score=0.0,
             category="NEUTRAL",
-            factors=[],
+            factors=["VALIDATION_ORDER_FIXTURE"],
         )
 
         decision = MagicMock()
         decision.decide.return_value = DecisionResult(
             decision="WAIT",
             confidence=50.0,
-            reasons=["test"],
+            reasons=["VALIDATION_ORDER_FIXTURE"],
         )
 
         orchestrator = Orchestrator(
@@ -130,11 +131,8 @@ class TestOrchestratorValidationOrder(TestCase):
         storage.execute.assert_called_once_with(dataset)
         analysis.analyze.assert_called_once_with(dataset)
         profile.build_profile.assert_called_once_with(dataset)
-        score.calculate.assert_called_once_with(analysis.analyze.return_value)
-        decision.decide.assert_called_once_with(
-            analysis.analyze.return_value,
-            score.calculate.return_value,
-        )
+        score.calculate.assert_called_once_with(canonical_analysis)
+        decision.decide.assert_called_once_with(canonical_analysis, score.calculate.return_value)
         self.assertTrue(result.statistics.success)
         self.assertEqual(result.statistics.current_stage, PipelineStage.FINISHED)
 
