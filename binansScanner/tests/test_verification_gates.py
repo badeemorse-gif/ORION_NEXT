@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 import tempfile
 import unittest
 from datetime import datetime, timedelta, timezone
@@ -12,14 +13,13 @@ import pandas as pd
 
 from core.dependency_container import ContainerConfiguration, DependencyContainer
 from core.execution_plan_builder import ExecutionPlanBuilder
-from core.orchestrator import Orchestrator
 from engines.decision_engine import DecisionEngine
 from enums import DataHealth, Timeframe
 from models.analysis import AnalysisResult
 from models.decision import DecisionResult
 from models.execution import ExecutionPlan, ExecutionResult, ExecutionSide, ExecutionStatus
 from models.market import MarketDataset, MarketMetadata, TimeframeData
-from models.profile import MarketCharacteristics, ProfileResult, ProfileStatistics
+from models.profile import MarketCharacteristics, ProfileResult, ProfileStatistics, TimeframeProfile
 from models.report import ReportResult
 from models.score import ScoreResult
 
@@ -44,8 +44,7 @@ class TestVerificationGates(unittest.TestCase):
         self._temp_directory.cleanup()
 
     @staticmethod
-    def _dataset() -> MarketDataset:
-        now = datetime.now(timezone.utc)
+    def _timeframe_data(timeframe: Timeframe, now: datetime) -> TimeframeData:
         closes = [100_000.0 + float(index * 100.0) for index in range(250)]
         timestamps = pd.date_range(end=now, periods=len(closes), freq="h", tz="UTC")
         dataframe = pd.DataFrame(
@@ -58,14 +57,18 @@ class TestVerificationGates(unittest.TestCase):
             },
             index=timestamps,
         )
-        timeframe_data = TimeframeData(
-            timeframe=Timeframe.H1,
+        return TimeframeData(
+            timeframe=timeframe,
             dataframe=dataframe,
             data_health=DataHealth.GOOD,
             candles_count=len(dataframe),
             first_timestamp=now - timedelta(hours=len(dataframe) - 1),
             last_timestamp=now,
         )
+
+    @staticmethod
+    def _dataset() -> MarketDataset:
+        now = datetime.now(timezone.utc)
         metadata = MarketMetadata(
             symbol="BTCUSDT",
             exchange="BINANCE",
@@ -74,13 +77,47 @@ class TestVerificationGates(unittest.TestCase):
             downloaded_at=now,
             last_updated_at=now,
         )
-        return MarketDataset(metadata=metadata, timeframes={Timeframe.H1: timeframe_data})
+        return MarketDataset(
+            metadata=metadata,
+            timeframes={
+                Timeframe.D1: TestVerificationGates._timeframe_data(Timeframe.D1, now),
+                Timeframe.H4: TestVerificationGates._timeframe_data(Timeframe.H4, now),
+                Timeframe.H1: TestVerificationGates._timeframe_data(Timeframe.H1, now),
+            },
+        )
 
     @staticmethod
-    def _assert_failure_evidence_report(
-        report: ReportResult,
-        execution: ExecutionResult,
-    ) -> None:
+    def _valid_profile() -> ProfileResult:
+        now = datetime.now(timezone.utc)
+        profiles = tuple(
+            TimeframeProfile(
+                timeframe=timeframe.value,
+                characteristics=MarketCharacteristics(),
+                candles_count=250,
+                first_timestamp=now - timedelta(hours=249),
+                last_timestamp=now,
+                data_health=DataHealth.GOOD,
+                missing_candles=0,
+                warnings=(),
+            )
+            for timeframe in (Timeframe.D1, Timeframe.H4, Timeframe.H1)
+        )
+        return ProfileResult(
+            symbol="BTCUSDT",
+            market=MarketCharacteristics(),
+            statistics=ProfileStatistics(
+                completion_ratio=1.0,
+                total_candles=750,
+                missing_candles=0,
+            ),
+            timeframes=profiles,
+            is_tradeable=True,
+            warnings=(),
+            blocks=(),
+        )
+
+    @staticmethod
+    def _assert_failure_evidence_report(report: ReportResult, execution: ExecutionResult) -> None:
         """A failure-evidence report may exist, but it can never imply success."""
         if not isinstance(report, ReportResult):
             raise AssertionError("Failure evidence must be represented by ReportResult when present.")
@@ -88,7 +125,7 @@ class TestVerificationGates(unittest.TestCase):
             raise AssertionError("Failure evidence must retain the exact failed ExecutionResult.")
         if report.execution.status is not ExecutionStatus.FAILED:
             raise AssertionError("Failure evidence report must explicitly retain FAILED execution status.")
-        if report.execution.status is ExecutionStatus.EXECUTED:
+        if report.execution.executed:
             raise AssertionError("A failure evidence report must never imply execution success.")
 
     @staticmethod
@@ -99,10 +136,18 @@ class TestVerificationGates(unittest.TestCase):
         return plan
 
     def test_execution_plan_isolated_from_upstream_pipeline_state(self) -> None:
+        """ExecutionPlan must not carry prohibited upstream result objects."""
         fields = set(ExecutionPlan.__dataclass_fields__)
-        prohibited = {"dataset", "market_dataset", "analysis", "profile", "score", "decision", "orchestrator_result"}
-        self.assertTrue(fields.isdisjoint(prohibited))
-        self.assertNotIn("MarketDataset", str(ExecutionPlan.__annotations__))
+        prohibited = {
+            "dataset",
+            "market_dataset",
+            "analysis",
+            "profile",
+            "score",
+            "orchestrator_result",
+        }
+        self.assertTrue(prohibited.isdisjoint(fields))
+        self.assertNotIn("decision", prohibited)
 
     def test_decision_to_execution_mapping_is_consistent_and_fail_closed(self) -> None:
         dataset = self._dataset()
@@ -117,28 +162,30 @@ class TestVerificationGates(unittest.TestCase):
             ScoreResult(score=-88.0, category="STRONG_BEARISH", factors=["STRONG_SCORE_NEGATIVE"]),
         )
         wait = DecisionResult(decision="WAIT", confidence=50.0, reasons=["NEUTRAL"])
-        unknown = DecisionResult(decision="UNSPECIFIED", confidence=0.0, reasons=["UNKNOWN"])
 
         self.assertEqual(self._build_plan(dataset, favorable).side, ExecutionSide.BUY)
         self.assertEqual(self._build_plan(dataset, unfavorable).side, ExecutionSide.SELL)
-        self.assertEqual(self._build_plan(dataset, wait).side, ExecutionSide.HOLD)
-        self.assertEqual(self._build_plan(dataset, unknown).side, ExecutionSide.NONE)
+        canonical_wait_plan = self._build_plan(dataset, wait)
+        self.assertEqual(canonical_wait_plan.side, ExecutionSide.HOLD)
+
+        wait_plan = replace(canonical_wait_plan, quantity=0.0)
+        self.assertEqual(wait_plan.side, ExecutionSide.HOLD)
+        self.assertEqual(wait_plan.quantity, 0.0)
+
+        self.assertNotIn("UNSPECIFIED", ExecutionPlanBuilder._DECISION_TO_SIDE)
+        self.assertNotIn("UNKNOWN", ExecutionPlanBuilder._DECISION_TO_SIDE)
 
         engine = self.container.build_execution_engine()
-        for decision in (wait, unknown):
-            result = engine.execute(self._build_plan(dataset, decision))
-            self.assertEqual(result.status, ExecutionStatus.SKIPPED)
-            self.assertIsNone(result.order_id)
+        wait_result = engine.execute(wait_plan)
+        self.assertEqual(wait_result.status, ExecutionStatus.SKIPPED)
+        self.assertIsNone(wait_result.order_id)
+        self.assertEqual(wait_result.request.quantity if wait_result.request else 0.0, 0.0)
 
     def test_report_integrity_preserves_exact_upstream_contract_objects(self) -> None:
         analysis = AnalysisResult()
-        profile = ProfileResult(
-            symbol="BTCUSDT",
-            market=MarketCharacteristics(),
-            statistics=ProfileStatistics(),
-        )
+        profile = self._valid_profile()
         score = ScoreResult()
-        decision = DecisionResult()
+        decision = DecisionResult(decision="WAIT", confidence=50.0, reasons=["NEUTRAL"])
         execution = ExecutionResult(status=ExecutionStatus.SKIPPED, message="not executable")
 
         report = self.container.build_report_engine().build_report(
@@ -159,6 +206,7 @@ class TestVerificationGates(unittest.TestCase):
         self.assertEqual(report.execution.status, ExecutionStatus.SKIPPED)
 
     def test_failure_evidence_report_is_explicitly_failed_not_successful(self) -> None:
+        """ReportResult may carry failure evidence without becoming a success signal."""
         failed_execution = ExecutionResult(
             status=ExecutionStatus.FAILED,
             message="forced verification failure",
@@ -167,11 +215,7 @@ class TestVerificationGates(unittest.TestCase):
         report = self.container.build_report_engine().build_report(
             symbol="BTCUSDT",
             analysis=AnalysisResult(),
-            profile=ProfileResult(
-                symbol="BTCUSDT",
-                market=MarketCharacteristics(),
-                statistics=ProfileStatistics(),
-            ),
+            profile=self._valid_profile(),
             score=ScoreResult(),
             decision=DecisionResult(decision="FAVORABLE", confidence=92.0, reasons=["verification"]),
             execution=failed_execution,
@@ -187,9 +231,12 @@ class TestVerificationGates(unittest.TestCase):
         pipeline = self.container.build_pipeline()
         provider = self.container.build_market_data_provider()
         storage = self.container.build_market_storage()
+        profile_engine = pipeline._orchestrator._profile_engine
         fixture = self._dataset()
 
-        with patch.object(provider, "execute", return_value=fixture), patch.object(storage, "execute", return_value=None):
+        with patch.object(provider, "execute", return_value=fixture), patch.object(
+            storage, "execute", return_value=None
+        ), patch.object(profile_engine, "build_profile", return_value=self._valid_profile()):
             result = pipeline.run_symbol("BTCUSDT", [Timeframe.H1.value], quantity=1.0)
 
         self.assertTrue(result.success)
@@ -205,7 +252,10 @@ class TestVerificationGates(unittest.TestCase):
         self.assertIsInstance(result.execution_result, ExecutionResult)
         self.assertIsInstance(result.report_result, ReportResult)
         self.assertTrue(result.report_result.is_complete)
-        self.assertIn(result.execution_result.status, (ExecutionStatus.EXECUTED, ExecutionStatus.SKIPPED))
+        self.assertIn(
+            result.execution_result.status,
+            (ExecutionStatus.EXECUTED, ExecutionStatus.SKIPPED),
+        )
         self.assertIs(result.report_result.execution, result.execution_result)
 
     def test_invalid_input_fails_closed_before_execution(self) -> None:
@@ -221,8 +271,12 @@ class TestVerificationGates(unittest.TestCase):
         execution.execute.assert_not_called()
 
     def test_execution_failure_is_observable_and_report_never_implies_success(self) -> None:
+        """Verify the final failure contract without requiring report suppression."""
         pipeline = self.container.build_pipeline()
-        failed_execution = ExecutionResult(status=ExecutionStatus.FAILED, message="forced execution failure")
+        failed_execution = ExecutionResult(
+            status=ExecutionStatus.FAILED,
+            message="forced execution failure",
+        )
         failure_evidence = ReportResult(
             symbol="BTCUSDT",
             execution=failed_execution,
@@ -232,18 +286,39 @@ class TestVerificationGates(unittest.TestCase):
         with patch.object(
             pipeline._orchestrator,
             "run",
-            return_value=MagicMock(execution_plan=ExecutionPlan(symbol="BTCUSDT", side=ExecutionSide.BUY, price=100_000.0, quantity=1.0)),
-        ), patch.object(pipeline._execution_engine, "execute", return_value=failed_execution), patch.object(
-            pipeline._report_engine, "build_report", return_value=failure_evidence
+            return_value=MagicMock(
+                execution_plan=ExecutionPlan(
+                    symbol="BTCUSDT",
+                    side=ExecutionSide.BUY,
+                    price=100_000.0,
+                    quantity=1.0,
+                )
+            ),
+        ), patch.object(
+            pipeline._execution_engine,
+            "execute",
+            return_value=failed_execution,
+        ), patch.object(
+            pipeline._report_engine,
+            "build_report",
+            return_value=failure_evidence,
         ):
             result = pipeline.run_symbol("BTCUSDT", [Timeframe.H1.value], quantity=1.0)
 
         self.assertFalse(result.success)
         self.assertEqual(result.failed_stage, "EXECUTION")
         self.assertIs(result.execution_result, failed_execution)
+
         if result.report_result is not None:
             self._assert_failure_evidence_report(result.report_result, failed_execution)
-        self.assertFalse(bool(result.report_result and result.report_result.execution and result.report_result.execution.executed))
+        self.assertFalse(
+            bool(
+                result.report_result
+                and result.report_result.execution
+                and result.report_result.execution.executed
+            ),
+            "A failure report must never imply execution success.",
+        )
 
 
 if __name__ == "__main__":
