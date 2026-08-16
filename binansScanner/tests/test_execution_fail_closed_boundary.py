@@ -36,12 +36,15 @@ class TestExecutionFailClosedBoundary(unittest.TestCase):
             ),
         )
 
-    def test_failed_execution_failure_evidence_report_can_be_built_and_exported(self) -> None:
+    def test_failed_execution_preserves_failure_evidence_through_export(self) -> None:
         analysis, profile, score, decision = self._inputs()
         execution = ExecutionResult(
             status=ExecutionStatus.FAILED,
             message="forced execution failure",
         )
+        failure_stage = "EXECUTION"
+        failure_message = "forced execution failure"
+        stage_trace = ("ORCHESTRATION", "EXECUTION", "REPORT")
 
         report = ReportEngine(project_version="test").build_report(
             symbol="BTCUSDT",
@@ -50,41 +53,52 @@ class TestExecutionFailClosedBoundary(unittest.TestCase):
             score=score,
             decision=decision,
             execution=execution,
-            stage_trace=("ORCHESTRATION", "EXECUTION", "REPORT"),
-            failure_stage="EXECUTION",
-            failure_message="forced execution failure",
+            stage_trace=stage_trace,
+            failure_stage=failure_stage,
+            failure_message=failure_message,
         )
 
+        # Execution FAILED remains FAILED and the exact ExecutionResult is retained.
         self.assertIs(report.execution, execution)
+        self.assertEqual(report.execution.status, ExecutionStatus.FAILED)
         self.assertEqual(report.audit.status, ReportAuditStatus.FAILED)
         self.assertEqual(report.audit.execution_status, ExecutionStatus.FAILED)
         self.assertFalse(report.execution_succeeded)
-        self.assertEqual(report.audit.failure_stage, "EXECUTION")
-        self.assertEqual(report.audit.failure_message, "forced execution failure")
-        self.assertEqual(
-            report.audit.stage_trace,
-            ("ORCHESTRATION", "EXECUTION", "REPORT"),
-        )
+
+        # All operational failure evidence survives the Report boundary unchanged.
+        self.assertEqual(report.audit.failure_stage, failure_stage)
+        self.assertEqual(report.audit.failure_message, failure_message)
+        self.assertEqual(report.audit.stage_trace, stage_trace)
 
         engine = ReportEngine(project_version="test")
         payload = json.loads(engine.export_json(report))
         self.assertEqual(payload["audit"]["status"], "FAILED")
         self.assertEqual(payload["audit"]["execution_status"], "FAILED")
-        self.assertEqual(payload["audit"]["failure_stage"], "EXECUTION")
+        self.assertEqual(payload["audit"]["failure_stage"], failure_stage)
+        self.assertEqual(payload["audit"]["failure_message"], failure_message)
+        self.assertEqual(payload["audit"]["stage_trace"], list(stage_trace))
+
+        # Renderer/exporter may write Failure Evidence, but must not reinterpret it.
+        json_rendered = json.loads(JsonReportRenderer().render(report))
+        self.assertEqual(json_rendered["audit"]["status"], "FAILED")
+        self.assertEqual(json_rendered["audit"]["execution_status"], "FAILED")
 
         with tempfile.TemporaryDirectory() as temp_dir:
             output_path = Path(temp_dir) / "failure-evidence.json"
-            ReportExporter(HtmlReportRenderer(), JsonReportRenderer()).export(
+            exported_path = ReportExporter(HtmlReportRenderer(), JsonReportRenderer()).export(
                 report,
                 output_path,
                 ReportFormat.JSON,
             )
+            self.assertEqual(exported_path, output_path)
             exported = json.loads(output_path.read_text(encoding="utf-8"))
             self.assertEqual(exported["audit"]["status"], "FAILED")
             self.assertEqual(exported["audit"]["execution_status"], "FAILED")
+            self.assertEqual(exported["audit"]["failure_stage"], failure_stage)
+            self.assertEqual(exported["audit"]["failure_message"], failure_message)
+            self.assertEqual(exported["audit"]["stage_trace"], list(stage_trace))
 
-        # Report success semantics are intentionally absent: Pipeline.success
-        # remains owned by PipelineItemResult and is never inferred from export.
+        # No report/export API is allowed to imply Pipeline.success.
         self.assertFalse(report.execution_succeeded)
 
 
