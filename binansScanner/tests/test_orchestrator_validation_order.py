@@ -128,6 +128,13 @@ class TestOrchestratorValidationOrder(TestCase):
 
         validation.validate_dataset.assert_called_once_with(dataset)
         storage.execute.assert_called_once_with(dataset)
+        analysis.analyze.assert_called_once_with(dataset)
+        profile.build_profile.assert_called_once_with(dataset)
+        score.calculate.assert_called_once_with(analysis.analyze.return_value)
+        decision.decide.assert_called_once_with(
+            analysis.analyze.return_value,
+            score.calculate.return_value,
+        )
         self.assertTrue(result.statistics.success)
         self.assertEqual(result.statistics.current_stage, PipelineStage.FINISHED)
 
