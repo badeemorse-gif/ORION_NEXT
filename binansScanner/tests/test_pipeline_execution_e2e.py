@@ -108,6 +108,7 @@ class TestPipelineExecutionE2E(unittest.TestCase):
         pipeline = self.container.build_pipeline()
         profile_engine = pipeline._orchestrator._profile_engine
         plan_builder = pipeline._orchestrator._execution_plan_builder
+        original_build = plan_builder.build
 
         decision_patch = (
             patch.object(pipeline._orchestrator._decision_engine, "decide", return_value=decision)
@@ -122,7 +123,7 @@ class TestPipelineExecutionE2E(unittest.TestCase):
         plan_patch = None
         if quantity == 0.0:
             def build_zero_quantity_plan(dataset_arg, decision_arg):
-                plan = plan_builder.build(dataset_arg, decision_arg)
+                plan = original_build(dataset_arg, decision_arg)
                 if plan is None:
                     return None
                 return replace(plan, quantity=0.0)
