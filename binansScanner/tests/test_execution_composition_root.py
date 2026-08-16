@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import unittest
 
-from core.dependency_container import DependencyContainer
+from core.dependency_container import ContainerConfiguration, ContainerError, DependencyContainer
 from engines.execution_engine import ExecutionEngine, PaperExecutionAdapter
 from models.execution import ExecutionPlan, ExecutionSide, ExecutionStatus
 
@@ -46,6 +46,23 @@ class TestExecutionCompositionRoot(unittest.TestCase):
         self.assertEqual(statistics.total_executed, 2)
         self.assertEqual(statistics.total_skipped, 0)
         self.assertEqual(statistics.total_failed, 0)
+
+    def test_live_execution_mode_fails_closed_at_composition_root(self) -> None:
+        container = DependencyContainer(
+            ContainerConfiguration(
+                paper_trading_enabled=False,
+                binance_api_key="deliberately-unused-test-key",
+                binance_api_secret="deliberately-unused-test-secret",
+                binance_testnet=False,
+            )
+        )
+        try:
+            with self.assertRaisesRegex(ContainerError, "Live execution is not available"):
+                container.build_execution_engine()
+            self.assertIsNone(container._execution_adapter_instance)
+            self.assertIsNone(container._execution_engine_instance)
+        finally:
+            container.reset()
 
 
 if __name__ == "__main__":
