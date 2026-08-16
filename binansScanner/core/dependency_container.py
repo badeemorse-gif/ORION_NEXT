@@ -3,12 +3,16 @@
 Badee Binance Scanner
 Architecture : ORION
 Module      : core.dependency_container
-Version     : 1.8.0
-Status      : ORION Canonical Composition Root
+Version     : 1.8.1
+Status      : ORION Canonical Composition Root / Paper Execution Safety
 ===============================================================================
 
 Composition Root responsible solely for object creation, dependency wiring,
 and lifecycle management.
+
+Paper execution is the only execution mode exposed by the current composition
+root. A configuration that disables paper trading fails closed instead of
+falling through to an implicit live-execution path.
 ===============================================================================
 """
 from __future__ import annotations
@@ -136,6 +140,12 @@ class DependencyContainer:
         return ValidationEngine()
 
     def _create_execution_adapter(self) -> ExecutionAdapter:
+        if not self._config.paper_trading_enabled:
+            raise ContainerError(
+                "Live execution is not available in the current ORION composition root. "
+                "paper_trading_enabled must remain True until a dedicated live-execution "
+                "boundary is explicitly implemented and approved."
+            )
         return PaperExecutionAdapter()
 
     def _create_scheduler_service(self) -> SchedulerService:
