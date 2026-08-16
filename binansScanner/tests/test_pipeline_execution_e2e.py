@@ -1,6 +1,7 @@
 """ORION Composition Root decision -> execution -> report E2E contract."""
 from __future__ import annotations
 
+from dataclasses import replace
 import tempfile
 import unittest
 from datetime import datetime, timedelta, timezone
@@ -106,6 +107,7 @@ class TestPipelineExecutionE2E(unittest.TestCase):
         storage = self.container.build_market_storage()
         pipeline = self.container.build_pipeline()
         profile_engine = pipeline._orchestrator._profile_engine
+        plan_builder = pipeline._orchestrator._execution_plan_builder
 
         decision_patch = (
             patch.object(pipeline._orchestrator._decision_engine, "decide", return_value=decision)
@@ -117,9 +119,33 @@ class TestPipelineExecutionE2E(unittest.TestCase):
             )
         )
 
-        with patch.object(provider, "execute", return_value=dataset), patch.object(
-            storage, "execute", return_value=None
-        ), patch.object(profile_engine, "build_profile", return_value=self._valid_profile()), decision_patch:
+        plan_patch = None
+        if quantity == 0.0:
+            def build_zero_quantity_plan(dataset_arg, decision_arg):
+                plan = plan_builder.build(dataset_arg, decision_arg)
+                if plan is None:
+                    return None
+                return replace(plan, quantity=0.0)
+
+            plan_patch = patch.object(
+                plan_builder,
+                "build",
+                side_effect=build_zero_quantity_plan,
+            )
+
+        patches = [
+            patch.object(provider, "execute", return_value=dataset),
+            patch.object(storage, "execute", return_value=None),
+            patch.object(profile_engine, "build_profile", return_value=self._valid_profile()),
+            decision_patch,
+        ]
+        if plan_patch is not None:
+            patches.append(plan_patch)
+
+        with patches[0], patches[1], patches[2], patches[3]:
+            if plan_patch is not None:
+                with plan_patch:
+                    return pipeline.run_symbol("BTCUSDT", [Timeframe.H1.value], quantity=quantity)
             return pipeline.run_symbol("BTCUSDT", [Timeframe.H1.value], quantity=quantity)
 
     def test_container_pipeline_reaches_execution_and_builds_report(self) -> None:
