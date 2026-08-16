@@ -1,22 +1,24 @@
 """ORION Composition Root decision -> execution -> report E2E contract."""
 from __future__ import annotations
 
-from dataclasses import replace
 import tempfile
 import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from typing import Optional
 from unittest.mock import patch
 
 import pandas as pd
 
 from core.dependency_container import ContainerConfiguration, DependencyContainer
 from enums import DataHealth, Timeframe
+from models.analysis import AnalysisResult
 from models.decision import DecisionResult
 from models.execution import ExecutionPlan, ExecutionResult, ExecutionSide, ExecutionStatus
 from models.market import MarketDataset, MarketMetadata, TimeframeData
 from models.profile import MarketCharacteristics, ProfileResult, ProfileStatistics, TimeframeProfile
 from models.report import ReportResult
+from models.score import ScoreResult
 
 
 class TestPipelineExecutionE2E(unittest.TestCase):
@@ -122,62 +124,86 @@ class TestPipelineExecutionE2E(unittest.TestCase):
         assert report.execution.status is ExecutionStatus.FAILED
         assert not report.execution.executed
 
+    @staticmethod
+    def _canonical_favorable_analysis() -> AnalysisResult:
+        return AnalysisResult(
+            market_state="BULLISH",
+            strength=100.0,
+            signals=[
+                "EMA_ALIGNMENT_BULLISH",
+                "MOMENTUM_POSITIVE",
+                "STRONG_TREND",
+            ],
+            warnings=[],
+        )
+
+    @staticmethod
+    def _canonical_favorable_score() -> ScoreResult:
+        return ScoreResult(
+            score=60.0,
+            category="STRONG_BULLISH",
+            factors=["CANONICAL_FAVORABLE_E2E_FIXTURE"],
+            warnings=[],
+        )
+
     def _run_with_real_market_stages(
         self,
         decision: DecisionResult | None = None,
         *,
-        quantity: float = 1.0,
+        quantity: Optional[float] = None,
     ):
         dataset = self._dataset()
         provider = self.container.build_market_data_provider()
         storage = self.container.build_market_storage()
         pipeline = self.container.build_pipeline()
         profile_engine = pipeline._orchestrator._profile_engine
-        plan_builder = pipeline._orchestrator._execution_plan_builder
-        original_build = plan_builder.build
-
-        decision_patch = (
-            patch.object(pipeline._orchestrator._decision_engine, "decide", return_value=decision)
-            if decision is not None
-            else patch.object(
-                pipeline._orchestrator._decision_engine,
-                "decide",
-                wraps=pipeline._orchestrator._decision_engine.decide,
-            )
-        )
-
-        plan_patch = None
-        if quantity == 0.0:
-            def build_zero_quantity_plan(dataset_arg, decision_arg):
-                plan = original_build(dataset_arg, decision_arg)
-                if plan is None:
-                    return None
-                return replace(plan, quantity=0.0)
-
-            plan_patch = patch.object(
-                plan_builder,
-                "build",
-                side_effect=build_zero_quantity_plan,
-            )
 
         patches = [
             patch.object(provider, "execute", return_value=dataset),
             patch.object(storage, "execute", return_value=None),
             patch.object(profile_engine, "build_profile", return_value=self._valid_profile()),
-            decision_patch,
         ]
-        if plan_patch is not None:
-            patches.append(plan_patch)
 
-        with patches[0], patches[1], patches[2], patches[3]:
-            if plan_patch is not None:
-                with plan_patch:
-                    return pipeline.run_symbol("BTCUSDT", [Timeframe.H1.value], quantity=quantity)
-            return pipeline.run_symbol("BTCUSDT", [Timeframe.H1.value], quantity=quantity)
+        if decision is not None and decision.decision == "FAVORABLE":
+            patches.extend(
+                [
+                    patch.object(
+                        pipeline._orchestrator._analysis_engine,
+                        "analyze",
+                        return_value=self._canonical_favorable_analysis(),
+                    ),
+                    patch.object(
+                        pipeline._orchestrator._score_engine,
+                        "calculate",
+                        return_value=self._canonical_favorable_score(),
+                    ),
+                ]
+            )
+
+        with patches[0], patches[1], patches[2]:
+            if len(patches) == 5:
+                with patches[3], patches[4]:
+                    return pipeline.run_symbol(
+                        "BTCUSDT",
+                        [Timeframe.H1.value],
+                        quantity=quantity,
+                    )
+            return pipeline.run_symbol(
+                "BTCUSDT",
+                [Timeframe.H1.value],
+                quantity=quantity,
+            )
 
     def test_container_pipeline_reaches_execution_and_builds_report(self) -> None:
-        """WAIT reaches HOLD with zero quantity and is skipped with a complete report."""
-        result = self._run_with_real_market_stages(quantity=0.0)
+        """WAIT reaches HOLD with canonical quantity semantics and is skipped with a complete report."""
+        result = self._run_with_real_market_stages(
+            DecisionResult(
+                decision="WAIT",
+                confidence=0.0,
+                reasons=["E2E WAIT fixture"],
+            ),
+            quantity=None,
+        )
 
         self.assertTrue(result.success)
         self.assertIsNone(result.error_message)
@@ -194,6 +220,7 @@ class TestPipelineExecutionE2E(unittest.TestCase):
         assert report is not None
 
         self.assertEqual(result.orchestrator_result.decision.decision, "WAIT")
+        self.assertEqual(result.orchestrator_result.decision.confidence, 0.0)
         self.assertEqual(plan.side, ExecutionSide.HOLD)
         self.assertEqual(plan.quantity, 0.0)
         self.assertEqual(execution.status, ExecutionStatus.SKIPPED)
@@ -203,12 +230,12 @@ class TestPipelineExecutionE2E(unittest.TestCase):
         self.assertTrue(report.is_complete)
 
     def test_container_pipeline_executes_favorable_decision_end_to_end(self) -> None:
-        """A favorable real-orchestrator decision must execute through PaperExecutionAdapter."""
+        """Canonical bullish analysis/score fixtures must yield FAVORABLE through the real DecisionEngine."""
         result = self._run_with_real_market_stages(
             DecisionResult(
                 decision="FAVORABLE",
-                confidence=0.95,
-                reasons=["E2E executable decision"],
+                confidence=60.0,
+                reasons=["CANONICAL_FAVORABLE_E2E_FIXTURE"],
             ),
             quantity=1.0,
         )
@@ -226,6 +253,9 @@ class TestPipelineExecutionE2E(unittest.TestCase):
         assert execution is not None
         assert report is not None
 
+        self.assertEqual(result.orchestrator_result.analysis.market_state, "BULLISH")
+        self.assertEqual(result.orchestrator_result.score.category, "STRONG_BULLISH")
+        self.assertGreaterEqual(result.orchestrator_result.score.score, 60.0)
         self.assertEqual(result.orchestrator_result.decision.decision, "FAVORABLE")
         self.assertEqual(plan.side, ExecutionSide.BUY)
         self.assertEqual(execution.status, ExecutionStatus.EXECUTED)
