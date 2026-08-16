@@ -15,7 +15,7 @@ from enums import DataHealth, Timeframe
 from models.decision import DecisionResult
 from models.execution import ExecutionPlan, ExecutionResult, ExecutionSide, ExecutionStatus
 from models.market import MarketDataset, MarketMetadata, TimeframeData
-from models.profile import MarketCharacteristics, ProfileResult, ProfileStatistics
+from models.profile import MarketCharacteristics, ProfileResult, ProfileStatistics, TimeframeProfile
 from models.report import ReportResult
 
 
@@ -39,8 +39,7 @@ class TestPipelineExecutionE2E(unittest.TestCase):
         self._temp_directory.cleanup()
 
     @staticmethod
-    def _dataset() -> MarketDataset:
-        now = datetime.now(timezone.utc)
+    def _timeframe_data(timeframe: Timeframe, now: datetime) -> TimeframeData:
         closes = [100_000.0 + float(index * 100.0) for index in range(250)]
         timestamps = pd.date_range(
             end=now,
@@ -58,14 +57,18 @@ class TestPipelineExecutionE2E(unittest.TestCase):
             },
             index=timestamps,
         )
-        timeframe_data = TimeframeData(
-            timeframe=Timeframe.H1,
+        return TimeframeData(
+            timeframe=timeframe,
             dataframe=dataframe,
             data_health=DataHealth.GOOD,
             candles_count=len(dataframe),
             first_timestamp=now - timedelta(hours=len(dataframe) - 1),
             last_timestamp=now,
         )
+
+    @staticmethod
+    def _dataset() -> MarketDataset:
+        now = datetime.now(timezone.utc)
         metadata = MarketMetadata(
             symbol="BTCUSDT",
             exchange="BINANCE",
@@ -76,15 +79,38 @@ class TestPipelineExecutionE2E(unittest.TestCase):
         )
         return MarketDataset(
             metadata=metadata,
-            timeframes={Timeframe.H1: timeframe_data},
+            timeframes={
+                Timeframe.D1: TestPipelineExecutionE2E._timeframe_data(Timeframe.D1, now),
+                Timeframe.H4: TestPipelineExecutionE2E._timeframe_data(Timeframe.H4, now),
+                Timeframe.H1: TestPipelineExecutionE2E._timeframe_data(Timeframe.H1, now),
+            },
         )
 
     @staticmethod
     def _valid_profile() -> ProfileResult:
+        now = datetime.now(timezone.utc)
+        timeframes = tuple(
+            TimeframeProfile(
+                timeframe=timeframe.value,
+                characteristics=MarketCharacteristics(),
+                candles_count=250,
+                first_timestamp=now - timedelta(hours=249),
+                last_timestamp=now,
+                data_health=DataHealth.GOOD,
+                missing_candles=0,
+                warnings=(),
+            )
+            for timeframe in (Timeframe.D1, Timeframe.H4, Timeframe.H1)
+        )
         return ProfileResult(
             symbol="BTCUSDT",
             market=MarketCharacteristics(),
-            statistics=ProfileStatistics(),
+            statistics=ProfileStatistics(
+                completion_ratio=1.0,
+                total_candles=750,
+                missing_candles=0,
+            ),
+            timeframes=timeframes,
             is_tradeable=True,
             warnings=(),
             blocks=(),
