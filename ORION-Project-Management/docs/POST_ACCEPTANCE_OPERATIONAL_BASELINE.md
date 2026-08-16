@@ -94,195 +94,66 @@ The following operational matters were not established merely by the 222-test en
 
 Therefore **Live Trading is NOT declared APPROVED by this document**.
 
-## Post-Acceptance Roadmap — Mandatory Order
+## Phase Boundary
 
-The next operational work is explicitly ordered and must not be collapsed into a single release.
+At this point the engineering phase is CLOSED and the next phase is:
 
-### Phase A — Data Accuracy / Score Calibration Gate
+**TRADING / BOT READINESS**
 
-**Status: NEXT / NOT YET VERIFIED**
+The next phase must begin from the accepted baseline HEAD above.
 
-Before launching the Paper Trading Bot, leadership must first test whether ORION's numeric outputs are comparable and behaviorally meaningful across different coins and market contexts.
+No engineer should silently modify the accepted Integration HEAD as part of this transition.
 
-The central question is:
+Any new implementation required for trading/bot operation must be treated as a new change set with its own branch, owner, Definition of Done, review, integration gate and verification evidence.
 
-> Can two coins with the same raw score (for example, `100` and `100`) represent materially different market situations, and can raw absolute values therefore mislead ranking or confidence decisions?
+## Phase A — Signal Accuracy / Score Calibration
 
-This phase must explicitly evaluate:
+Before Paper Trading, the project will run a dedicated data-and-signal validation phase. The goal is to determine whether ORION signal values are comparable and empirically meaningful across assets and market regimes, and to detect cases where apparently high scores can mislead due to asset size, liquidity, volatility or scale.
 
-- the meaning and numeric range of every relevant Score and Confidence value
-- whether each metric is **absolute** or **relative/contextual**
-- comparability across coins with very different price, market size, liquidity and volatility
-- **Raw Score** versus contextual/relative measurements
-- relative volume / volume expansion
-- relative volatility / volatility expansion
-- liquidity quality or suitable liquidity proxies
-- momentum and multi-timeframe alignment
-- market-regime context
-- percentile/rank normalization where appropriate
-- whether a `Score=90` in one coin has materially the same significance as `Score=90` in another
-- whether high Confidence is empirically related to better outcomes or is only an internal model value
+The Phase A master plan and developer allocation are documented in:
 
-The evaluation dataset should capture, at minimum, for each observed signal/opportunity:
+`ORION-Project-Management/docs/PHASE_A_SIGNAL_ACCURACY_DEVELOPER_PLAN.md`
 
-- timestamp
-- symbol
-- raw score
-- confidence
-- market regime
-- volume / turnover where available
-- relative volume
-- volatility / ATR or equivalent
-- relative volatility
-- liquidity measure/proxy
-- relevant timeframe context
-- 1h forward outcome
-- 4h forward outcome
-- 24h forward outcome
-- Maximum Favorable Excursion (MFE)
-- Maximum Adverse Excursion (MAE)
+Developer-specific task records:
 
-The goal of this gate is **not** to prove trading profitability yet. It is to establish whether the signal metrics are measurable, comparable and sufficiently calibrated to justify Paper Trading.
+- `PHASE_A_D1_TASK.md`
+- `PHASE_A_D2_TASK.md`
+- `PHASE_A_D3_TASK.md`
+- `PHASE_A_D4_TASK.md`
+- `PHASE_A_D5_TASK.md`
+- `PHASE_A_D6_TASK.md`
+- `PHASE_A_D7_TASK.md`
 
-No Paper Trading launch is APPROVED until this gate is passed by leadership.
+### Phase A operating principles
 
-### Phase B — Paper Trading Bot
+- Raw Score is not treated as a probability of success.
+- Confidence is not treated as a probability until empirically calibrated.
+- Equal raw scores across different assets are not assumed to mean equal opportunity quality.
+- Relative/percentile context must be evaluated alongside absolute values.
+- Forward outcomes must be measured without future-data leakage.
+- Two to three days may be used only as an operational smoke test; statistical acceptance requires enough observations to support a meaningful conclusion.
+- Paper Trading will not start until Phase A receives a separate leadership approval.
 
-**Status: BLOCKED until Phase A is APPROVED**
+## Post-Acceptance Source of Truth
 
-Run the experimental trading bot without real-money execution.
-
-Operationally, an initial 2–3 day run is acceptable as a **smoke / operational trial**, not by itself as proof of trading competence.
-
-During the run, record every decision, signal, confidence, execution intent, and subsequent market outcome so that the result is auditable.
-
-The operational trial must answer whether the bot:
-
-- receives and processes market data correctly
-- avoids stale/duplicate data
-- remains stable over the observation window
-- produces coherent decisions
-- respects the approved WAIT/HOLD/SKIPPED behavior
-- maintains an auditable signal-to-outcome trail
-
-A separate statistical performance gate is required once enough observations exist. A 2–3 day profitable result alone is not sufficient for Live Trading approval.
-
-### Phase C — Statistical Performance Validation
-
-**Status: BLOCKED until Phase B evidence exists**
-
-Evaluate whether observed performance is persistent enough to justify progressing toward live operation.
-
-Metrics should include, as applicable:
-
-- signal count and opportunity frequency
-- win rate / precision
-- profit factor
-- maximum drawdown
-- MFE / MAE distributions
-- performance by confidence/score bucket
-- performance by market regime
-- consistency across different coins/timeframes
-- confidence calibration / reliability
-
-A key desired property is approximately monotonic behavior: higher score/confidence buckets should demonstrate systematically stronger forward outcomes rather than merely producing impressive-looking numbers.
-
-### Phase D — Live Trading Bot Candidate
-
-**Status: NOT APPROVED**
-
-Only after the paper and statistical gates pass may leadership consider cloning the approved paper bot into a live-trading candidate.
-
-The live candidate requires a new operational readiness review covering at minimum:
-
-- live credentials and secret handling
-- order submission, modification and cancellation
-- exchange/network failure handling
-- rate limits and retries
-- startup/shutdown and crash recovery
-- monitoring and alerting
-- position/risk/capital limits
-- safe-mode / kill-switch behavior
-- deployment and runtime validation
-- operational runbook
-
-The live candidate must be treated as a new change set and must not modify the accepted engineering baseline in place.
-
-### Phase E — Explosion Discovery Bot
-
-**Status: CANDIDATE / DESIGN NOT YET STARTED**
-
-A separate non-trading bot may be evaluated for identifying coins that enter a high-probability **pre-explosion / abnormal-move** condition before the move occurs.
-
-This bot is explicitly **alert/ranking only** in its initial phase. It must not execute trades.
-
-The initial conceptual output is a ranked list such as:
-
-- symbol
-- Explosion Score
-- supporting factors
-- relevant timeframe
-- observation timestamp
-- expected evaluation horizon
-
-Potential factors to investigate include, only where supported by the data and later validated:
-
-- volume expansion
-- volatility compression followed by acceleration
-- momentum acceleration
-- multi-timeframe alignment
-- abnormal activity
-- breakout proximity
-- liquidity conditions
-
-The term “pre-explosion” is a hypothesis to be tested, not a promise that a coin will explode. The bot must be evaluated prospectively by recording its alert time and later measuring actual forward movement.
-
-The Explosion Discovery Bot is independent from the trading execution path until leadership explicitly approves any future integration.
-
-## Mandatory Phase Boundary
-
-The post-acceptance order is:
-
-`Phase A — Data Accuracy / Score Calibration`
-
-`→ Phase B — Paper Trading`
-
-`→ Phase C — Statistical Performance Validation`
-
-`→ Phase D — Live Trading Candidate`
-
-with `Phase E — Explosion Discovery Bot` running as a separate research/alert track when formally opened.
-
-No phase may be skipped merely because an earlier phase produced an encouraging short-term result.
-
-## Governance Rules for This Phase
-
-- The accepted engineering baseline remains frozen.
-- All operational/readiness implementation must branch from the accepted HEAD or an explicitly approved post-acceptance branch.
-- No engineer may silently modify `integration/final-release-20260815`.
-- Trading/live behavior requires new change sets, owners, Definition of Done, review and verification evidence.
-- Paper results are evidence, not proof of profitability.
-- Raw Score/Confidence values must not be treated as calibrated probabilities unless empirical validation establishes that relationship.
-- Any live-trading decision requires an explicit leadership approval after all required gates.
-
-## Source-of-Truth Rule
-
-For the completed engineering phase, the immutable reference point is:
+The engineering baseline remains immutable at:
 
 `integration/final-release-20260815 @ c54dc67792776da905a3efb1f667c1869c15db3d`
 
-The operational-readiness phase uses this exact HEAD as its baseline and must not rewrite the accepted history.
+Operational-readiness work is isolated under:
+
+`post-acceptance/operational-readiness`
+
+No Phase A work may rewrite the accepted engineering history.
 
 ## Leadership Decision at Transition
 
 **Engineering Final Acceptance = APPROVED.**
 
-**Phase A — Data Accuracy / Score Calibration = NEXT.**
+**Phase A — Signal Accuracy / Score Calibration = NEXT.**
 
 **Trading/Bot Readiness = NOT YET VERIFIED.**
 
 **Paper Trading = BLOCKED until Phase A approval.**
 
 **Live Trading = NOT APPROVED.**
-
-**Explosion Discovery Bot = CANDIDATE / SEPARATE RESEARCH TRACK.**
