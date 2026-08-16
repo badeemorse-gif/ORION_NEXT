@@ -138,14 +138,20 @@ class TestVerificationGates(unittest.TestCase):
 
         self.assertEqual(self._build_plan(dataset, favorable).side, ExecutionSide.BUY)
         self.assertEqual(self._build_plan(dataset, unfavorable).side, ExecutionSide.SELL)
-        self.assertEqual(self._build_plan(dataset, wait).side, ExecutionSide.HOLD)
+        wait_plan = self._build_plan(dataset, wait)
+        self.assertEqual(wait_plan.side, ExecutionSide.HOLD)
+        self.assertEqual(wait_plan.quantity, 0.0)
         self.assertEqual(self._build_plan(dataset, unknown).side, ExecutionSide.NONE)
 
         engine = self.container.build_execution_engine()
-        for decision in (wait, unknown):
-            result = engine.execute(self._build_plan(dataset, decision))
-            self.assertEqual(result.status, ExecutionStatus.SKIPPED)
-            self.assertIsNone(result.order_id)
+        wait_result = engine.execute(wait_plan)
+        self.assertEqual(wait_result.status, ExecutionStatus.SKIPPED)
+        self.assertIsNone(wait_result.order_id)
+        self.assertEqual(wait_result.request.quantity if wait_result.request else 0.0, 0.0)
+
+        unknown_result = engine.execute(self._build_plan(dataset, unknown))
+        self.assertEqual(unknown_result.status, ExecutionStatus.SKIPPED)
+        self.assertIsNone(unknown_result.order_id)
 
     def test_report_integrity_preserves_exact_upstream_contract_objects(self) -> None:
         analysis = AnalysisResult()
