@@ -13,7 +13,7 @@ from enums import DataHealth, Timeframe
 from models.analysis import AnalysisResult
 from models.decision import DecisionResult
 from models.market import MarketDataset, MarketMetadata, TimeframeData
-from models.profile import MarketCharacteristics, ProfileResult, ProfileStatistics, TimeframeProfile
+from models.profile import MarketCharacteristics, ProfileResult, ProfileStatistics
 from models.score import ScoreResult
 
 
@@ -40,9 +40,14 @@ class TestOrchestratorValidationOrder(TestCase):
 
     def _orchestrator(self, provider: MagicMock, storage: MagicMock, validation: MagicMock) -> Orchestrator:
         return Orchestrator(
-            provider=provider, storage=storage,
-            indicator_engine=MagicMock(), analysis_engine=MagicMock(), profile_engine=MagicMock(),
-            score_engine=MagicMock(), decision_engine=MagicMock(), validation_engine=validation,
+            provider=provider,
+            storage=storage,
+            indicator_engine=MagicMock(),
+            analysis_engine=MagicMock(),
+            profile_engine=MagicMock(),
+            score_engine=MagicMock(),
+            decision_engine=MagicMock(),
+            validation_engine=validation,
             config=OrchestratorConfig(ENABLE_TIMING=False),
         )
 
@@ -74,6 +79,7 @@ class TestOrchestratorValidationOrder(TestCase):
 
         indicator = MagicMock()
         indicator.calculate_dataset.return_value = dataset
+
         canonical_analysis = AnalysisResult(
             market_state="NEUTRAL",
             strength=0.0,
@@ -82,39 +88,24 @@ class TestOrchestratorValidationOrder(TestCase):
         )
         analysis = MagicMock()
         analysis.analyze.return_value = canonical_analysis
-        profile_characteristics = MarketCharacteristics(
-            trend="Neutral",
-            momentum="Neutral",
-            confidence=50.0,
-            trend_score=50.0,
-            momentum_score=50.0,
-            volume_score=50.0,
-            volatility_score=50.0,
-        )
+
         profile = MagicMock()
         profile.build_profile.return_value = ProfileResult(
             symbol="BTCUSDT",
-            market=profile_characteristics,
-            statistics=ProfileStatistics(
-                health_score=100.0,
-                confidence_limit=50.0,
-                completion_ratio=1.0,
-                total_candles=100,
-                missing_candles=0,
-            ),
-            timeframes=(
-                TimeframeProfile(timeframe="1d", characteristics=profile_characteristics, candles_count=100, missing_candles=0),
-                TimeframeProfile(timeframe="4h", characteristics=profile_characteristics, candles_count=100, missing_candles=0),
-                TimeframeProfile(timeframe="1h", characteristics=profile_characteristics, candles_count=100, missing_candles=0),
-            ),
+            market=MarketCharacteristics(),
+            statistics=ProfileStatistics(),
             is_tradeable=True,
+            warnings=(),
+            blocks=(),
         )
+
         score = MagicMock()
         score.calculate.return_value = ScoreResult(
             score=0.0,
             category="NEUTRAL",
             factors=["VALIDATION_ORDER_FIXTURE"],
         )
+
         decision = MagicMock()
         decision.decide.return_value = DecisionResult(
             decision="WAIT",
@@ -123,9 +114,14 @@ class TestOrchestratorValidationOrder(TestCase):
         )
 
         orchestrator = Orchestrator(
-            provider=provider, storage=storage, indicator_engine=indicator,
-            analysis_engine=analysis, profile_engine=profile, score_engine=score,
-            decision_engine=decision, validation_engine=validation,
+            provider=provider,
+            storage=storage,
+            indicator_engine=indicator,
+            analysis_engine=analysis,
+            profile_engine=profile,
+            score_engine=score,
+            decision_engine=decision,
+            validation_engine=validation,
             config=OrchestratorConfig(ENABLE_TIMING=False),
         )
 
