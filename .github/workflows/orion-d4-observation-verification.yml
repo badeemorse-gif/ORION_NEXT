@@ -1,0 +1,77 @@
+name: ORION D4 Observation Verification
+
+on:
+  push:
+    branches:
+      - developer4/materialization-observation-phase-a
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  d4-observation-verification:
+    name: Verify D4 Observation Workflow
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout exact branch HEAD
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+
+      - name: Assert exact verification revision
+        shell: bash
+        run: |
+          ACTUAL="$(git rev-parse HEAD)"
+          EXPECTED="${{ github.sha }}"
+          echo "EXPECTED_SHA=${EXPECTED}"
+          echo "ACTUAL_CHECKOUT_SHA=${ACTUAL}"
+          test "${ACTUAL}" = "${EXPECTED}"
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install verification dependencies
+        run: |
+          python -m pip install --upgrade pip
+          if [ -f binansScanner/requirements.txt ]; then pip install -r binansScanner/requirements.txt; fi
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+
+      - name: D4 observation contract tests
+        working-directory: binansScanner
+        env:
+          PYTHONPATH: .
+        run: |
+          python -m unittest tests.test_signal_observation_workflow -v
+
+      - name: D4 execution isolation check
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          source = Path("tools/orion_signal_observe.py").read_text(encoding="utf-8")
+          forbidden = (
+              "binance",
+              "create_order",
+              "order_market_buy",
+              "order_market_sell",
+              "futures_create_order",
+              "live_trading",
+          )
+          found = [token for token in forbidden if token.lower() in source.lower()]
+          if found:
+              raise SystemExit(f"D4 execution isolation failed: forbidden live-execution token(s): {found}")
+          print("D4 execution isolation: PASS")
+          PY
+
+      - name: Repository parity and working tree clean
+        env:
+          GITHUB_SHA: ${{ github.sha }}
+        run: |
+          python tools/verify_repository_parity.py
+          test -z "$(git status --porcelain)"
+          echo "WORKING_TREE_CLEAN=PASS"
