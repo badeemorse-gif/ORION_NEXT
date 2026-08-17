@@ -3,12 +3,12 @@
 Badee Binance Scanner
 Architecture : ORION
 Module       : engines.indicator_engine
-Version      : 3.0.1
+Version      : 3.0.2
 Status       : ORION Canonical Indicator Coordinator
 ===============================================================================
 
-Coordinates indicator calculation without introducing analytical state into
-the Market domain models.
+Coordinates indicator calculation and publishes the canonical IndicatorResult
+metadata handoff expected by downstream intelligence layers.
 ===============================================================================
 """
 
@@ -22,6 +22,7 @@ import numpy as np
 import pandas as pd
 
 from enums import Timeframe
+from models.indicators import IndicatorResult
 from models.market import MarketDataset, TimeframeData
 from engines.indicator_calculator import IndicatorCalculator
 
@@ -35,6 +36,14 @@ AVAILABLE_INDICATORS: tuple[str, ...] = (
     "Stochastic", "CCI", "Williams_R", "ROC", "Momentum_5", "Momentum_10",
     "OBV", "CMF", "VWAP", "MFI", "ATR", "Bollinger_Bands", "Keltner_Channel",
     "Donchian_Channel", "Typical_Price", "Median_Price", "HL2", "HLC3", "OHLC4",
+)
+
+# These are the canonical profile-facing outputs already calculated by the
+# IndicatorCalculator. The engine reports their presence; it does not assess
+# latest-row intelligence validity, which remains a Profile responsibility.
+PROFILE_INDICATOR_COLUMNS: tuple[str, ...] = (
+    "ema_9", "ema_20", "ema_50", "ema_100", "ema_200",
+    "adx_14", "rsi_14", "momentum_5", "momentum_10", "mfi_14", "atr_14",
 )
 
 
@@ -76,15 +85,52 @@ class IndicatorEngine:
             calculated = self._calculator.apply_all(dataframe)
             self._calculator.validate_required_indicators(calculated)
         except Exception as exc:
+            warning = f"Indicator calculation failed for timeframe {timeframe_label}: {exc}"
+            metadata = IndicatorResult(
+                quality="INSUFFICIENT",
+                failed_indicators=list(PROFILE_INDICATOR_COLUMNS),
+                calculated_indicators=[],
+                warnings=[warning],
+            )
+            dataframe.attrs["indicator_result"] = metadata
             raise IndicatorEngineError(
                 f"Failed to calculate canonical indicators for timeframe {timeframe_label}: {exc}"
             ) from exc
+
+        calculated_indicators = [
+            name for name in PROFILE_INDICATOR_COLUMNS
+            if name in calculated.columns
+        ]
+        failed_indicators = [
+            name for name in PROFILE_INDICATOR_COLUMNS
+            if name not in calculated.columns
+        ]
+        warnings: list[str] = []
+        if failed_indicators:
+            warnings.append(
+                "Missing calculated profile indicators: "
+                + ", ".join(failed_indicators)
+            )
+
+        metadata = IndicatorResult(
+            quality="SUFFICIENT" if not failed_indicators else "INSUFFICIENT",
+            failed_indicators=failed_indicators,
+            calculated_indicators=calculated_indicators,
+            warnings=warnings,
+        )
+        calculated.attrs["indicator_result"] = metadata
         timeframe_data.dataframe = calculated
         elapsed_ms = (time.perf_counter() - start_time) * 1000.0
         base_logger.debug(
-            "Indicators calculated: symbol=%s timeframe=%s rows=%d columns=%d elapsed_ms=%.2f",
-            symbol, timeframe_label, len(calculated), len(calculated.columns), elapsed_ms,
+            "Indicators calculated: symbol=%s timeframe=%s rows=%d columns=%d quality=%s elapsed_ms=%.2f",
+            symbol, timeframe_label, len(calculated), len(calculated.columns),
+            metadata.quality, elapsed_ms,
         )
+        if metadata.quality != "SUFFICIENT":
+            raise IndicatorEngineError(
+                f"Indicator metadata insufficient for timeframe {timeframe_label}: "
+                + ", ".join(metadata.failed_indicators)
+            )
         return timeframe_data
 
     def available_indicators(self) -> list[str]:
