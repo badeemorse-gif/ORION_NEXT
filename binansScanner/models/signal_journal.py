@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, fields
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Any, ClassVar, Mapping, Optional
 
 
@@ -18,6 +18,11 @@ class SignalObservation:
     symbol: str
     timeframe: str
     raw_score: float
+    directional_raw_strength: float
+    context_score: float
+    composite: float
+    relative_rank: Optional[float]
+    relative_percentile: Optional[float]
     confidence: float
     decision: str
     market_regime: str
@@ -35,6 +40,11 @@ class SignalObservation:
         "symbol": OBSERVED_EVIDENCE,
         "timeframe": OBSERVED_EVIDENCE,
         "raw_score": OBSERVED_EVIDENCE,
+        "directional_raw_strength": OBSERVED_EVIDENCE,
+        "context_score": OBSERVED_EVIDENCE,
+        "composite": OBSERVED_EVIDENCE,
+        "relative_rank": OBSERVED_EVIDENCE,
+        "relative_percentile": OBSERVED_EVIDENCE,
         "confidence": OBSERVED_EVIDENCE,
         "decision": OBSERVED_EVIDENCE,
         "market_regime": OBSERVED_EVIDENCE,
@@ -49,13 +59,32 @@ class SignalObservation:
     }
 
     def __post_init__(self) -> None:
-        _require_aware_utc_or_offset(self.timestamp, "timestamp")
+        _require_timezone_aware(self.timestamp, "timestamp")
         object.__setattr__(self, "symbol", str(self.symbol).strip())
         object.__setattr__(self, "timeframe", str(self.timeframe).strip())
         object.__setattr__(self, "decision", str(self.decision).strip())
         object.__setattr__(self, "market_regime", str(self.market_regime).strip())
-        object.__setattr__(self, "raw_score", float(self.raw_score))
-        object.__setattr__(self, "confidence", float(self.confidence))
+        for field_name in (
+            "raw_score",
+            "directional_raw_strength",
+            "context_score",
+            "composite",
+            "confidence",
+        ):
+            object.__setattr__(self, field_name, float(getattr(self, field_name)))
+        for field_name in (
+            "relative_rank",
+            "relative_percentile",
+            "volume",
+            "relative_volume",
+            "volatility",
+            "relative_volatility",
+            "liquidity",
+            "momentum",
+        ):
+            value = getattr(self, field_name)
+            if value is not None:
+                object.__setattr__(self, field_name, float(value))
         if self.multi_timeframe_alignment is not None:
             object.__setattr__(
                 self,
@@ -71,6 +100,8 @@ class SignalObservation:
             raise ValueError("decision must be non-empty")
         if not self.market_regime:
             raise ValueError("market_regime must be non-empty")
+        if self.relative_percentile is not None and not 0.0 <= self.relative_percentile <= 100.0:
+            raise ValueError("relative_percentile must be between 0 and 100")
 
     @classmethod
     def field_provenance(cls) -> dict[str, str]:
@@ -105,7 +136,7 @@ class SignalOutcome:
             if value is not None:
                 object.__setattr__(self, field_name, float(value))
         if self.outcome_timestamp is not None:
-            _require_aware_utc_or_offset(self.outcome_timestamp, "outcome_timestamp")
+            _require_timezone_aware(self.outcome_timestamp, "outcome_timestamp")
         if self.metric_unit is not None:
             normalized = str(self.metric_unit).strip()
             object.__setattr__(self, "metric_unit", normalized)
@@ -152,7 +183,26 @@ class SignalJournalEntry:
         return provenance
 
 
-def _require_aware_utc_or_offset(value: datetime, field_name: str) -> None:
+@dataclass(frozen=True, slots=True)
+class SignalJournal:
+    """Immutable append-only collection representing the official experiment journal."""
+
+    entries: tuple[SignalJournalEntry, ...] = ()
+
+    def record(self, entry: SignalJournalEntry) -> "SignalJournal":
+        """Return a new journal containing ``entry``; existing records never mutate."""
+        if not isinstance(entry, SignalJournalEntry):
+            raise TypeError("entry must be a SignalJournalEntry")
+        return SignalJournal(entries=self.entries + (entry,))
+
+    def to_dict(self) -> dict[str, Any]:
+        return {"entries": [_serialize(entry) for entry in self.entries]}
+
+    def __len__(self) -> int:
+        return len(self.entries)
+
+
+def _require_timezone_aware(value: datetime, field_name: str) -> None:
     if value.tzinfo is None or value.utcoffset() is None:
         raise ValueError(f"{field_name} must be timezone-aware")
 
@@ -180,4 +230,5 @@ __all__ = [
     "SignalObservation",
     "SignalOutcome",
     "SignalJournalEntry",
+    "SignalJournal",
 ]
