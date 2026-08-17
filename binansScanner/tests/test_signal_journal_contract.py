@@ -182,13 +182,15 @@ class TestSignalJournalContract(unittest.TestCase):
         self.assertEqual(provenance["outcome.mfe"], RETROSPECTIVE_LABEL)
         self.assertEqual(provenance["outcome.metric_unit"], RETROSPECTIVE_LABEL)
 
-    def test_signal_journal_is_immutable_and_append_only(self) -> None:
+    def test_signal_journal_is_immutable_append_only_and_serializable(self) -> None:
         journal = SignalJournal()
         entry = self._entry()
         updated = journal.record(entry)
         self.assertEqual(len(journal), 0)
         self.assertEqual(len(updated), 1)
         self.assertIs(updated.entries[0], entry)
+        self.assertEqual(updated.to_dict()["entries"][0]["observation"]["symbol"], "BTCUSDT")
+        self.assertEqual(updated.to_dict()["entries"][0]["outcome"]["metric_unit"], "percent")
         with self.assertRaises(FrozenInstanceError):
             updated.entries = ()  # type: ignore[misc]
 
