@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, fields
 from datetime import datetime
+import math
 from typing import Any, ClassVar, Mapping, Optional
 
 
@@ -18,14 +19,14 @@ class SignalObservation:
     symbol: str
     timeframe: str
     raw_score: float
-    directional_raw_strength: float
-    context_score: float
-    composite: float
-    relative_rank: Optional[float]
-    relative_percentile: Optional[float]
-    confidence: float
-    decision: str
-    market_regime: str
+    directional_raw_strength: Optional[float] = None
+    context_score: Optional[float] = None
+    composite: Optional[float] = None
+    relative_rank: Optional[float] = None
+    relative_percentile: Optional[float] = None
+    confidence: float = 0.0
+    decision: str = ""
+    market_regime: str = ""
     volume: Optional[float] = None
     relative_volume: Optional[float] = None
     volatility: Optional[float] = None
@@ -64,15 +65,12 @@ class SignalObservation:
         object.__setattr__(self, "timeframe", str(self.timeframe).strip())
         object.__setattr__(self, "decision", str(self.decision).strip())
         object.__setattr__(self, "market_regime", str(self.market_regime).strip())
+        object.__setattr__(self, "raw_score", float(self.raw_score))
+        object.__setattr__(self, "confidence", float(self.confidence))
         for field_name in (
-            "raw_score",
             "directional_raw_strength",
             "context_score",
             "composite",
-            "confidence",
-        ):
-            object.__setattr__(self, field_name, float(getattr(self, field_name)))
-        for field_name in (
             "relative_rank",
             "relative_percentile",
             "volume",
@@ -84,7 +82,14 @@ class SignalObservation:
         ):
             value = getattr(self, field_name)
             if value is not None:
-                object.__setattr__(self, field_name, float(value))
+                numeric_value = float(value)
+                if field_name in {
+                    "directional_raw_strength",
+                    "context_score",
+                    "composite",
+                } and not math.isfinite(numeric_value):
+                    raise ValueError(f"{field_name} must be a finite numeric value")
+                object.__setattr__(self, field_name, numeric_value)
         if self.multi_timeframe_alignment is not None:
             object.__setattr__(
                 self,
