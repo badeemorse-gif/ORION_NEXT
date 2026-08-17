@@ -18,6 +18,8 @@ jobs:
           EXPECTED_SHA: ${{ github.sha }}
         run: |
           ACTUAL_CHECKOUT_SHA="$(git rev-parse HEAD)"
+          echo "EXPECTED_SHA=$EXPECTED_SHA"
+          echo "ACTUAL_CHECKOUT_SHA=$ACTUAL_CHECKOUT_SHA"
           test "$EXPECTED_SHA" = "$ACTUAL_CHECKOUT_SHA"
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -36,7 +38,7 @@ jobs:
         working-directory: binansScanner
         env:
           PYTHONPATH: .:..
-        run: python -m unittest tests.test_orion_phase_a_runtime_observer -v
+        run: python -m unittest tests.test_orion_phase_a_runtime_observer tests.test_orion_phase_a_runtime_lookback -v
       - name: Phase A targeted verification
         working-directory: binansScanner
         env:
