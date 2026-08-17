@@ -63,6 +63,50 @@ class TestCleanRelativeRanking(unittest.TestCase):
         )
         return OpportunityRankingInput(opportunity=opportunity, score=ScoreResult(score=score, category="BULLISH" if direction is OpportunityDirection.LONG else "BEARISH"), profile=profile, dataset=dataset)
 
+    def test_directional_raw_strength_long_extremes(self):
+        ranked = OpportunityRelativeRanker()
+        self.assertEqual(ranked._prepare(self._input(score=100.0))["raw_score"], 100.0)
+        self.assertEqual(ranked._prepare(self._input(score=100.0))["raw_score"], 100.0)
+        self.assertEqual(ranked._prepare(self._input(score=-100.0))["raw_score"], 0.0)
+
+    def test_directional_raw_strength_short_extremes(self):
+        ranker = OpportunityRelativeRanker()
+        self.assertEqual(ranker._prepare(self._input(score=-100.0, direction=OpportunityDirection.SHORT))["raw_score"], 0.0)
+        self.assertEqual(ranker._prepare(self._input(score=100.0, direction=OpportunityDirection.SHORT))["raw_score"], 100.0)
+
+    def test_directional_raw_strength_midpoint_is_fifty(self):
+        ranker = OpportunityRelativeRanker()
+        long_prepared = ranker._prepare(self._input(score=0.0))
+        short_prepared = ranker._prepare(self._input(score=0.0, direction=OpportunityDirection.SHORT))
+        # The normalized value is exposed on the ranked result after cohort processing.
+        long_ranked = ranker.rank((self._input(score=0.0),))[0]
+        short_ranked = ranker.rank((self._input(score=0.0, direction=OpportunityDirection.SHORT),))[0]
+        self.assertEqual(long_prepared["raw_score"], 0.0)
+        self.assertEqual(short_prepared["raw_score"], 0.0)
+        self.assertEqual(long_ranked.directional_raw_strength, 50.0)
+        self.assertEqual(short_ranked.directional_raw_strength, 50.0)
+
+    def test_short_supportive_raw_score_is_higher_strength(self):
+        ranked = OpportunityRelativeRanker().rank((
+            self._input(symbol="A", score=-100.0, direction=OpportunityDirection.SHORT, momentum="Strong Sell", trend="Bearish", ema_alignment="Bearish", phase="Markdown"),
+            self._input(symbol="B", score=100.0, direction=OpportunityDirection.SHORT, momentum="Sell", trend="Sideways", ema_alignment="None", phase="Range"),
+        ))
+        by_symbol = {x.opportunity.symbol: x for x in ranked}
+        self.assertEqual(by_symbol["A"].directional_raw_strength, 100.0)
+        self.assertEqual(by_symbol["B"].directional_raw_strength, 0.0)
+        self.assertGreater(by_symbol["A"].composite_score, by_symbol["B"].composite_score)
+        self.assertEqual(by_symbol["A"].relative_rank, 1)
+
+    def test_long_supportive_raw_score_is_higher_strength(self):
+        ranked = OpportunityRelativeRanker().rank((
+            self._input(symbol="A", score=100.0),
+            self._input(symbol="B", score=-100.0, momentum="Neutral", trend="Sideways", ema_alignment="None", phase="Range"),
+        ))
+        by_symbol = {x.opportunity.symbol: x for x in ranked}
+        self.assertEqual(by_symbol["A"].directional_raw_strength, 100.0)
+        self.assertEqual(by_symbol["B"].directional_raw_strength, 0.0)
+        self.assertGreater(by_symbol["A"].composite_score, by_symbol["B"].composite_score)
+
     def test_equal_raw_scores_separate_by_context(self):
         ranked = OpportunityRelativeRanker().rank((
             self._input(symbol="A", volume_last=10, liquidity=10, momentum="Neutral", trend="Sideways", ema_alignment="None", phase="Range"),
@@ -75,6 +119,19 @@ class TestCleanRelativeRanking(unittest.TestCase):
         self.assertGreater(by_symbol["B"].composite_score, by_symbol["A"].composite_score)
         self.assertEqual(by_symbol["B"].relative_rank, 1)
         self.assertEqual(by_symbol["A"].relative_rank, 2)
+
+    def test_composite_score_stays_bounded(self):
+        ranked = OpportunityRelativeRanker().rank((
+            self._input(symbol="A", score=100.0),
+            self._input(symbol="B", score=-100.0, momentum="Neutral", trend="Sideways", ema_alignment="None", phase="Range"),
+        ))
+        for item in ranked:
+            self.assertGreaterEqual(item.directional_raw_strength, 0.0)
+            self.assertLessEqual(item.directional_raw_strength, 100.0)
+            self.assertGreaterEqual(item.context_score, 0.0)
+            self.assertLessEqual(item.context_score, 100.0)
+            self.assertGreaterEqual(item.composite_score, 0.0)
+            self.assertLessEqual(item.composite_score, 100.0)
 
     def test_percentile_is_cohort_relative(self):
         ranked = OpportunityRelativeRanker().rank((
