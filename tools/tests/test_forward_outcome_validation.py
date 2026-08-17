@@ -86,9 +86,10 @@ class TestForwardOutcomeValidation(unittest.TestCase):
         self.assertGreaterEqual(sell.outcome("1h").mae_pct, 0.0)
 
     def test_process_many_reports_completeness_rejections_and_leakage(self) -> None:
+        indices = (10, 20, 30, 40, 50, 55, 60, 65, 70, 72)
         valid = [
             self._item(index, score=float(index), confidence=55.0 + (position * 4.0), relative_rank=float(100 - index))
-            for position, index in enumerate((10, 20, 30, 40, 50, 60, 70, 71, 72, 73))
+            for position, index in enumerate(indices)
         ]
         short_fixture = ExperimentFixture.generate(
             fixture_id="short-forward",
@@ -136,9 +137,10 @@ class TestForwardOutcomeValidation(unittest.TestCase):
         self.assertLess(row["4h_outcome_timestamp"], row["24h_outcome_timestamp"])
 
     def test_analysis_produces_score_deciles_confidence_bands_and_rank_bands(self) -> None:
+        indices = (10, 20, 30, 40, 50, 55, 60, 65, 70, 72)
         observations = [
             self._item(index, score=float(index), confidence=55.0 + (position * 4.0), relative_rank=float(index))
-            for position, index in enumerate((10, 20, 30, 40, 50, 60, 70, 71, 72, 73))
+            for position, index in enumerate(indices)
         ]
         report = self.validator.process_many(observations)
         self.assertEqual(len(report.score_deciles), 10)
