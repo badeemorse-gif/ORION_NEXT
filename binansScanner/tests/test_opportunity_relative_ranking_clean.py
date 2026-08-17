@@ -65,34 +65,24 @@ class TestCleanRelativeRanking(unittest.TestCase):
 
     def test_directional_raw_strength_long_extremes(self):
         ranker = OpportunityRelativeRanker()
-        long_positive = self._input(score=100.0)
-        long_negative = self._input(score=-100.0)
+        long_positive = self._input(symbol="LONG_POS", score=100.0)
+        long_negative = self._input(symbol="LONG_NEG", score=-100.0)
         prepared_positive = ranker._prepare(long_positive)
         prepared_negative = ranker._prepare(long_negative)
         ranked = {item.opportunity.symbol: item for item in ranker.rank((long_positive, long_negative))}
 
         self.assertEqual(prepared_positive["raw_score"], 100.0)
         self.assertEqual(prepared_negative["raw_score"], -100.0)
-        self.assertEqual(ranked["BTCUSDT"].directional_raw_strength, 100.0)
-
-        # Use distinct symbols to preserve both ranked outputs.
-        ranked = {item.opportunity.symbol: item for item in ranker.rank((
-            self._input(symbol="LONG_POS", score=100.0),
-            self._input(symbol="LONG_NEG", score=-100.0),
-        ))}
         self.assertEqual(ranked["LONG_POS"].directional_raw_strength, 100.0)
         self.assertEqual(ranked["LONG_NEG"].directional_raw_strength, 0.0)
 
     def test_directional_raw_strength_short_extremes(self):
         ranker = OpportunityRelativeRanker()
-        short_negative = self._input(score=-100.0, direction=OpportunityDirection.SHORT, momentum="Strong Sell", trend="Bearish", ema_alignment="Bearish", phase="Markdown")
-        short_positive = self._input(score=100.0, direction=OpportunityDirection.SHORT)
+        short_negative = self._input(symbol="SHORT_NEG", score=-100.0, direction=OpportunityDirection.SHORT, momentum="Strong Sell", trend="Bearish", ema_alignment="Bearish", phase="Markdown")
+        short_positive = self._input(symbol="SHORT_POS", score=100.0, direction=OpportunityDirection.SHORT)
         prepared_negative = ranker._prepare(short_negative)
         prepared_positive = ranker._prepare(short_positive)
-        ranked = {item.opportunity.symbol: item for item in ranker.rank((
-            self._input(symbol="SHORT_NEG", score=-100.0, direction=OpportunityDirection.SHORT, momentum="Strong Sell", trend="Bearish", ema_alignment="Bearish", phase="Markdown"),
-            self._input(symbol="SHORT_POS", score=100.0, direction=OpportunityDirection.SHORT),
-        ))}
+        ranked = {item.opportunity.symbol: item for item in ranker.rank((short_negative, short_positive))}
 
         self.assertEqual(prepared_negative["raw_score"], -100.0)
         self.assertEqual(prepared_positive["raw_score"], 100.0)
