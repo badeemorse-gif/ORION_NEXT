@@ -64,6 +64,43 @@ The canonical `MarketMetadata` fields remain the source-of-truth provenance atta
 
 Freshness is evaluated separately because a freshness threshold is policy supplied by the caller rather than a market-data semantic invented here.
 
+## Future universe / new-listing policy dependency
+
+The long-term product target is a dynamic **Binance Spot / USDT** universe rather than a permanent hard-coded five-symbol list.
+
+The intended discovery sequence is:
+
+```text
+Binance Spot
+→ quoteAsset = USDT
+→ status = TRADING
+→ approved eligibility policy
+→ Market Data Quality Gate
+→ ORION Intelligence
+```
+
+A newly listed asset is **not** intended to be permanently excluded merely because it is new. Instead, the data-quality layer should distinguish:
+
+```text
+NEW LISTING + INSUFFICIENT HISTORY
+→ insufficient evidence / no automatic trade
+```
+
+from:
+
+```text
+NEW LISTING + SUFFICIENT VALID HISTORY
+→ normal analysis subject to the approved risk policy
+```
+
+No missing history may be fabricated. Interpolation, forward-fill, synthetic candles, or invented calibration evidence remain forbidden.
+
+Any future risk policy may mark a signal as high or extreme risk, but this data-quality contract must continue to report data integrity separately from trade-risk semantics. Risk-driven trade blocking must not be confused with invalid market data.
+
+The complete deferred product policy is recorded in:
+
+`ORION-Project-Management/docs/ORION_FUTURE_RISK_UNIVERSE_AND_CONTROL_CENTER_POLICY.md`
+
 ## Explicit non-goals
 
 This contract does not determine whether a market is bullish, bearish, tradable, attractive, high-score, or executable. Such semantics remain dependencies of their respective owners.
