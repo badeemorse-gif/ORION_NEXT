@@ -1,6 +1,7 @@
 """Contract tests for the Phase A signal journal boundary."""
 from __future__ import annotations
 
+import math
 import unittest
 from dataclasses import FrozenInstanceError, fields
 from datetime import datetime, timedelta, timezone
@@ -17,29 +18,31 @@ from models.signal_journal import (
 
 class TestSignalJournalContract(unittest.TestCase):
     @staticmethod
-    def _observation() -> SignalObservation:
-        return SignalObservation(
-            timestamp=datetime(2026, 8, 17, 0, 0, tzinfo=timezone.utc),
-            symbol="BTCUSDT",
-            timeframe="1h",
-            raw_score=72.5,
-            directional_raw_strength=81.0,
-            context_score=68.0,
-            composite=74.5,
-            relative_rank=2.0,
-            relative_percentile=96.0,
-            confidence=0.84,
-            decision="BUY",
-            market_regime="TRENDING",
-            volume=1250.0,
-            relative_volume=1.7,
-            volatility=0.021,
-            relative_volatility=1.2,
-            liquidity=0.91,
-            momentum=0.68,
-            multi_timeframe_alignment="1h/4h aligned",
-            reasons=("trend aligned", "volume confirmed"),
-        )
+    def _observation(**overrides) -> SignalObservation:
+        values = {
+            "timestamp": datetime(2026, 8, 17, 0, 0, tzinfo=timezone.utc),
+            "symbol": "BTCUSDT",
+            "timeframe": "1h",
+            "raw_score": 72.5,
+            "confidence": 0.84,
+            "decision": "BUY",
+            "market_regime": "TRENDING",
+            "directional_raw_strength": 81.0,
+            "context_score": 68.0,
+            "composite": 74.5,
+            "relative_rank": 2.0,
+            "relative_percentile": 96.0,
+            "volume": 1250.0,
+            "relative_volume": 1.7,
+            "volatility": 0.021,
+            "relative_volatility": 1.2,
+            "liquidity": 0.91,
+            "momentum": 0.68,
+            "multi_timeframe_alignment": "1h/4h aligned",
+            "reasons": ("trend aligned", "volume confirmed"),
+        }
+        values.update(overrides)
+        return SignalObservation(**values)
 
     def _entry(self) -> SignalJournalEntry:
         observation = self._observation()
@@ -84,12 +87,47 @@ class TestSignalJournalContract(unittest.TestCase):
         self.assertNotIn("mae", names)
         self.assertEqual(set(SignalObservation.field_provenance().values()), {OBSERVED_EVIDENCE})
 
+    def test_observation_can_capture_real_decision_without_d3_enrichment(self) -> None:
+        observation = self._observation(
+            directional_raw_strength=None,
+            context_score=None,
+            composite=None,
+            relative_rank=None,
+            relative_percentile=None,
+        )
+        self.assertEqual(observation.raw_score, 72.5)
+        self.assertEqual(observation.confidence, 0.84)
+        self.assertEqual(observation.decision, "BUY")
+        self.assertIsNone(observation.directional_raw_strength)
+        self.assertIsNone(observation.context_score)
+        self.assertIsNone(observation.composite)
+        self.assertIsNone(observation.relative_rank)
+        self.assertIsNone(observation.relative_percentile)
+
+    def test_d3_enrichment_if_present_must_be_finite(self) -> None:
+        for field_name in ("directional_raw_strength", "context_score", "composite"):
+            for invalid in (math.nan, math.inf, -math.inf):
+                with self.subTest(field_name=field_name, invalid=invalid):
+                    with self.assertRaises(ValueError):
+                        self._observation(**{field_name: invalid})
+
+        complete = self._observation(
+            directional_raw_strength=81.0,
+            context_score=68.0,
+            composite=74.5,
+        )
+        self.assertTrue(math.isfinite(complete.directional_raw_strength))
+        self.assertTrue(math.isfinite(complete.context_score))
+        self.assertTrue(math.isfinite(complete.composite))
+
     def test_relative_rank_and_percentile_are_signal_time_evidence(self) -> None:
         observation = self._observation()
         self.assertEqual(observation.relative_rank, 2.0)
         self.assertEqual(observation.relative_percentile, 96.0)
         self.assertEqual(observation.field_provenance()["relative_rank"], OBSERVED_EVIDENCE)
         self.assertEqual(observation.field_provenance()["relative_percentile"], OBSERVED_EVIDENCE)
+        self.assertIsNone(self._observation(relative_rank=None, relative_percentile=None).relative_rank)
+        self.assertIsNone(self._observation(relative_rank=None, relative_percentile=None).relative_percentile)
 
     def test_observation_is_immutable(self) -> None:
         observation = self._observation()
@@ -98,37 +136,11 @@ class TestSignalJournalContract(unittest.TestCase):
 
     def test_observation_timestamp_must_be_timezone_aware(self) -> None:
         with self.assertRaises(ValueError):
-            SignalObservation(
-                timestamp=datetime(2026, 8, 17, 0, 0),
-                symbol="BTCUSDT",
-                timeframe="1h",
-                raw_score=1.0,
-                directional_raw_strength=1.0,
-                context_score=1.0,
-                composite=1.0,
-                relative_rank=None,
-                relative_percentile=None,
-                confidence=0.5,
-                decision="WAIT",
-                market_regime="NEUTRAL",
-            )
+            self._observation(timestamp=datetime(2026, 8, 17, 0, 0))
 
     def test_relative_percentile_is_bounded(self) -> None:
         with self.assertRaises(ValueError):
-            SignalObservation(
-                timestamp=datetime(2026, 8, 17, 0, 0, tzinfo=timezone.utc),
-                symbol="BTCUSDT",
-                timeframe="1h",
-                raw_score=1.0,
-                directional_raw_strength=1.0,
-                context_score=1.0,
-                composite=1.0,
-                relative_rank=1.0,
-                relative_percentile=101.0,
-                confidence=0.5,
-                decision="WAIT",
-                market_regime="NEUTRAL",
-            )
+            self._observation(relative_percentile=101.0)
 
     def test_outcome_is_retrospective_and_has_its_own_provenance(self) -> None:
         outcome = SignalOutcome(
