@@ -1,4 +1,5 @@
 name: ORION Phase A Runtime Observation
+# Experimental D1 runtime evidence gate
 on:
   push:
     branches: [phase-a/experimental-observation-assembly]
