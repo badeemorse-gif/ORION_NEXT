@@ -20,6 +20,26 @@ Neither Raw Score nor Context Score is a probability.
 
 `ScoreResult.score` remains the canonical raw input. It is not recalibrated and is not written back into `ScoreResult` or `Opportunity.confidence`.
 
+Before combining it with context, the signed raw score is normalized by opportunity direction into a **Directional Raw Strength** on `0..100`:
+
+```text
+LONG:  (raw_score + 100) / 2
+SHORT: (100 - raw_score) / 2
+```
+
+This normalization changes only the ranking coordinate system. It does not change the canonical Raw Score itself and does not reinterpret Raw Score as probability.
+
+Canonical examples:
+
+| Direction | Raw Score | Directional Raw Strength |
+|---|---:|---:|
+| LONG | +100 | 100 |
+| LONG | 0 | 50 |
+| LONG | -100 | 0 |
+| SHORT | -100 | 100 |
+| SHORT | 0 | 50 |
+| SHORT | +100 | 0 |
+
 ## Context metrics
 
 The Context Score is a bounded analytical composite built from existing evidence:
@@ -72,7 +92,7 @@ Aggregate Profile trend/phase is used as directional context. `Sideways` is neut
 ## Composite and cohort
 
 ```text
-Composite = 0.70 * Raw Score + 0.30 * Context Score
+Composite = 0.70 * Directional Raw Strength + 0.30 * Context Score
 ```
 
 The peer cohort is:
@@ -83,6 +103,7 @@ The peer cohort is:
 
 For each cohort:
 
+- Higher Composite means a stronger opportunity within the same cohort.
 - Relative Rank is descending Composite Score.
 - Percentile uses mid-rank semantics, so ties share a percentile.
 - A single-member cohort returns no relative rank/percentile to avoid false precision.
@@ -99,7 +120,11 @@ Existing fail-closed contracts remain untouched: freshness, risk, ambiguity, set
 
 `binansScanner/tests/test_opportunity_relative_ranking_clean.py` verifies:
 
+- LONG raw normalization: `+100 -> 100`, `0 -> 50`, `-100 -> 0`;
+- SHORT raw normalization: `-100 -> 100`, `0 -> 50`, `+100 -> 0`;
+- directional raw strength drives stronger same-direction ranking correctly;
 - equal Raw Scores can be separated by context;
+- Composite Score remains bounded to `0..100`;
 - percentile is cohort-relative;
 - cohort isolation uses timeframe + direction;
 - SHORT supportive momentum is ranked correctly;
