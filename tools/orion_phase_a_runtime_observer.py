@@ -25,6 +25,7 @@ REQUIRED_SYMBOLS = ("BTCUSDT","ETHUSDT","BNBUSDT","SOLUSDT","ADAUSDT")
 REQUIRED_TIMEFRAMES = ("1h","4h","1d")
 UNAVAILABLE_AT_BOUNDARY = "UNAVAILABLE_AT_BOUNDARY"
 OBSERVER_VERSION = "1.0.0"
+BINANCE_MARKET_DATA_ONLY_URL = "https://data-api.binance.vision/api"
 def _canon(x: Any) -> bytes: return json.dumps(x,ensure_ascii=False,sort_keys=True,separators=(",",":")).encode()
 def _sha(x: Any) -> str: return hashlib.sha256(_canon(x)).hexdigest()
 def _now() -> datetime: return datetime.now(timezone.utc)
@@ -142,6 +143,6 @@ def write_artifacts(run:RuntimeObservationRun,artifact_root:Path,universe:Mappin
 def main(argv=None):
     p=argparse.ArgumentParser();p.add_argument("--baseline",required=True);p.add_argument("--artifact-root",required=True);p.add_argument("--runtime-commit");a=p.parse_args(argv);symbols,tfs=_universe(REQUIRED_SYMBOLS,REQUIRED_TIMEFRAMES)
     cfg={"observer_version":OBSERVER_VERSION,"market_source":"BINANCE_API","symbols":list(symbols),"timeframes":list(tfs),"execution":{"paper":False,"live":False},"ranking":{"cohort":["timeframe","direction"]}}
-    config=create_runtime_config(baseline_commit=a.baseline,symbols=symbols,timeframes=tfs,configuration=cfg,runtime_commit=a.runtime_commit);source=BinanceProvider(api_key=os.environ.get("BINANCE_API_KEY",""),api_secret=os.environ.get("BINANCE_API_SECRET",""),testnet=False);provider=MarketDataProvider(source=source)
+    config=create_runtime_config(baseline_commit=a.baseline,symbols=symbols,timeframes=tfs,configuration=cfg,runtime_commit=a.runtime_commit);source=BinanceProvider(api_key=os.environ.get("BINANCE_API_KEY",""),api_secret=os.environ.get("BINANCE_API_SECRET",""),testnet=False);source._client._client.API_URL=BINANCE_MARKET_DATA_ONLY_URL;provider=MarketDataProvider(source=source)
     run=PhaseARuntimeObserver(config,orchestrator_factory=lambda:build_runtime_orchestrator(provider)).run(symbols,tfs);d=write_artifacts(run,Path(a.artifact_root),{"symbols":list(symbols),"timeframes":list(tfs)});count=sum(x.get("status")=="OBSERVED" for x in run.records);print(json.dumps({"status":"PASS" if count else "NO_COMPLETE_SIGNAL","session_id":config.session_id,"observations":count,"artifact_directory":str(d)},sort_keys=True));return 0 if count else 2
 if __name__=="__main__":raise SystemExit(main())
