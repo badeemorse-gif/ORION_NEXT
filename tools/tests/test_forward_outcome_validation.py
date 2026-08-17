@@ -87,8 +87,8 @@ class TestForwardOutcomeValidation(unittest.TestCase):
 
     def test_process_many_reports_completeness_rejections_and_leakage(self) -> None:
         valid = [
-            self._item(index, score=float(index), confidence=50.0 + index, relative_rank=float(100 - index))
-            for index in (10, 20, 30, 40, 50, 60, 70, 71, 72, 73)
+            self._item(index, score=float(index), confidence=55.0 + (position * 4.0), relative_rank=float(100 - index))
+            for position, index in enumerate((10, 20, 30, 40, 50, 60, 70, 71, 72, 73))
         ]
         short_fixture = ExperimentFixture.generate(
             fixture_id="short-forward",
@@ -137,8 +137,8 @@ class TestForwardOutcomeValidation(unittest.TestCase):
 
     def test_analysis_produces_score_deciles_confidence_bands_and_rank_bands(self) -> None:
         observations = [
-            self._item(index, score=float(index), confidence=50.0 + index, relative_rank=float(index))
-            for index in (10, 20, 30, 40, 50, 60, 70, 71, 72, 73)
+            self._item(index, score=float(index), confidence=55.0 + (position * 4.0), relative_rank=float(index))
+            for position, index in enumerate((10, 20, 30, 40, 50, 60, 70, 71, 72, 73))
         ]
         report = self.validator.process_many(observations)
         self.assertEqual(len(report.score_deciles), 10)
