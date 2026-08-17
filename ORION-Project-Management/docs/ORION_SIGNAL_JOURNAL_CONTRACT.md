@@ -1,6 +1,6 @@
 # ORION_NEXT — Signal Journal Contract
 
-Version: 1.1  
+Version: 1.2  
 Status: ACTIVE — Phase A / Signal Accuracy / Score Calibration  
 Owner: Developer 6 — Reporting / Auditability  
 Engineering baseline: `c54dc67792776da905a3efb1f667c1869c15db3d`
@@ -66,9 +66,15 @@ Retrospective Label
 - `multi_timeframe_alignment`
 - `reasons`
 
-Every observation field is explicitly classified as `SIGNAL_TIME_OBSERVED`.
+`raw_score`, `confidence`, and `decision` are the required core signal-time decision fields.
 
-`relative_rank` and `relative_percentile` are signal-time evidence only when derived from the contemporaneous experimental comparison universe at the same signal timestamp. They must not be recomputed from later observations or outcomes.
+`directional_raw_strength`, `context_score`, and `composite` are optional D3 enrichment fields. Their `None` value means only that D3 enrichment was not available at observation time. `None` does not mean zero, unknown score, failed signal, or neutral signal.
+
+When any D3 enrichment field is provided, it must be a finite numeric value. The journal does not substitute `raw_score`, calculate a replacement `composite`, or synthesize D3 enrichment.
+
+`relative_rank` and `relative_percentile` remain optional signal-time evidence only when derived from the contemporaneous experimental comparison universe at the same signal timestamp. They must not be recomputed from later observations or outcomes.
+
+Every observation field is explicitly classified as `SIGNAL_TIME_OBSERVED`.
 
 No outcome, MFE, MAE, or future result field belongs to `SignalObservation`.
 
