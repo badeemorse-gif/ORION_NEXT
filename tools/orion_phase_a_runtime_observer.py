@@ -5,7 +5,6 @@ from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence
-
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "binansScanner"))
 from core.orchestrator import Orchestrator, OrchestratorConfig, OrchestratorResult, PipelineError
@@ -21,12 +20,11 @@ from models.market import MarketDataset
 from models.opportunity import Opportunity, OpportunityDirection
 from models.signal_journal import SignalJournal, SignalJournalEntry, SignalObservation
 from providers.binance_provider import BinanceProvider
-
+from providers.market_data_provider import MarketDataProvider
 REQUIRED_SYMBOLS = ("BTCUSDT","ETHUSDT","BNBUSDT","SOLUSDT","ADAUSDT")
 REQUIRED_TIMEFRAMES = ("1h","4h","1d")
 UNAVAILABLE_AT_BOUNDARY = "UNAVAILABLE_AT_BOUNDARY"
 OBSERVER_VERSION = "1.0.0"
-
 def _canon(x: Any) -> bytes: return json.dumps(x,ensure_ascii=False,sort_keys=True,separators=(",",":")).encode()
 def _sha(x: Any) -> str: return hashlib.sha256(_canon(x)).hexdigest()
 def _now() -> datetime: return datetime.now(timezone.utc)
@@ -43,7 +41,7 @@ def _universe(symbols: Sequence[str],tfs: Sequence[str]):
 class _NoOpStorage:
     def execute(self,dataset: MarketDataset)->None:
         if not isinstance(dataset,MarketDataset): raise TypeError("storage boundary requires MarketDataset")
-def build_runtime_orchestrator(provider: BinanceProvider,config: OrchestratorConfig|None=None)->Orchestrator:
+def build_runtime_orchestrator(provider: MarketDataProvider,config: OrchestratorConfig|None=None)->Orchestrator:
     return Orchestrator(provider=provider,storage=_NoOpStorage(),indicator_engine=IndicatorEngine(),analysis_engine=AnalysisEngine(),profile_engine=ProfileEngine(),score_engine=ScoreEngine(),decision_engine=DecisionEngine(),validation_engine=ValidationEngine(),config=config or OrchestratorConfig())
 @dataclass(frozen=True,slots=True)
 class ObservationRuntimeConfig:
@@ -133,15 +131,17 @@ class PhaseARuntimeObserver:
             rec["status"]=ex.status;rec["observation"]=asdict(ex.observation);rec["source_outputs"]={"analysis":{"market_state":r.analysis.market_state,"strength":r.analysis.strength},"profile":{"trend":r.profile.market.trend,"trend_strength":r.profile.market.trend_strength,"momentum":r.profile.market.momentum,"volume_strength":r.profile.market.volume_strength,"volatility":r.profile.market.volatility,"volatility_level":r.profile.market.volatility_level,"liquidity":r.profile.market.liquidity},"score":{"raw_score":r.score.score,"category":r.score.category},"decision":{"decision":r.decision.decision,"confidence":r.decision.confidence}};rec.pop("unavailable_fields",None);rec.pop("reason",None)
         return rec
 def write_artifacts(run:RuntimeObservationRun,artifact_root:Path,universe:Mapping[str,Any]):
-    from tools.orion_signal_observe import resolve_artifact_root,write_json
-    root=resolve_artifact_root(artifact_root);d=root/"signal-observations"/run.config.session_id;d.mkdir(parents=True,exist_ok=False)
-    write_json(d/"session.json",{"session_id":run.config.session_id,"status":"STOPPED","observer_version":OBSERVER_VERSION,"baseline_commit":run.config.baseline_commit,"configuration_fingerprint":run.config.configuration_fingerprint,"universe_id":run.config.universe_identity,"runtime_commit":run.config.runtime_commit,"stopped_at_utc":_now().isoformat()})
-    write_json(d/"run_config.json",{"baseline_commit":run.config.baseline_commit,"configuration":run.config.configuration,"configuration_fingerprint":run.config.configuration_fingerprint,"universe_id":run.config.universe_identity,"runtime_commit":run.config.runtime_commit,"observer_version":OBSERVER_VERSION})
-    write_json(d/"universe_input.json",universe);write_json(d/"configuration_fingerprint.json",{"algorithm":"sha256","configuration_fingerprint":run.config.configuration_fingerprint})
+    root=artifact_root.expanduser().resolve()
+    if root==ROOT or ROOT in root.parents: raise ValueError("artifact_root must be outside ORION_NEXT")
+    d=root/"signal-observations"/run.config.session_id;d.mkdir(parents=True,exist_ok=False)
+    def write(path,value): path.write_text(json.dumps(value,indent=2,sort_keys=True)+"\n",encoding="utf-8")
+    write(d/"session.json",{"session_id":run.config.session_id,"status":"STOPPED","observer_version":OBSERVER_VERSION,"baseline_commit":run.config.baseline_commit,"configuration_fingerprint":run.config.configuration_fingerprint,"universe_id":run.config.universe_identity,"runtime_commit":run.config.runtime_commit,"stopped_at_utc":_now().isoformat()})
+    write(d/"run_config.json",{"baseline_commit":run.config.baseline_commit,"configuration":run.config.configuration,"configuration_fingerprint":run.config.configuration_fingerprint,"universe_id":run.config.universe_identity,"runtime_commit":run.config.runtime_commit,"observer_version":OBSERVER_VERSION})
+    write(d/"universe_input.json",universe);write(d/"configuration_fingerprint.json",{"algorithm":"sha256","configuration_fingerprint":run.config.configuration_fingerprint})
     (d/"runtime_results.jsonl").write_text("".join(json.dumps(x,sort_keys=True)+"\n" for x in run.runtime_results),encoding="utf-8");(d/"observations.jsonl").write_text("".join(json.dumps(x,sort_keys=True)+"\n" for x in run.records),encoding="utf-8");return d
 def main(argv=None):
     p=argparse.ArgumentParser();p.add_argument("--baseline",required=True);p.add_argument("--artifact-root",required=True);p.add_argument("--runtime-commit");a=p.parse_args(argv);symbols,tfs=_universe(REQUIRED_SYMBOLS,REQUIRED_TIMEFRAMES)
     cfg={"observer_version":OBSERVER_VERSION,"market_source":"BINANCE_API","symbols":list(symbols),"timeframes":list(tfs),"execution":{"paper":False,"live":False},"ranking":{"cohort":["timeframe","direction"]}}
-    config=create_runtime_config(baseline_commit=a.baseline,symbols=symbols,timeframes=tfs,configuration=cfg,runtime_commit=a.runtime_commit);provider=BinanceProvider(api_key=os.environ.get("BINANCE_API_KEY",""),api_secret=os.environ.get("BINANCE_API_SECRET",""),testnet=False)
+    config=create_runtime_config(baseline_commit=a.baseline,symbols=symbols,timeframes=tfs,configuration=cfg,runtime_commit=a.runtime_commit);source=BinanceProvider(api_key=os.environ.get("BINANCE_API_KEY",""),api_secret=os.environ.get("BINANCE_API_SECRET",""),testnet=False);provider=MarketDataProvider(source=source)
     run=PhaseARuntimeObserver(config,orchestrator_factory=lambda:build_runtime_orchestrator(provider)).run(symbols,tfs);d=write_artifacts(run,Path(a.artifact_root),{"symbols":list(symbols),"timeframes":list(tfs)});count=sum(x.get("status")=="OBSERVED" for x in run.records);print(json.dumps({"status":"PASS" if count else "NO_COMPLETE_SIGNAL","session_id":config.session_id,"observations":count,"artifact_directory":str(d)},sort_keys=True));return 0 if count else 2
 if __name__=="__main__":raise SystemExit(main())
