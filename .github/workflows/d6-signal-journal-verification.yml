@@ -4,6 +4,7 @@ on:
   workflow_dispatch:
   push:
     branches:
+      - phase-a/d6-signal-journal-clean
       - phase-a/experimental-observation-assembly
 
 permissions:
