@@ -1,0 +1,192 @@
+name: D1 Indicator Metadata Runtime Verification
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - phase-a/d1-indicator-metadata-handoff
+
+permissions:
+  contents: read
+
+jobs:
+  d1-runtime-verification:
+    name: D1 exact-head runtime verification
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: binansScanner
+
+    steps:
+      - name: Checkout exact workflow SHA
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+
+      - name: Prove exact checkout and clean tree
+        shell: bash
+        run: |
+          set -euo pipefail
+          EXPECTED_SHA="${GITHUB_SHA}"
+          ACTUAL_CHECKOUT_SHA="$(git rev-parse HEAD)"
+          test "$EXPECTED_SHA" = "$ACTUAL_CHECKOUT_SHA"
+          test -z "$(git status --porcelain)"
+          echo "EXPECTED_SHA=$EXPECTED_SHA"
+          echo "ACTUAL_CHECKOUT_SHA=$ACTUAL_CHECKOUT_SHA"
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install project verification dependencies
+        run: python -m pip install -r requirements.txt numpy pandas pandas-ta python-binance
+
+      - name: Run indicator handoff, profile, score and decision contract tests
+        run: >-
+          python -m unittest -v
+          tests.test_indicator_contract
+          tests.test_indicator_metadata_handoff_contract
+          tests.test_profile_contract
+          tests.test_score_contract
+          tests.test_decision_contract
+
+      - name: Run actual 5x3 ORION runtime smoke
+        env:
+          PYTHONUNBUFFERED: "1"
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import math
+          import os
+          import sys
+          from datetime import datetime, timezone, timedelta
+
+          from core.dependency_container import ContainerConfiguration, DependencyContainer
+          from engines.profile_builder import CRITICAL_PROFILE_INDICATORS
+          from enums import Timeframe
+          from models.indicators import IndicatorResult
+
+          SYMBOLS = ("BTCUSDT", "ETHUSDT", "BNBUSDT", "SOLUSDT", "ADAUSDT")
+          TIMEFRAMES = (Timeframe.H1, Timeframe.H4, Timeframe.D1)
+          INTERVALS = {
+              Timeframe.H1: timedelta(hours=1),
+              Timeframe.H4: timedelta(hours=4),
+              Timeframe.D1: timedelta(days=1),
+          }
+          MIN_CLOSED = 250
+
+          def fail_case(symbol, timeframe, stage, exc, dataset=None, result=None):
+              tf = timeframe.value if hasattr(timeframe, "value") else str(timeframe)
+              print(f"FAIL symbol={symbol} timeframe={tf} stage={stage}")
+              print(f"exception={exc!r}")
+              if result is not None and result.profile is not None:
+                  print(f"profile_warnings={result.profile.warnings}")
+                  print(f"profile_blocks={result.profile.blocks}")
+              if dataset is not None and timeframe in dataset.timeframes:
+                  tfdata = dataset.timeframes[timeframe]
+                  df = tfdata.dataframe
+                  closed = [ts for ts in df.index if ts.to_pydatetime() + INTERVALS[timeframe] <= datetime.now(timezone.utc)]
+                  print(f"raw_candle_count={len(df)}")
+                  print(f"closed_candle_count={len(closed)}")
+                  ir = df.attrs.get("indicator_result")
+                  if isinstance(ir, IndicatorResult):
+                      print(f"indicator_quality={ir.quality}")
+                      print(f"failed_indicators={ir.failed_indicators}")
+                  else:
+                      print("indicator_quality=UNAVAILABLE")
+                      print("failed_indicators=UNAVAILABLE")
+              raise AssertionError(f"runtime failure: {symbol}/{tf} at {stage}: {exc}")
+
+          config = ContainerConfiguration(
+              paper_trading_enabled=False,
+              cache_enabled=False,
+              database_path="d1_runtime_verification.db",
+              binance_api_key="",
+              binance_api_secret="",
+              binance_testnet=False,
+          )
+          container = DependencyContainer(config=config)
+          orchestrator = container.build_orchestrator()
+
+          # Building the Orchestrator must not construct execution components.
+          assert getattr(container, "_execution_engine_instance", None) is None
+          assert getattr(container, "_execution_adapter_instance", None) is None
+
+          passed = 0
+          for symbol in SYMBOLS:
+              try:
+                  result = orchestrator.run_pipeline(symbol, [tf.value for tf in TIMEFRAMES])
+                  dataset = result.dataset
+                  if dataset is None:
+                      fail_case(symbol, "all", "DOWNLOAD", "Orchestrator returned no dataset", result=result)
+
+                  for timeframe in TIMEFRAMES:
+                      tfdata = dataset.timeframes.get(timeframe)
+                      if tfdata is None:
+                          fail_case(symbol, timeframe, "DOWNLOAD", "required timeframe missing", dataset=dataset, result=result)
+
+                      df = tfdata.dataframe
+                      now = datetime.now(timezone.utc)
+                      closed_count = sum(
+                          1 for ts in df.index
+                          if ts.to_pydatetime() + INTERVALS[timeframe] <= now
+                      )
+                      assert closed_count >= MIN_CLOSED, (f"closed candles {closed_count} < {MIN_CLOSED}")
+
+                      indicator_result = df.attrs.get("indicator_result")
+                      assert isinstance(indicator_result, IndicatorResult), "indicator_result metadata missing or wrong type"
+                      assert str(indicator_result.quality).upper().endswith("SUFFICIENT"), f"quality={indicator_result.quality!r}"
+                      assert not indicator_result.failed_indicators, f"failed_indicators={indicator_result.failed_indicators!r}"
+                      missing = [name for name in CRITICAL_PROFILE_INDICATORS if name not in indicator_result.calculated_indicators]
+                      assert not missing, f"missing calculated indicators={missing!r}"
+                      assert "ema_200" in df.columns, "ema_200 column missing"
+                      ema200 = df["ema_200"].iloc[-1]
+                      assert math.isfinite(float(ema200)), f"latest EMA200 non-finite: {ema200!r}"
+
+                      print(
+                          f"PASS symbol={symbol} timeframe={timeframe.value} "
+                          f"raw_candles={len(df)} closed_candles={closed_count} "
+                          f"indicator_quality={indicator_result.quality} "
+                          f"failed_indicators={indicator_result.failed_indicators}"
+                      )
+
+                  assert result.profile is not None, "ProfileResult not produced"
+                  assert result.validation is not None, "Validation result not produced"
+                  assert result.score is not None, "ScoreResult not produced"
+                  assert result.decision is not None, "DecisionResult not produced"
+                  assert result.statistics.success is True, f"pipeline success={result.statistics.success}"
+                  assert result.statistics.current_stage.value == "FINISHED", result.statistics.current_stage
+                  assert not any(result.profile.warnings), f"Profile warnings={result.profile.warnings!r}"
+                  assert not any(result.profile.blocks), f"Profile blocks={result.profile.blocks!r}"
+                  passed += len(TIMEFRAMES)
+                  print(
+                      f"PIPELINE PASS symbol={symbol} "
+                      f"profile=PASS score=PASS decision=PASS stage={result.statistics.current_stage.value}"
+                  )
+              except Exception as exc:
+                  current = orchestrator.last_result()
+                  dataset = current.dataset if current is not None else None
+                  fail_case(symbol, getattr(orchestrator, "_current_stage", "UNKNOWN"), "PIPELINE", exc, dataset=dataset, result=current)
+
+          assert passed == 15, f"expected 15 runtime cases, got {passed}"
+          assert getattr(container, "_execution_engine_instance", None) is None
+          assert getattr(container, "_execution_adapter_instance", None) is None
+          print("VERIFICATION PASSED: 5x3 actual ORION runtime reached Profile, Score and Decision with execution OFF")
+          PY
+
+      - name: Final exact-head and parity check
+        shell: bash
+        run: |
+          set -euo pipefail
+          EXPECTED_SHA="${GITHUB_SHA}"
+          ACTUAL_CHECKOUT_SHA="$(git rev-parse HEAD)"
+          test "$EXPECTED_SHA" = "$ACTUAL_CHECKOUT_SHA"
+          test -z "$(git status --porcelain)"
+          echo "GITHUB_SHA=$EXPECTED_SHA"
+          echo "ACTUAL_CHECKOUT_SHA=$ACTUAL_CHECKOUT_SHA"
+          echo "WORKING_TREE=CLEAN"
+          echo "VERIFICATION PASSED"
