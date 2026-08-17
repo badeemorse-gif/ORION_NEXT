@@ -59,6 +59,7 @@ class OpportunityContext:
 class RankedOpportunity:
     opportunity: Opportunity
     raw_score: float
+    directional_raw_strength: float
     context_score: float
     composite_score: float
     relative_rank: int | None
@@ -82,7 +83,6 @@ class OpportunityRelativeRanker:
 
         ranked: list[RankedOpportunity] = []
         for cohort in cohorts.values():
-            raw_values = [item["raw_score"] for item in cohort]
             volume_values = [item["volume_expansion"] for item in cohort]
             volatility_values = [item["volatility"] for item in cohort]
             liquidity_values = [item["liquidity"] for item in cohort]
@@ -101,8 +101,17 @@ class OpportunityRelativeRanker:
                     market_regime=item["market_regime"],
                 )
                 raw = item["raw_score"]
-                composite = self.RAW_WEIGHT * raw + self.CONTEXT_WEIGHT * context.score
-                scored.append({**item, "context": context, "context_score": context.score, "composite": _clamp(composite)})
+                directional_raw = _directional_raw_strength(raw, item["opportunity"].direction)
+                composite = self.RAW_WEIGHT * directional_raw + self.CONTEXT_WEIGHT * context.score
+                scored.append(
+                    {
+                        **item,
+                        "context": context,
+                        "context_score": context.score,
+                        "directional_raw_strength": directional_raw,
+                        "composite": _clamp(composite),
+                    }
+                )
 
             composites = [item["composite"] for item in scored]
             for item in scored:
@@ -116,6 +125,7 @@ class OpportunityRelativeRanker:
                     RankedOpportunity(
                         opportunity=item["opportunity"],
                         raw_score=item["raw_score"],
+                        directional_raw_strength=item["directional_raw_strength"],
                         context_score=item["context_score"],
                         composite_score=item["composite"],
                         relative_rank=rank,
@@ -157,7 +167,7 @@ class OpportunityRelativeRanker:
 
         return {
             "opportunity": item.opportunity,
-            "raw_score": _clamp(_finite_float(item.score.score, "raw score")),
+            "raw_score": _clamp(_finite_float(item.score.score, "raw score"), -100.0, 100.0),
             "volume_expansion": volume_expansion,
             "volatility": volatility,
             "liquidity": liquidity,
@@ -165,6 +175,13 @@ class OpportunityRelativeRanker:
             "mtf_alignment": mtf_alignment,
             "market_regime": market_regime,
         }
+
+
+def _directional_raw_strength(raw_score: float, direction: OpportunityDirection) -> float:
+    """Normalize signed raw score so higher always means stronger opportunity."""
+    if direction is OpportunityDirection.LONG:
+        return (raw_score + 100.0) / 2.0
+    return (100.0 - raw_score) / 2.0
 
 
 def _normalize_timeframe(value: str) -> Timeframe:
