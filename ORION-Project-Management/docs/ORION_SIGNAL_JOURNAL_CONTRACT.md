@@ -1,13 +1,13 @@
 # ORION_NEXT — Signal Journal Contract
 
-Version: 1.0  
+Version: 1.1  
 Status: ACTIVE — Phase A / Signal Accuracy / Score Calibration  
 Owner: Developer 6 — Reporting / Auditability  
 Engineering baseline: `c54dc67792776da905a3efb1f667c1869c15db3d`
 
 ## 1. Purpose
 
-The Signal Journal is an independent observational record for later calibration and audit.
+The Signal Journal is the independent official audit trail for experimental signals.
 
 It answers three separate questions:
 
@@ -28,6 +28,9 @@ SignalOutcome
 
 SignalJournalEntry
     = immutable pairing of the two
+
+SignalJournal
+    = immutable append-only collection of official entries
 ```
 
 The governing rule is:
@@ -38,14 +41,19 @@ Observed Evidence
 Retrospective Label
 ```
 
-## 3. SignalObservation
+## 3. SignalObservation — official signal-time record
 
-`SignalObservation` is immutable and contains only data available at the signal timestamp:
+`SignalObservation` is immutable and contains only evidence available at the signal timestamp:
 
 - `timestamp`
 - `symbol`
 - `timeframe`
 - `raw_score`
+- `directional_raw_strength`
+- `context_score`
+- `composite`
+- `relative_rank`
+- `relative_percentile`
 - `confidence`
 - `decision`
 - `market_regime`
@@ -58,11 +66,13 @@ Retrospective Label
 - `multi_timeframe_alignment`
 - `reasons`
 
-Every field is explicitly classified as `SIGNAL_TIME_OBSERVED`.
+Every observation field is explicitly classified as `SIGNAL_TIME_OBSERVED`.
 
-No outcome, MFE, MAE, or future price/result field belongs to `SignalObservation`.
+`relative_rank` and `relative_percentile` are signal-time evidence only when derived from the contemporaneous experimental comparison universe at the same signal timestamp. They must not be recomputed from later observations or outcomes.
 
-The timestamp must be timezone-aware. This prevents an apparently identical local time from being interpreted differently across environments.
+No outcome, MFE, MAE, or future result field belongs to `SignalObservation`.
+
+The timestamp must be timezone-aware.
 
 ## 4. SignalOutcome
 
@@ -80,15 +90,15 @@ Every outcome field is classified as `RETROSPECTIVE_LABEL`.
 
 `MFE` and `MAE` require an explicit `metric_unit`. The journal does not invent whether a metric is percent, absolute price, quote currency, or another unit.
 
-`outcome_timestamp`, when present, must be timezone-aware.
+`outcome_timestamp`, when present, must be timezone-aware and must not precede the observation timestamp.
 
 ## 5. No future leakage
 
-`SignalJournalEntry` may pair an observation with a retrospective outcome, but the outcome timestamp may not precede the observation timestamp.
+`SignalObservation` is structurally incapable of containing outcome fields.
 
-The observation serialization contains no outcome fields. Future data therefore cannot enter the signal-time record through the canonical model.
+`SignalJournalEntry` may pair an observation with a retrospective outcome, but the outcome timestamp cannot precede the observation timestamp.
 
-The journal intentionally does not infer labels, calculate profitability, invent thresholds, or transform an observed signal into a retrospective judgment.
+No retrospective field is copied back into the observation. No outcome is inferred from the observation model.
 
 ## 6. Provenance
 
@@ -97,15 +107,25 @@ The canonical provenance markers are:
 - `SIGNAL_TIME_OBSERVED` — evidence available at signal time.
 - `RETROSPECTIVE_LABEL` — data created from subsequent market evolution.
 
-`SignalObservation.field_provenance()`, `SignalOutcome.field_provenance()`, and `SignalJournalEntry.field_provenance()` expose these classifications for audit tooling and tests.
+`SignalObservation.field_provenance()`, `SignalOutcome.field_provenance()`, and `SignalJournalEntry.field_provenance()` expose these classifications for audit tooling and contract tests.
 
-## 7. Immutability
+Observation and outcome provenance are disjoint; a field must never be classified as both.
 
-`SignalObservation`, `SignalOutcome`, and `SignalJournalEntry` are frozen dataclasses. A previously recorded signal observation cannot be edited after the fact to incorporate later knowledge.
+## 7. Official journal behavior
 
-Any retrospective information belongs in `SignalOutcome` and is never copied back into the observation.
+`SignalJournal` is immutable and append-only.
 
-## 8. Non-goals
+Calling `record(entry)` returns a new journal containing the prior entries plus the new entry. Existing journal instances and their entries are never mutated.
+
+This provides the canonical in-process representation of the official experimental signal trail without introducing Pipeline, Report, Execution, or live-trading integration.
+
+## 8. Immutability
+
+`SignalObservation`, `SignalOutcome`, `SignalJournalEntry`, and `SignalJournal` are frozen dataclasses.
+
+A previously recorded signal observation cannot be edited after the fact to incorporate later knowledge.
+
+## 9. Non-goals
 
 This contract does not define:
 
@@ -119,9 +139,9 @@ This contract does not define:
 - Pipeline semantics;
 - API/export semantics.
 
-## 9. Audit invariant
+## 10. Audit invariant
 
-A compliant journal record must preserve this lineage:
+A compliant journal record preserves this lineage:
 
 ```text
 SIGNAL TIME
