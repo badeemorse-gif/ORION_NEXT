@@ -127,7 +127,7 @@ def extract_wait_observation(r,tf,*,timestamp):
  if missing:return ObservationExtraction(None,tuple(dict.fromkeys(missing)),UNAVAILABLE_AT_BOUNDARY)
  assert r.score and r.decision and profile_tf and vol is not None and liquidity is not None
  characteristics=profile_tf.characteristics
- return ObservationExtraction(SignalObservation(timestamp=timestamp,symbol=r.score.symbol,timeframe=tf,raw_score=float(r.score.score),directional_raw_strength=None,context_score=None,composite=None,relative_rank=None,relative_percentile=None,confidence=float(r.decision.confidence),decision="WAIT",market_regime=str(regime),volume=vol,relative_volume=None,volatility=float(characteristics.volatility),relative_volatility=None,liquidity=float(liquidity),momentum=None,multi_timeframe_alignment=None,reasons=_reasons(r)))
+ return ObservationExtraction(SignalObservation(timestamp=timestamp,symbol=r.profile.symbol,timeframe=tf,raw_score=float(r.score.score),directional_raw_strength=None,context_score=None,composite=None,relative_rank=None,relative_percentile=None,confidence=float(r.decision.confidence),decision="WAIT",market_regime=str(regime),volume=vol,relative_volume=None,volatility=float(characteristics.volatility),relative_volatility=None,liquidity=float(liquidity),momentum=None,multi_timeframe_alignment=None,reasons=_reasons(r)))
 def extract_observation(r,ranked,*,timestamp):
  missing,tf,vol,regime,liquidity=_observation_common(r,ranked.opportunity.timeframe,timestamp)
  if missing:return ObservationExtraction(None,tuple(dict.fromkeys(missing)),UNAVAILABLE_AT_BOUNDARY)
