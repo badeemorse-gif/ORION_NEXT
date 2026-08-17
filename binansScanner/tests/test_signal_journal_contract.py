@@ -154,8 +154,8 @@ class TestSignalJournalContract(unittest.TestCase):
     def test_journal_keeps_observation_and_outcome_separate(self) -> None:
         entry = self._entry()
         payload = entry.to_dict()
-        self.assertIs(entry.observation, entry.observation)
-        self.assertIs(entry.outcome, entry.outcome)
+        self.assertIsNotNone(entry.observation)
+        self.assertIsNotNone(entry.outcome)
         self.assertNotIn("outcome_1h", payload["observation"])
         self.assertEqual(payload["outcome"]["outcome_1h"], 0.5)
         self.assertEqual(payload["outcome"]["metric_unit"], "percent")
