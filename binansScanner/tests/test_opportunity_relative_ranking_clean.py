@@ -64,23 +64,48 @@ class TestCleanRelativeRanking(unittest.TestCase):
         return OpportunityRankingInput(opportunity=opportunity, score=ScoreResult(score=score, category="BULLISH" if direction is OpportunityDirection.LONG else "BEARISH"), profile=profile, dataset=dataset)
 
     def test_directional_raw_strength_long_extremes(self):
-        ranked = OpportunityRelativeRanker()
-        self.assertEqual(ranked._prepare(self._input(score=100.0))["raw_score"], 100.0)
-        self.assertEqual(ranked._prepare(self._input(score=100.0))["raw_score"], 100.0)
-        self.assertEqual(ranked._prepare(self._input(score=-100.0))["raw_score"], 0.0)
+        ranker = OpportunityRelativeRanker()
+        long_positive = self._input(score=100.0)
+        long_negative = self._input(score=-100.0)
+        prepared_positive = ranker._prepare(long_positive)
+        prepared_negative = ranker._prepare(long_negative)
+        ranked = {item.opportunity.symbol: item for item in ranker.rank((long_positive, long_negative))}
+
+        self.assertEqual(prepared_positive["raw_score"], 100.0)
+        self.assertEqual(prepared_negative["raw_score"], -100.0)
+        self.assertEqual(ranked["BTCUSDT"].directional_raw_strength, 100.0)
+
+        # Use distinct symbols to preserve both ranked outputs.
+        ranked = {item.opportunity.symbol: item for item in ranker.rank((
+            self._input(symbol="LONG_POS", score=100.0),
+            self._input(symbol="LONG_NEG", score=-100.0),
+        ))}
+        self.assertEqual(ranked["LONG_POS"].directional_raw_strength, 100.0)
+        self.assertEqual(ranked["LONG_NEG"].directional_raw_strength, 0.0)
 
     def test_directional_raw_strength_short_extremes(self):
         ranker = OpportunityRelativeRanker()
-        self.assertEqual(ranker._prepare(self._input(score=-100.0, direction=OpportunityDirection.SHORT))["raw_score"], 0.0)
-        self.assertEqual(ranker._prepare(self._input(score=100.0, direction=OpportunityDirection.SHORT))["raw_score"], 100.0)
+        short_negative = self._input(score=-100.0, direction=OpportunityDirection.SHORT, momentum="Strong Sell", trend="Bearish", ema_alignment="Bearish", phase="Markdown")
+        short_positive = self._input(score=100.0, direction=OpportunityDirection.SHORT)
+        prepared_negative = ranker._prepare(short_negative)
+        prepared_positive = ranker._prepare(short_positive)
+        ranked = {item.opportunity.symbol: item for item in ranker.rank((
+            self._input(symbol="SHORT_NEG", score=-100.0, direction=OpportunityDirection.SHORT, momentum="Strong Sell", trend="Bearish", ema_alignment="Bearish", phase="Markdown"),
+            self._input(symbol="SHORT_POS", score=100.0, direction=OpportunityDirection.SHORT),
+        ))}
+
+        self.assertEqual(prepared_negative["raw_score"], -100.0)
+        self.assertEqual(prepared_positive["raw_score"], 100.0)
+        self.assertEqual(ranked["SHORT_NEG"].directional_raw_strength, 100.0)
+        self.assertEqual(ranked["SHORT_POS"].directional_raw_strength, 0.0)
 
     def test_directional_raw_strength_midpoint_is_fifty(self):
         ranker = OpportunityRelativeRanker()
         long_prepared = ranker._prepare(self._input(score=0.0))
         short_prepared = ranker._prepare(self._input(score=0.0, direction=OpportunityDirection.SHORT))
         # The normalized value is exposed on the ranked result after cohort processing.
-        long_ranked = ranker.rank((self._input(score=0.0),))[0]
-        short_ranked = ranker.rank((self._input(score=0.0, direction=OpportunityDirection.SHORT),))[0]
+        long_ranked = ranker.rank((self._input(symbol="MID_LONG", score=0.0),))[0]
+        short_ranked = ranker.rank((self._input(symbol="MID_SHORT", score=0.0, direction=OpportunityDirection.SHORT),))[0]
         self.assertEqual(long_prepared["raw_score"], 0.0)
         self.assertEqual(short_prepared["raw_score"], 0.0)
         self.assertEqual(long_ranked.directional_raw_strength, 50.0)
