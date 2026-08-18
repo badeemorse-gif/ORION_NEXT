@@ -1,4 +1,5 @@
 name: ORION Phase A Runtime Observation
+# Exact-head verification trigger marker; no runtime semantics changed.
 # Experimental D1 runtime evidence gate
 on:
   push:
