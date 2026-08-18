@@ -41,6 +41,26 @@ jobs:
         run: |
           python -m unittest tests.test_orion_phase_a_runtime_observer tests.test_orion_phase_a_runtime_lookback -v
 
+      - name: Actual ORION 5x3 runtime observation
+        env:
+          EXPECTED_SHA: ${{ github.sha }}
+        run: |
+          rm -rf /tmp/orion_phase_a_artifacts
+          python tools/orion_phase_a_runtime_observer.py \
+            --baseline c54dc67792776da905a3efb1f667c1869c15db3d \
+            --artifact-root /tmp/orion_phase_a_artifacts \
+            --runtime-commit "$EXPECTED_SHA"
+          test -f /tmp/orion_phase_a_artifacts/signal-observations/*/runtime_results.jsonl
+          test -f /tmp/orion_phase_a_artifacts/signal-observations/*/observations.jsonl
+
+      - name: Upload runtime observation artifacts
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: d1-runtime-observation-artifacts
+          path: /tmp/orion_phase_a_artifacts/
+          if-no-files-found: error
+
       - name: Repository parity and clean tree
         run: |
           python tools/verify_repository_parity.py
