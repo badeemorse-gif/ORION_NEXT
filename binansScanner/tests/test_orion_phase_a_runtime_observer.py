@@ -1,15 +1,22 @@
 from __future__ import annotations
 
 import ast
+import builtins
 import sys
 import unittest
 from datetime import datetime, timezone
 from pathlib import Path
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
-from core.orchestrator import OrchestratorResult, PipelineError, PipelineStage, PipelineStatistics  # noqa: E402
+from core.orchestrator import (  # noqa: E402
+    OrchestratorResult,
+    PipelineError,
+    PipelineStage,
+    PipelineStatistics,
+)
 from enums import DataHealth, Timeframe  # noqa: E402
 from models.analysis import AnalysisResult  # noqa: E402
 from models.decision import DecisionResult  # noqa: E402
@@ -48,8 +55,15 @@ class TestPhaseARuntimeObserver(unittest.TestCase):
         for timeframe in (Timeframe.H1, Timeframe.H4, Timeframe.D1):
             dataset.add_timeframe(TimeframeData(timeframe, frame, DataHealth.GOOD, 3, now, now))
         characteristics = MarketCharacteristics(
-            trend="Bullish", trend_strength="Strong", momentum="Buy", volume_strength="Strong",
-            volatility=0.02, volatility_level="Normal", liquidity=0.9, market_phase="Markup", confidence=80.0,
+            trend="Bullish",
+            trend_strength="Strong",
+            momentum="Buy",
+            volume_strength="Strong",
+            volatility=0.02,
+            volatility_level="Normal",
+            liquidity=0.9,
+            market_phase="Markup",
+            confidence=80.0,
         )
         profile = ProfileResult(
             symbol,
@@ -65,7 +79,12 @@ class TestPhaseARuntimeObserver(unittest.TestCase):
             profile=profile,
             score=ScoreResult(score, "BULLISH", ["TEST_FACTOR"]),
             decision=DecisionResult(decision, abs(score) if decision != "WAIT" else 0.0, ["TEST_REASON"]),
-            statistics=PipelineStatistics(finished_at=now, current_stage=PipelineStage.FINISHED, completed_stage_count=8, success=True),
+            statistics=PipelineStatistics(
+                finished_at=now,
+                current_stage=PipelineStage.FINISHED,
+                completed_stage_count=8,
+                success=True,
+            ),
         )
 
     def _config(self, runtime_commit="5db73bfb079655fd32e2127289f181938006a167"):
@@ -78,23 +97,27 @@ class TestPhaseARuntimeObserver(unittest.TestCase):
             runtime_commit=runtime_commit,
         )
 
-    def _stubbed_run(self, decision="WAIT", symbol_factory=None):
+    def _stubbed_run(self, decision="WAIT", symbol_factory=None, orchestrator_factory=None):
         class Stub:
             def __init__(self):
                 self.result = None
+                self.analysis_engine_calls = 0
+                self.analysis_engine = None
 
             def run(self, symbol, timeframes):
-                symbol_factory_value = symbol_factory(symbol) if symbol_factory else None
-                self.result = TestPhaseARuntimeObserver._result(symbol=symbol, decision=decision)
-                if symbol_factory_value is not None:
-                    self.result = symbol_factory_value
-                return self.result
+                value = symbol_factory(symbol) if symbol_factory else self._default(symbol, decision)
+                self.result = value
+                return value
+
+            def _default(self, symbol, requested_decision):
+                return TestPhaseARuntimeObserver._result(symbol=symbol, decision=requested_decision)
 
             def last_result(self):
                 return self.result
 
-        observer = PhaseARuntimeObserver(self._config(), orchestrator_factory=Stub)
-        return observer.run(REQUIRED_SYMBOLS, REQUIRED_TIMEFRAMES)
+        factory = orchestrator_factory or Stub
+        observer = PhaseARuntimeObserver(self._config(), orchestrator_factory=factory)
+        return observer
 
     def test_required_universe_and_binding(self):
         self.assertEqual(REQUIRED_SYMBOLS, ("BTCUSDT", "ETHUSDT", "BNBUSDT", "SOLUSDT", "ADAUSDT"))
@@ -105,7 +128,11 @@ class TestPhaseARuntimeObserver(unittest.TestCase):
         self.assertTrue(config.universe_identity.startswith("UNIV-"))
 
     def test_observation_preserves_orion_outputs(self):
-        extraction = extract_observation(self._result(decision="FAVORABLE", score=31.5), "1h", timestamp=datetime(2026, 8, 17, 20, 0, tzinfo=timezone.utc))
+        extraction = extract_observation(
+            self._result(decision="FAVORABLE", score=31.5),
+            "1h",
+            timestamp=datetime(2026, 8, 17, 20, 0, tzinfo=timezone.utc),
+        )
         self.assertEqual(extraction.status, "OBSERVED")
         self.assertIsNotNone(extraction.observation)
         observation = extraction.observation
@@ -122,7 +149,9 @@ class TestPhaseARuntimeObserver(unittest.TestCase):
         self.assertNotIn("outcome_1h", observation.__dataclass_fields__)
 
     def test_d6_journal_compatibility_and_no_outcome(self):
-        observation = extract_observation(self._result(), "1h", timestamp=datetime(2026, 8, 17, 20, 0, tzinfo=timezone.utc)).observation
+        observation = extract_observation(
+            self._result(), "1h", timestamp=datetime(2026, 8, 17, 20, 0, tzinfo=timezone.utc)
+        ).observation
         assert observation is not None
         journal = SignalJournal().record(SignalJournalEntry(observation=observation))
         self.assertEqual(len(journal), 1)
@@ -131,15 +160,18 @@ class TestPhaseARuntimeObserver(unittest.TestCase):
     def test_missing_boundary_is_not_guessed(self):
         result = self._result()
         result.profile.market.market_phase = ""
-        extraction = extract_observation(result, "1h", timestamp=datetime(2026, 8, 17, 20, 0, tzinfo=timezone.utc))
+        extraction = extract_observation(
+            result, "1h", timestamp=datetime(2026, 8, 17, 20, 0, tzinfo=timezone.utc)
+        )
         self.assertEqual(extraction.status, UNAVAILABLE_AT_BOUNDARY)
         self.assertIn("market_regime", extraction.unavailable_fields)
         self.assertIsNone(extraction.observation)
 
     def test_wait_extracts_one_signal_time_observation(self):
-        extraction = extract_wait_observation(self._result(decision="WAIT"), "1h", timestamp=datetime(2026, 8, 17, 20, 0, tzinfo=timezone.utc))
+        extraction = extract_wait_observation(
+            self._result(decision="WAIT"), "1h", timestamp=datetime(2026, 8, 17, 20, 0, tzinfo=timezone.utc)
+        )
         self.assertEqual(extraction.status, "OBSERVED")
-        self.assertIsNotNone(extraction.observation)
         observation = extraction.observation
         assert observation is not None
         self.assertEqual(observation.timeframe, "1h")
@@ -153,88 +185,144 @@ class TestPhaseARuntimeObserver(unittest.TestCase):
     def test_point_in_time_and_future_leakage(self):
         text = (ROOT / "tools" / "orion_phase_a_runtime_observer.py").read_text(encoding="utf-8")
         tree = ast.parse(text)
-        imported = []
+        imports = []
         for node in ast.walk(tree):
             if isinstance(node, ast.Import):
-                imported.extend(alias.name for alias in node.names)
+                imports.extend(alias.name for alias in node.names)
             elif isinstance(node, ast.ImportFrom):
-                imported.append(node.module or "")
-        self.assertNotIn("engines.execution_engine", imported)
-        self.assertNotIn("models.execution", imported)
+                imports.append(node.module or "")
+        self.assertNotIn("engines.execution_engine", imports)
+        self.assertNotIn("models.execution", imports)
         for forbidden in (
-            "Opportunity", "OpportunityRelativeRanker", "OpportunityRankingInput", "build_ranking_inputs", "ranker.rank",
-            "SignalOutcome", "forward_outcome_validation", "outcome_1h", "outcome_4h", "outcome_24h", "mfe", "mae",
+            "Opportunity", "OpportunityRelativeRanker", "OpportunityRankingInput", "build_ranking_inputs",
+            "ranker.rank", "SignalOutcome", "forward_outcome_validation", "outcome_1h", "outcome_4h",
+            "outcome_24h", "mfe", "mae",
         ):
             self.assertNotIn(forbidden, text)
 
-    def test_symbol_level_decision_creates_at_most_one_observation(self):
+    def test_ast_import_guard_blocks_d3_imports(self):
+        tree = ast.parse((ROOT / "tools" / "orion_phase_a_runtime_observer.py").read_text(encoding="utf-8"))
+        forbidden_modules = {"engines.opportunity_relative_ranking", "models.opportunity"}
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                for alias in node.names:
+                    self.assertNotIn(alias.name, forbidden_modules)
+            elif isinstance(node, ast.ImportFrom):
+                self.assertNotIn(node.module, forbidden_modules)
+
+    def test_directional_runtime_never_imports_d3_or_opportunity(self):
+        real_import = builtins.__import__
+        requested = []
+
+        def spy_import(name, globals=None, locals=None, fromlist=(), level=0):
+            if name in {"engines.opportunity_relative_ranking", "models.opportunity"}:
+                requested.append(name)
+                raise AssertionError(f"forbidden runtime import: {name}")
+            return real_import(name, globals, locals, fromlist, level)
+
+        for decision in ("FAVORABLE", "UNFAVORABLE"):
+            with mock.patch("builtins.__import__", side_effect=spy_import):
+                observer = PhaseARuntimeObserver(
+                    self._config(),
+                    orchestrator_factory=lambda: self._single_result_orchestrator(decision),
+                )
+                run = observer.run(REQUIRED_SYMBOLS, REQUIRED_TIMEFRAMES)
+                btc = [e for e in run.journal.entries if e.observation.symbol == "BTCUSDT"]
+                self.assertEqual(len(btc), 1)
+                self.assertEqual(btc[0].observation.timeframe, "1h")
+        self.assertEqual(requested, [])
+
+    def _single_result_orchestrator(self, decision):
+        result = self._result(decision=decision, score=31.5 if decision == "FAVORABLE" else -31.5)
+
         class Stub:
-            def __init__(self): self.result = None
-            def run(self, symbol, timeframes): self.result = TestPhaseARuntimeObserver._result(symbol=symbol); return self.result
-            def last_result(self): return self.result
+            def __init__(self):
+                self.result = result
+                self._analysis_engine = mock.Mock()
+                self._analysis_engine._select_primary_timeframe.side_effect = lambda dataset: (None, Timeframe.H1)
 
-        run = PhaseARuntimeObserver(self._config(), orchestrator_factory=Stub).run(REQUIRED_SYMBOLS, REQUIRED_TIMEFRAMES)
-        observed = [x for x in run.records if x["status"] == "OBSERVED" and x["symbol"] == "BTCUSDT"]
+            def run(self, symbol, timeframes):
+                self.result = TestPhaseARuntimeObserver._result(
+                    symbol=symbol,
+                    decision=decision,
+                    score=31.5 if decision == "FAVORABLE" else -31.5,
+                )
+                return self.result
+
+            def last_result(self):
+                return self.result
+
+        return Stub()
+
+    def test_directional_matrix_and_d3_none_contract(self):
+        for decision in ("FAVORABLE", "UNFAVORABLE"):
+            run = PhaseARuntimeObserver(
+                self._config(),
+                orchestrator_factory=lambda d=decision: self._single_result_orchestrator(d),
+            ).run(REQUIRED_SYMBOLS, REQUIRED_TIMEFRAMES)
+            btc_entries = [entry for entry in run.journal.entries if entry.observation.symbol == "BTCUSDT"]
+            self.assertEqual(len(btc_entries), 1)
+            observation = btc_entries[0].observation
+            self.assertEqual(observation.timeframe, "1h")
+            self.assertEqual(observation.decision, decision)
+            for field in (
+                "directional_raw_strength", "context_score", "composite", "relative_rank", "relative_percentile"
+            ):
+                self.assertIsNone(getattr(observation, field))
+            btc_records = [record for record in run.records if record["symbol"] == "BTCUSDT"]
+            self.assertEqual(len([r for r in btc_records if r["status"] == "OBSERVED"]), 1)
+            self.assertEqual({r["timeframe"] for r in btc_records if r["status"] == UNAVAILABLE_AT_BOUNDARY}, {"4h", "1d"})
+
+    def test_wait_matrix(self):
+        run = PhaseARuntimeObserver(
+            self._config(),
+            orchestrator_factory=lambda: self._single_result_orchestrator("WAIT"),
+        ).run(REQUIRED_SYMBOLS, REQUIRED_TIMEFRAMES)
         btc_entries = [entry for entry in run.journal.entries if entry.observation.symbol == "BTCUSDT"]
-        self.assertEqual(len(observed), 1)
         self.assertEqual(len(btc_entries), 1)
-        self.assertEqual(observed[0]["timeframe"], "1h")
-        self.assertEqual(observed[0]["primary_timeframe"], "1h")
+        self.assertEqual(btc_entries[0].observation.decision, "WAIT")
+        self.assertEqual(btc_entries[0].observation.timeframe, "1h")
+        self.assertEqual({r["timeframe"] for r in run.records if r["symbol"] == "BTCUSDT" and r["status"] == UNAVAILABLE_AT_BOUNDARY}, {"4h", "1d"})
 
-    def test_wait_creates_one_observation_and_no_4h_1d_duplicates(self):
+    def test_primary_selector_identity(self):
+        selector_calls = []
+        result = self._result(decision="WAIT")
+
         class Stub:
-            def __init__(self): self.result = None
-            def run(self, symbol, timeframes): self.result = TestPhaseARuntimeObserver._result(symbol=symbol, decision="WAIT"); return self.result
-            def last_result(self): return self.result
+            def __init__(self):
+                self.result = result
+                self._analysis_engine = mock.Mock()
+                self._analysis_engine._select_primary_timeframe.side_effect = lambda dataset: (selector_calls.append(id(self._analysis_engine)) or (None, Timeframe.H1))
 
-        run = PhaseARuntimeObserver(self._config(), orchestrator_factory=Stub).run(REQUIRED_SYMBOLS, REQUIRED_TIMEFRAMES)
-        btc_records = [record for record in run.records if record["symbol"] == "BTCUSDT"]
-        btc_entries = [entry for entry in run.journal.entries if entry.observation.symbol == "BTCUSDT"]
-        self.assertEqual(len([record for record in btc_records if record["status"] == "OBSERVED"]), 1)
-        self.assertEqual(len(btc_entries), 1)
-        self.assertEqual([entry.observation.timeframe for entry in btc_entries], ["1h"])
-        self.assertNotIn("4h", [entry.observation.timeframe for entry in btc_entries])
-        self.assertNotIn("1d", [entry.observation.timeframe for entry in btc_entries])
+            def run(self, symbol, timeframes):
+                self.result = TestPhaseARuntimeObserver._result(symbol=symbol, decision="WAIT")
+                return self.result
 
-    def test_favorable_creates_one_observation_without_d3(self):
-        class Stub:
-            def __init__(self): self.result = None
-            def run(self, symbol, timeframes): self.result = TestPhaseARuntimeObserver._result(symbol=symbol, decision="FAVORABLE"); return self.result
-            def last_result(self): return self.result
+            def last_result(self):
+                return self.result
 
-        run = PhaseARuntimeObserver(self._config(), orchestrator_factory=Stub).run(REQUIRED_SYMBOLS, REQUIRED_TIMEFRAMES)
-        btc_entries = [entry for entry in run.journal.entries if entry.observation.symbol == "BTCUSDT"]
-        self.assertEqual(len(btc_entries), 1)
-        observation = btc_entries[0].observation
-        self.assertEqual(observation.timeframe, "1h")
-        self.assertEqual(observation.decision, "FAVORABLE")
-        self.assertIsNone(observation.directional_raw_strength)
-        self.assertIsNone(observation.context_score)
-        self.assertIsNone(observation.composite)
-        self.assertIsNone(observation.relative_rank)
-        self.assertIsNone(observation.relative_percentile)
+        def factory():
+            return Stub()
 
-    def test_unfavorable_creates_one_observation_without_d3(self):
-        class Stub:
-            def __init__(self): self.result = None
-            def run(self, symbol, timeframes): self.result = TestPhaseARuntimeObserver._result(symbol=symbol, decision="UNFAVORABLE", score=-31.5); return self.result
-            def last_result(self): return self.result
+        class CapturingFactory:
+            def __call__(self):
+                instance = factory()
+                created.append(instance)
+                return instance
 
-        run = PhaseARuntimeObserver(self._config(), orchestrator_factory=Stub).run(REQUIRED_SYMBOLS, REQUIRED_TIMEFRAMES)
-        btc_entries = [entry for entry in run.journal.entries if entry.observation.symbol == "BTCUSDT"]
-        self.assertEqual(len(btc_entries), 1)
-        observation = btc_entries[0].observation
-        self.assertEqual(observation.timeframe, "1h")
-        self.assertEqual(observation.decision, "UNFAVORABLE")
-        self.assertIsNone(observation.directional_raw_strength)
-        self.assertIsNone(observation.context_score)
-        self.assertIsNone(observation.composite)
-        self.assertIsNone(observation.relative_rank)
-        self.assertIsNone(observation.relative_percentile)
+        created = []
+        run = PhaseARuntimeObserver(self._config(), orchestrator_factory=CapturingFactory()).run(REQUIRED_SYMBOLS, REQUIRED_TIMEFRAMES)
+        self.assertTrue(run.journal.entries)
+        self.assertEqual(len(selector_calls), len(REQUIRED_SYMBOLS) * 2)
+        for instance in created:
+            self.assertTrue(instance._analysis_engine._select_primary_timeframe.called)
+            self.assertIs(instance._analysis_engine, instance._analysis_engine)
 
     def test_profile_blocked_creates_no_successful_observation(self):
         class Stub:
-            def __init__(self): self.result = None
+            def __init__(self):
+                self.result = None
+
             def run(self, symbol, timeframes):
                 result = TestPhaseARuntimeObserver._result(symbol=symbol)
                 result.statistics.current_stage = PipelineStage.PROFILE
@@ -244,7 +332,9 @@ class TestPhaseARuntimeObserver(unittest.TestCase):
                 result.decision = None
                 self.result = result
                 raise PipelineError(result.statistics.error_message)
-            def last_result(self): return self.result
+
+            def last_result(self):
+                return self.result
 
         run = PhaseARuntimeObserver(self._config(), orchestrator_factory=Stub).run(REQUIRED_SYMBOLS, REQUIRED_TIMEFRAMES)
         ada_records = [record for record in run.records if record["symbol"] == "ADAUSDT"]
@@ -253,14 +343,30 @@ class TestPhaseARuntimeObserver(unittest.TestCase):
 
     def test_no_score_or_decision_recalculation_in_observer(self):
         class Stub:
-            def __init__(self): self.result = None
-            def run(self, symbol, timeframes): self.result = TestPhaseARuntimeObserver._result(symbol=symbol); return self.result
-            def last_result(self): return self.result
+            def __init__(self):
+                self.result = None
+
+            def run(self, symbol, timeframes):
+                self.result = TestPhaseARuntimeObserver._result(symbol=symbol)
+                return self.result
+
+            def last_result(self):
+                return self.result
 
         run = PhaseARuntimeObserver(self._config(), orchestrator_factory=Stub).run(REQUIRED_SYMBOLS, REQUIRED_TIMEFRAMES)
         obs = next(record for record in run.records if record["status"] == "OBSERVED" and record["symbol"] == "BTCUSDT")
         self.assertEqual(obs["source_outputs"]["score"]["raw_score"], 31.5)
         self.assertEqual(obs["source_outputs"]["decision"]["decision"], "FAVORABLE")
+
+    def test_execution_isolation(self):
+        tree = ast.parse((ROOT / "tools" / "orion_phase_a_runtime_observer.py").read_text(encoding="utf-8"))
+        forbidden = {"engines.execution_engine", "adapters.paper_execution", "adapters.live_execution", "models.execution"}
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                for alias in node.names:
+                    self.assertNotIn(alias.name, forbidden)
+            elif isinstance(node, ast.ImportFrom):
+                self.assertNotIn(node.module, forbidden)
 
 
 if __name__ == "__main__":
