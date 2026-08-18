@@ -28,8 +28,15 @@ class TestPhaseARuntimeObserver(unittest.TestCase):
 
     def test_required_universe_and_binding(self):
         self.assertEqual(REQUIRED_SYMBOLS,("BTCUSDT","ETHUSDT","BNBUSDT","SOLUSDT","ADAUSDT")); self.assertEqual(REQUIRED_TIMEFRAMES,("1h","4h","1d"))
-        c=create_runtime_config(baseline_commit="c54dc67792776da905a3efb1f667c1869c15db3d",symbols=REQUIRED_SYMBOLS,timeframes=REQUIRED_TIMEFRAMES,configuration={"execution":{"paper":False,"live":False}},session_id="EXP-20260817T200000Z-abcdef123456",runtime_commit="ce97cb6064dc0d0cfd02e15d4f30f1d80b824c2c")
-        self.assertEqual(c.baseline_commit,"c54dc67792776da905a3efb1f667c1869c15db3d"); self.assertEqual(len(c.configuration_fingerprint),64); self.assertTrue(c.universe_identity.startswith("UNIV-"))
+        c=create_runtime_config(baseline_commit="c54dc67792776da905a3efb1f667c1869c15db3db",symbols=REQUIRED_SYMBOLS,timeframes=REQUIRED_TIMEFRAMES,configuration={"execution":{"paper":False,"live":False}},session_id="EXP-20260817T200000Z-abcdef123456",runtime_commit="ce97cb6064dc0d0cfd02e15d4f30f1d80b824c2c")
+        self.assertEqual(c.baseline_commit,"c54dc67792776da905a3efb1f667c1869c15db3db"); self.assertEqual(len(c.configuration_fingerprint),64); self.assertTrue(c.universe_identity.startswith("UNIV-"))
+
+    def test_valid_subset_and_unknown_symbol_rejected(self):
+        btc = create_runtime_config(baseline_commit="c54dc67792776da905a3efb1f667c1869c15db3d",symbols=("BTCUSDT",),timeframes=REQUIRED_TIMEFRAMES,configuration={},session_id="EXP-20260817T200000Z-abcdef123456",runtime_commit="1ef2acf4ea262100bb560feaf33e7f6b21441dfa")
+        ada = create_runtime_config(baseline_commit="c54dc67792776da905a3efb1f667c1869c15db3d",symbols=("ADAUSDT",),timeframes=REQUIRED_TIMEFRAMES,configuration={},session_id="EXP-20260817T200000Z-abcdef123456",runtime_commit="1ef2acf4ea262100bb560feaf33e7f6b21441dfa")
+        self.assertEqual(btc.universe_identity[:5],"UNIV-"); self.assertEqual(ada.universe_identity[:5],"UNIV-")
+        with self.assertRaises(ValueError):
+            create_runtime_config(baseline_commit="c54dc67792776da905a3efb1f667c1869c15db3d",symbols=("DOGEUSDT",),timeframes=REQUIRED_TIMEFRAMES,configuration={},session_id="EXP-20260817T200000Z-abcdef123456",runtime_commit="1ef2acf4ea262100bb560feaf33e7f6b21441dfa")
 
     def test_real_contract_result_extraction_and_d3_inputs(self):
         r=self._result(); inputs=build_ranking_inputs(r); self.assertEqual(len(inputs),3); self.assertIs(inputs[0].score,r.score); self.assertIs(inputs[0].profile,r.profile); self.assertIs(inputs[0].dataset,r.dataset)
