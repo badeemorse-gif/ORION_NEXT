@@ -178,10 +178,9 @@ def _primary_timeframe(orchestrator, result):
         return None
     engine = getattr(orchestrator, "_analysis_engine", None)
     selector = getattr(engine, "_select_primary_timeframe", None)
-    if callable(selector):
-        _, selected = selector(result.dataset)
-    else:
-        _, selected = AnalysisEngine()._select_primary_timeframe(result.dataset)
+    if not callable(selector):
+        return None
+    _, selected = selector(result.dataset)
     return selected.value if selected is not None else None
 
 
@@ -362,34 +361,9 @@ class PhaseARuntimeObserver:
                 if result is None:
                     raise
                 status = "PIPELINE_BLOCKED"
-                runtime.append({
-                    "symbol": symbol,
-                    "status": status,
-                    "stage": result.statistics.current_stage.value,
-                    "error": str(exc),
-                    "primary_timeframe": _primary_timeframe(orchestrator, result),
-                    "critical_indicators": _critical_indicator_status(result),
-                    "profile_warnings": list(result.profile.warnings) if result.profile else [],
-                    "profile_blocks": list(result.profile.blocks) if result.profile else [],
-                    "profile_status": "BLOCKED" if result.statistics.current_stage.value == "PROFILE" else ("PASS" if result.profile and result.profile.is_tradeable else "BLOCKED"),
-                    "score_status": "PRODUCED" if result.score else "NOT_PRODUCED",
-                    "decision_status": "PRODUCED" if result.decision else "NOT_PRODUCED",
-                    "execution": {"paper": False, "live": False},
-                })
+                runtime.append({"symbol": symbol, "status": status, "stage": result.statistics.current_stage.value, "error": str(exc), "primary_timeframe": _primary_timeframe(orchestrator, result), "critical_indicators": _critical_indicator_status(result), "profile_warnings": list(result.profile.warnings) if result.profile else [], "profile_blocks": list(result.profile.blocks) if result.profile else [], "profile_status": "BLOCKED" if result.statistics.current_stage.value == "PROFILE" else ("PASS" if result.profile and result.profile.is_tradeable else "BLOCKED"), "score_status": "PRODUCED" if result.score else "NOT_PRODUCED", "decision_status": "PRODUCED" if result.decision else "NOT_PRODUCED", "execution": {"paper": False, "live": False}})
             else:
-                runtime.append({
-                    "symbol": symbol,
-                    "status": status,
-                    "stage": result.statistics.current_stage.value,
-                    "primary_timeframe": _primary_timeframe(orchestrator, result),
-                    "critical_indicators": _critical_indicator_status(result),
-                    "profile_warnings": list(result.profile.warnings) if result.profile else [],
-                    "profile_blocks": list(result.profile.blocks) if result.profile else [],
-                    "profile_status": "PASS" if result.profile and result.profile.is_tradeable else "BLOCKED",
-                    "score_status": "PRODUCED" if result.score else "NOT_PRODUCED",
-                    "decision_status": "PRODUCED" if result.decision else "NOT_PRODUCED",
-                    "execution": {"paper": False, "live": False},
-                })
+                runtime.append({"symbol": symbol, "status": status, "stage": result.statistics.current_stage.value, "primary_timeframe": _primary_timeframe(orchestrator, result), "critical_indicators": _critical_indicator_status(result), "profile_warnings": list(result.profile.warnings) if result.profile else [], "profile_blocks": list(result.profile.blocks) if result.profile else [], "profile_status": "PASS" if result.profile and result.profile.is_tradeable else "BLOCKED", "score_status": "PRODUCED" if result.score else "NOT_PRODUCED", "decision_status": "PRODUCED" if result.decision else "NOT_PRODUCED", "execution": {"paper": False, "live": False}})
             results.append((symbol, orchestrator, result))
 
         stamps = [result.dataset.metadata.downloaded_at for _, _, result in results if result.dataset]
@@ -400,111 +374,38 @@ class PhaseARuntimeObserver:
         for symbol, orchestrator, result in results:
             primary = _primary_timeframe(orchestrator, result)
             decision = result.decision.decision if result.decision else None
-
             for timeframe in timeframes:
                 if timeframe != primary:
-                    records.append(
-                        self._unavailable(
-                            symbol, timeframe, timestamp, ("decision_result",),
-                            _PRIMARY_TIMEFRAME_UNAVAILABLE_REASON,
-                            primary_timeframe=primary,
-                        )
-                    )
-
+                    records.append(self._unavailable(symbol, timeframe, timestamp, ("decision_result",), _PRIMARY_TIMEFRAME_UNAVAILABLE_REASON, primary_timeframe=primary))
             if primary is None:
-                records.append(
-                    self._unavailable(
-                        symbol, "UNRESOLVED", timestamp, ("primary_timeframe",),
-                        "ORION primary analysis timeframe could not be identified.",
-                        primary_timeframe=None,
-                    )
-                )
+                records.append(self._unavailable(symbol, "UNRESOLVED", timestamp, ("primary_timeframe",), "ORION primary analysis timeframe could not be identified.", primary_timeframe=None))
                 continue
-
             if result.statistics.current_stage.value == "PROFILE" and result.decision is None:
                 records.append(self._blocked_record(symbol, primary, timestamp, result))
                 continue
-
             if decision == "WAIT":
                 extraction = extract_wait_observation(result, primary, timestamp=timestamp)
             elif decision in {"FAVORABLE", "UNFAVORABLE"}:
                 extraction = extract_observation(result, primary, timestamp=timestamp)
             else:
                 extraction = ObservationExtraction(None, ("decision",), UNAVAILABLE_AT_BOUNDARY)
-
             if extraction.observation is not None:
                 journal = journal.record(SignalJournalEntry(observation=extraction.observation))
             records.append(self._record(extraction, result, symbol, primary, timestamp, primary))
-
         return RuntimeObservationRun(self.config, journal, tuple(records), tuple(runtime))
 
     def _unavailable(self, symbol, timeframe, timestamp, fields, reason, *, primary_timeframe):
-        return {
-            "status": UNAVAILABLE_AT_BOUNDARY,
-            "session_id": self.config.session_id,
-            "baseline_commit": self.config.baseline_commit,
-            "configuration_fingerprint": self.config.configuration_fingerprint,
-            "universe_id": self.config.universe_identity,
-            "runtime_commit": self.config.runtime_commit,
-            "observed_at_utc": timestamp.isoformat(),
-            "symbol": symbol,
-            "timeframe": timeframe,
-            "primary_timeframe": primary_timeframe,
-            "unavailable_fields": list(fields),
-            "reason": reason,
-        }
+        return {"status": UNAVAILABLE_AT_BOUNDARY, "session_id": self.config.session_id, "baseline_commit": self.config.baseline_commit, "configuration_fingerprint": self.config.configuration_fingerprint, "universe_id": self.config.universe_identity, "runtime_commit": self.config.runtime_commit, "observed_at_utc": timestamp.isoformat(), "symbol": symbol, "timeframe": timeframe, "primary_timeframe": primary_timeframe, "unavailable_fields": list(fields), "reason": reason}
 
     def _blocked_record(self, symbol, timeframe, timestamp, result):
-        return {
-            "status": "PIPELINE_BLOCKED",
-            "session_id": self.config.session_id,
-            "baseline_commit": self.config.baseline_commit,
-            "configuration_fingerprint": self.config.configuration_fingerprint,
-            "universe_id": self.config.universe_identity,
-            "runtime_commit": self.config.runtime_commit,
-            "observed_at_utc": timestamp.isoformat(),
-            "symbol": symbol,
-            "timeframe": timeframe,
-            "primary_timeframe": timeframe,
-            "stage": result.statistics.current_stage.value,
-            "error": result.statistics.error_message,
-            "profile_warnings": list(result.profile.warnings) if result.profile else [],
-            "profile_blocks": list(result.profile.blocks) if result.profile else [],
-            "execution": {"paper": False, "live": False},
-        }
+        return {"status": "PIPELINE_BLOCKED", "session_id": self.config.session_id, "baseline_commit": self.config.baseline_commit, "configuration_fingerprint": self.config.configuration_fingerprint, "universe_id": self.config.universe_identity, "runtime_commit": self.config.runtime_commit, "observed_at_utc": timestamp.isoformat(), "symbol": symbol, "timeframe": timeframe, "primary_timeframe": timeframe, "stage": result.statistics.current_stage.value, "error": result.statistics.error_message, "profile_warnings": list(result.profile.warnings) if result.profile else [], "profile_blocks": list(result.profile.blocks) if result.profile else [], "execution": {"paper": False, "live": False}}
 
     def _record(self, extraction, result, symbol, timeframe, timestamp, primary_timeframe):
-        record = self._unavailable(
-            symbol, timeframe, timestamp, extraction.unavailable_fields,
-            "Canonical field was unavailable at the runtime boundary.",
-            primary_timeframe=primary_timeframe,
-        )
+        record = self._unavailable(symbol, timeframe, timestamp, extraction.unavailable_fields, "Canonical field was unavailable at the runtime boundary.", primary_timeframe=primary_timeframe)
         if extraction.observation is not None:
             record["status"] = extraction.status
             record["observation"] = asdict(extraction.observation)
-            record["source_outputs"] = {
-                "analysis": {
-                    "market_state": result.analysis.market_state,
-                    "strength": result.analysis.strength,
-                },
-                "profile": {
-                    "trend": result.profile.market.trend,
-                    "trend_strength": result.profile.market.trend_strength,
-                    "momentum": result.profile.market.momentum,
-                    "volume_strength": result.profile.market.volume_strength,
-                    "volatility": result.profile.market.volatility,
-                    "volatility_level": result.profile.market.volatility_level,
-                    "liquidity": result.profile.market.liquidity,
-                },
-                "score": {
-                    "raw_score": result.score.score,
-                    "category": result.score.category,
-                },
-                "decision": {
-                    "decision": result.decision.decision,
-                    "confidence": result.decision.confidence,
-                },
-            }
+            record["source_outputs"] = {"analysis": {"market_state": result.analysis.market_state, "strength": result.analysis.strength}, "profile": {"trend": result.profile.market.trend, "trend_strength": result.profile.market.trend_strength, "momentum": result.profile.market.momentum, "volume_strength": result.profile.market.volume_strength, "volatility": result.profile.market.volatility, "volatility_level": result.profile.market.volatility_level, "liquidity": result.profile.market.liquidity}, "score": {"raw_score": result.score.score, "category": result.score.category}, "decision": {"decision": result.decision.decision, "confidence": result.decision.confidence}}
             record.pop("unavailable_fields", None)
             record.pop("reason", None)
         return record
@@ -516,41 +417,13 @@ def write_artifacts(run, artifact_root, universe):
         raise ValueError("artifact_root must be outside ORION_NEXT")
     directory = root / "signal-observations" / run.config.session_id
     directory.mkdir(parents=True, exist_ok=False)
-
-    def write(path, value):
-        path.write_text(json.dumps(value, indent=2, sort_keys=True, default=str) + "\n", encoding="utf-8")
-
-    write(directory / "session.json", {
-        "session_id": run.config.session_id,
-        "status": "STOPPED",
-        "observer_version": OBSERVER_VERSION,
-        "baseline_commit": run.config.baseline_commit,
-        "configuration_fingerprint": run.config.configuration_fingerprint,
-        "universe_id": run.config.universe_identity,
-        "runtime_commit": run.config.runtime_commit,
-        "stopped_at_utc": _now().isoformat(),
-    })
-    write(directory / "run_config.json", {
-        "baseline_commit": run.config.baseline_commit,
-        "configuration": run.config.configuration,
-        "configuration_fingerprint": run.config.configuration_fingerprint,
-        "universe_id": run.config.universe_identity,
-        "runtime_commit": run.config.runtime_commit,
-        "observer_version": OBSERVER_VERSION,
-    })
+    def write(path, value): path.write_text(json.dumps(value, indent=2, sort_keys=True, default=str) + "\n", encoding="utf-8")
+    write(directory / "session.json", {"session_id": run.config.session_id, "status": "STOPPED", "observer_version": OBSERVER_VERSION, "baseline_commit": run.config.baseline_commit, "configuration_fingerprint": run.config.configuration_fingerprint, "universe_id": run.config.universe_identity, "runtime_commit": run.config.runtime_commit, "stopped_at_utc": _now().isoformat()})
+    write(directory / "run_config.json", {"baseline_commit": run.config.baseline_commit, "configuration": run.config.configuration, "configuration_fingerprint": run.config.configuration_fingerprint, "universe_id": run.config.universe_identity, "runtime_commit": run.config.runtime_commit, "observer_version": OBSERVER_VERSION})
     write(directory / "universe_input.json", universe)
-    write(directory / "configuration_fingerprint.json", {
-        "algorithm": "sha256",
-        "configuration_fingerprint": run.config.configuration_fingerprint,
-    })
-    (directory / "runtime_results.jsonl").write_text(
-        "".join(json.dumps(value, sort_keys=True, default=str) + "\n" for value in run.runtime_results),
-        encoding="utf-8",
-    )
-    (directory / "observations.jsonl").write_text(
-        "".join(json.dumps(value, sort_keys=True, default=str) + "\n" for value in run.records),
-        encoding="utf-8",
-    )
+    write(directory / "configuration_fingerprint.json", {"algorithm": "sha256", "configuration_fingerprint": run.config.configuration_fingerprint})
+    (directory / "runtime_results.jsonl").write_text("".join(json.dumps(value, sort_keys=True, default=str) + "\n" for value in run.runtime_results), encoding="utf-8")
+    (directory / "observations.jsonl").write_text("".join(json.dumps(value, sort_keys=True, default=str) + "\n" for value in run.records), encoding="utf-8")
     return directory
 
 
@@ -561,58 +434,21 @@ def main(argv=None):
     parser.add_argument("--runtime-commit")
     args = parser.parse_args(argv)
     symbols, timeframes = _universe(REQUIRED_SYMBOLS, REQUIRED_TIMEFRAMES)
-    configuration = {
-        "observer_version": OBSERVER_VERSION,
-        "market_source": "BINANCE_API",
-        "symbols": list(symbols),
-        "timeframes": list(timeframes),
-        "lookback": {"closed_candles": CLOSED_CANDLE_LOOKBACK, "request_buffer": LOOKBACK_REQUEST_BUFFER},
-        "execution": {"paper": False, "live": False},
-        "ranking": {"status": "DEFERRED", "reason": "D3 is deferred; no canonical Opportunity boundary is consumed by the observer."},
-    }
-    config = create_runtime_config(
-        baseline_commit=args.baseline,
-        symbols=symbols,
-        timeframes=timeframes,
-        configuration=configuration,
-        runtime_commit=args.runtime_commit,
-    )
-    source = BinanceProvider(
-        api_key=os.environ.get("BINANCE_API_KEY", ""),
-        api_secret=os.environ.get("BINANCE_API_SECRET", ""),
-        testnet=False,
-    )
+    configuration = {"observer_version": OBSERVER_VERSION, "market_source": "BINANCE_API", "symbols": list(symbols), "timeframes": list(timeframes), "lookback": {"closed_candles": CLOSED_CANDLE_LOOKBACK, "request_buffer": LOOKBACK_REQUEST_BUFFER}, "execution": {"paper": False, "live": False}, "ranking": {"status": "DEFERRED", "reason": "D3 is deferred; no canonical Opportunity boundary is consumed by the observer."}}
+    config = create_runtime_config(baseline_commit=args.baseline, symbols=symbols, timeframes=timeframes, configuration=configuration, runtime_commit=args.runtime_commit)
+    source = BinanceProvider(api_key=os.environ.get("BINANCE_API_KEY", ""), api_secret=os.environ.get("BINANCE_API_SECRET", ""), testnet=False)
     source._client._client.API_URL = BINANCE_MARKET_DATA_ONLY_URL
     provider = MarketDataProvider(source=_ClosedLookbackMarketSource(source, CLOSED_CANDLE_LOOKBACK))
-    run = PhaseARuntimeObserver(
-        config,
-        orchestrator_factory=lambda: build_runtime_orchestrator(provider),
-    ).run(symbols, timeframes)
+    run = PhaseARuntimeObserver(config, orchestrator_factory=lambda: build_runtime_orchestrator(provider)).run(symbols, timeframes)
     artifact_dir = write_artifacts(run, Path(args.artifact_root), {"symbols": list(symbols), "timeframes": list(timeframes)})
     observed = sum(value.get("status") == "OBSERVED" for value in run.records)
     unavailable = sum(value.get("status") == UNAVAILABLE_AT_BOUNDARY for value in run.records)
     blocked = sum(value.get("status") == "PIPELINE_BLOCKED" for value in run.records)
-    allowed_runtime = all(
-        value.get("status") == "SUCCESS"
-        or (value.get("status") == "PIPELINE_BLOCKED" and value.get("stage") == "PROFILE")
-        for value in run.runtime_results
-    )
+    allowed_runtime = all(value.get("status") == "SUCCESS" or (value.get("status") == "PIPELINE_BLOCKED" and value.get("stage") == "PROFILE") for value in run.runtime_results)
     complete_matrix = observed + unavailable + blocked == len(symbols) * len(timeframes)
     primary_bound = all(value.get("primary_timeframe") in REQUIRED_TIMEFRAMES for value in run.runtime_results)
-    payload = {
-        "status": "PASS" if complete_matrix and allowed_runtime and primary_bound else "FAIL",
-        "session_id": config.session_id,
-        "observations": observed,
-        "boundary_unavailable": unavailable,
-        "blocked_records": blocked,
-        "closed_candles": CLOSED_CANDLE_LOOKBACK,
-        "artifact_directory": str(artifact_dir),
-        "primary_timeframes": {value["symbol"]: value.get("primary_timeframe") for value in run.runtime_results},
-        "d3_status": "DEFERRED",
-    }
+    payload = {"status": "PASS" if complete_matrix and allowed_runtime and primary_bound else "FAIL", "session_id": config.session_id, "observations": observed, "boundary_unavailable": unavailable, "blocked_records": blocked, "closed_candles": CLOSED_CANDLE_LOOKBACK, "artifact_directory": str(artifact_dir), "primary_timeframes": {value["symbol"]: value.get("primary_timeframe") for value in run.runtime_results}, "d3_status": "DEFERRED"}
     print(json.dumps(payload, sort_keys=True))
     return 0 if complete_matrix and allowed_runtime and primary_bound else 2
 
-
-if __name__ == "__main__":
-    raise SystemExit(main())
+if __name__ == "__main__": raise SystemExit(main())

@@ -11,24 +11,25 @@ from unittest import mock
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
-from core.orchestrator import (  # noqa: E402
+from core.orchestrator import (
     OrchestratorResult,
     PipelineError,
     PipelineStage,
     PipelineStatistics,
 )
-from enums import DataHealth, Timeframe  # noqa: E402
-from models.analysis import AnalysisResult  # noqa: E402
-from models.decision import DecisionResult  # noqa: E402
-from models.market import MarketDataset, MarketMetadata, TimeframeData  # noqa: E402
-from models.profile import MarketCharacteristics, ProfileResult, ProfileStatistics, TimeframeProfile  # noqa: E402
-from models.score import ScoreResult  # noqa: E402
-from models.signal_journal import SignalJournal, SignalJournalEntry  # noqa: E402
-from tools.orion_phase_a_runtime_observer import (  # noqa: E402
+from enums import DataHealth, Timeframe
+from models.analysis import AnalysisResult
+from models.decision import DecisionResult
+from models.market import MarketDataset, MarketMetadata, TimeframeData
+from models.profile import MarketCharacteristics, ProfileResult, ProfileStatistics, TimeframeProfile
+from models.score import ScoreResult
+from models.signal_journal import SignalJournal, SignalJournalEntry
+from tools.orion_phase_a_runtime_observer import (
     REQUIRED_SYMBOLS,
     REQUIRED_TIMEFRAMES,
     UNAVAILABLE_AT_BOUNDARY,
     PhaseARuntimeObserver,
+    _primary_timeframe,
     create_runtime_config,
     extract_observation,
     extract_wait_observation,
@@ -97,28 +98,6 @@ class TestPhaseARuntimeObserver(unittest.TestCase):
             runtime_commit=runtime_commit,
         )
 
-    def _stubbed_run(self, decision="WAIT", symbol_factory=None, orchestrator_factory=None):
-        class Stub:
-            def __init__(self):
-                self.result = None
-                self.analysis_engine_calls = 0
-                self.analysis_engine = None
-
-            def run(self, symbol, timeframes):
-                value = symbol_factory(symbol) if symbol_factory else self._default(symbol, decision)
-                self.result = value
-                return value
-
-            def _default(self, symbol, requested_decision):
-                return TestPhaseARuntimeObserver._result(symbol=symbol, decision=requested_decision)
-
-            def last_result(self):
-                return self.result
-
-        factory = orchestrator_factory or Stub
-        observer = PhaseARuntimeObserver(self._config(), orchestrator_factory=factory)
-        return observer
-
     def test_required_universe_and_binding(self):
         self.assertEqual(REQUIRED_SYMBOLS, ("BTCUSDT", "ETHUSDT", "BNBUSDT", "SOLUSDT", "ADAUSDT"))
         self.assertEqual(REQUIRED_TIMEFRAMES, ("1h", "4h", "1d"))
@@ -149,9 +128,7 @@ class TestPhaseARuntimeObserver(unittest.TestCase):
         self.assertNotIn("outcome_1h", observation.__dataclass_fields__)
 
     def test_d6_journal_compatibility_and_no_outcome(self):
-        observation = extract_observation(
-            self._result(), "1h", timestamp=datetime(2026, 8, 17, 20, 0, tzinfo=timezone.utc)
-        ).observation
+        observation = extract_observation(self._result(), "1h", timestamp=datetime(2026, 8, 17, 20, 0, tzinfo=timezone.utc)).observation
         assert observation is not None
         journal = SignalJournal().record(SignalJournalEntry(observation=observation))
         self.assertEqual(len(journal), 1)
@@ -160,17 +137,13 @@ class TestPhaseARuntimeObserver(unittest.TestCase):
     def test_missing_boundary_is_not_guessed(self):
         result = self._result()
         result.profile.market.market_phase = ""
-        extraction = extract_observation(
-            result, "1h", timestamp=datetime(2026, 8, 17, 20, 0, tzinfo=timezone.utc)
-        )
+        extraction = extract_observation(result, "1h", timestamp=datetime(2026, 8, 17, 20, 0, tzinfo=timezone.utc))
         self.assertEqual(extraction.status, UNAVAILABLE_AT_BOUNDARY)
         self.assertIn("market_regime", extraction.unavailable_fields)
         self.assertIsNone(extraction.observation)
 
     def test_wait_extracts_one_signal_time_observation(self):
-        extraction = extract_wait_observation(
-            self._result(decision="WAIT"), "1h", timestamp=datetime(2026, 8, 17, 20, 0, tzinfo=timezone.utc)
-        )
+        extraction = extract_wait_observation(self._result(decision="WAIT"), "1h", timestamp=datetime(2026, 8, 17, 20, 0, tzinfo=timezone.utc))
         self.assertEqual(extraction.status, "OBSERVED")
         observation = extraction.observation
         assert observation is not None
@@ -274,10 +247,7 @@ class TestPhaseARuntimeObserver(unittest.TestCase):
             self.assertEqual({r["timeframe"] for r in btc_records if r["status"] == UNAVAILABLE_AT_BOUNDARY}, {"4h", "1d"})
 
     def test_wait_matrix(self):
-        run = PhaseARuntimeObserver(
-            self._config(),
-            orchestrator_factory=lambda: self._single_result_orchestrator("WAIT"),
-        ).run(REQUIRED_SYMBOLS, REQUIRED_TIMEFRAMES)
+        run = PhaseARuntimeObserver(self._config(), orchestrator_factory=lambda: self._single_result_orchestrator("WAIT")).run(REQUIRED_SYMBOLS, REQUIRED_TIMEFRAMES)
         btc_entries = [entry for entry in run.journal.entries if entry.observation.symbol == "BTCUSDT"]
         self.assertEqual(len(btc_entries), 1)
         self.assertEqual(btc_entries[0].observation.decision, "WAIT")
@@ -286,13 +256,25 @@ class TestPhaseARuntimeObserver(unittest.TestCase):
 
     def test_primary_selector_identity(self):
         selector_calls = []
+        created = []
         result = self._result(decision="WAIT")
+
+        class SelectorSpy:
+            def __init__(self, owner):
+                self.owner = owner
+                self.calls = 0
+
+            def __call__(self, dataset):
+                self.calls += 1
+                selector_calls.append(self.owner)
+                return None, Timeframe.H1
 
         class Stub:
             def __init__(self):
                 self.result = result
                 self._analysis_engine = mock.Mock()
-                self._analysis_engine._select_primary_timeframe.side_effect = lambda dataset: (selector_calls.append(id(self._analysis_engine)) or (None, Timeframe.H1))
+                self._analysis_engine._select_primary_timeframe = SelectorSpy(self)
+                created.append(self)
 
             def run(self, symbol, timeframes):
                 self.result = TestPhaseARuntimeObserver._result(symbol=symbol, decision="WAIT")
@@ -301,22 +283,45 @@ class TestPhaseARuntimeObserver(unittest.TestCase):
             def last_result(self):
                 return self.result
 
-        def factory():
-            return Stub()
-
-        class CapturingFactory:
-            def __call__(self):
-                instance = factory()
-                created.append(instance)
-                return instance
-
-        created = []
-        run = PhaseARuntimeObserver(self._config(), orchestrator_factory=CapturingFactory()).run(REQUIRED_SYMBOLS, REQUIRED_TIMEFRAMES)
+        run = PhaseARuntimeObserver(self._config(), orchestrator_factory=Stub).run(REQUIRED_SYMBOLS, REQUIRED_TIMEFRAMES)
         self.assertTrue(run.journal.entries)
         self.assertEqual(len(selector_calls), len(REQUIRED_SYMBOLS) * 2)
+        self.assertEqual({id(owner) for owner in selector_calls}, {id(instance) for instance in created})
         for instance in created:
-            self.assertTrue(instance._analysis_engine._select_primary_timeframe.called)
-            self.assertIs(instance._analysis_engine, instance._analysis_engine)
+            self.assertGreater(instance._analysis_engine._select_primary_timeframe.calls, 0)
+            self.assertIs(selector_calls[0].__class__, instance.__class__)
+
+    def test_missing_primary_selector_fails_closed_without_new_analysis_engine(self):
+        constructed = []
+
+        class ForbiddenAnalysisEngine:
+            def __init__(self, *args, **kwargs):
+                constructed.append(True)
+                raise AssertionError("fallback AnalysisEngine construction is forbidden")
+
+        result = self._result(decision="WAIT")
+
+        class Stub:
+            def __init__(self):
+                self.result = result
+                self._analysis_engine = mock.Mock()
+                del self._analysis_engine._select_primary_timeframe
+
+            def run(self, symbol, timeframes):
+                self.result = TestPhaseARuntimeObserver._result(symbol=symbol, decision="WAIT")
+                return self.result
+
+            def last_result(self):
+                return self.result
+
+        with mock.patch("tools.orion_phase_a_runtime_observer.AnalysisEngine", ForbiddenAnalysisEngine):
+            observer = PhaseARuntimeObserver(self._config(), orchestrator_factory=Stub)
+            run = observer.run(REQUIRED_SYMBOLS, REQUIRED_TIMEFRAMES)
+
+        self.assertEqual(constructed, [])
+        btc = [record for record in run.records if record["symbol"] == "BTCUSDT"]
+        self.assertEqual([record["status"] for record in btc if record["timeframe"] == "UNRESOLVED"], [UNAVAILABLE_AT_BOUNDARY])
+        self.assertEqual(len([record for record in run.journal.entries if record.observation.symbol == "BTCUSDT"]), 0)
 
     def test_profile_blocked_creates_no_successful_observation(self):
         class Stub:
