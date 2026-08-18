@@ -1,6 +1,7 @@
 name: ORION Phase A Runtime Observation
 # Exact-head verification trigger marker; no runtime semantics changed.
 # Experimental D1 runtime evidence gate
+# Verification trigger: exact-head run required on every branch push.
 on:
   push:
     branches: [phase-a/experimental-observation-assembly]
