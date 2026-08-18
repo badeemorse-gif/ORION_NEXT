@@ -374,14 +374,14 @@ class PhaseARuntimeObserver:
         for symbol, orchestrator, result in results:
             primary = _primary_timeframe(orchestrator, result)
             decision = result.decision.decision if result.decision else None
+            if result.statistics.current_stage.value == "PROFILE" and result.decision is None:
+                records.append(self._blocked_record(symbol, primary, timestamp, result))
+                continue
             for timeframe in timeframes:
                 if timeframe != primary:
                     records.append(self._unavailable(symbol, timeframe, timestamp, ("decision_result",), _PRIMARY_TIMEFRAME_UNAVAILABLE_REASON, primary_timeframe=primary))
             if primary is None:
                 records.append(self._unavailable(symbol, "UNRESOLVED", timestamp, ("primary_timeframe",), "ORION primary analysis timeframe could not be identified.", primary_timeframe=None))
-                continue
-            if result.statistics.current_stage.value == "PROFILE" and result.decision is None:
-                records.append(self._blocked_record(symbol, primary, timestamp, result))
                 continue
             if decision == "WAIT":
                 extraction = extract_wait_observation(result, primary, timestamp=timestamp)
@@ -434,7 +434,7 @@ def main(argv=None):
     parser.add_argument("--runtime-commit")
     args = parser.parse_args(argv)
     symbols, timeframes = _universe(REQUIRED_SYMBOLS, REQUIRED_TIMEFRAMES)
-    configuration = {"observer_version": OBSERVER_VERSION, "market_source": "BINANCE_API", "symbols": list(symbols), "timeframes": list(timeframes), "lookback": {"closed_candles": CLOSED_CANDLE_LOOKBACK, "request_buffer": LOOKBACK_REQUEST_BUFFER}, "execution": {"paper": False, "live": False}, "ranking": {"status": "DEFERRED", "reason": "D3 is deferred; no canonical Opportunity boundary is consumed by the observer."}}
+    configuration = {"observer_version": OBSERVER_VERSION, "market_source": "BINANCE_API", "symbols": list(symbols), "timeframes": list(timeframes), "lookback": {"closed_candles": CLOSED_CANDLE_LOOKBACK, "request_buffer": LOOKBACK_REQUEST_BUFFER}, "execution": {"paper": False, "live": False}, "ranking": {"status": "DEFERRED", "reason": "D3 is deferred; ranking boundary is not consumed by the observer."}}
     config = create_runtime_config(baseline_commit=args.baseline, symbols=symbols, timeframes=timeframes, configuration=configuration, runtime_commit=args.runtime_commit)
     source = BinanceProvider(api_key=os.environ.get("BINANCE_API_KEY", ""), api_secret=os.environ.get("BINANCE_API_SECRET", ""), testnet=False)
     source._client._client.API_URL = BINANCE_MARKET_DATA_ONLY_URL
