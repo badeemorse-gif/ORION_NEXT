@@ -101,7 +101,7 @@ class TestPhaseARuntimeObserver(unittest.TestCase):
             def run(self,symbol,timeframes):
                 r=TestPhaseARuntimeObserver._result(symbol=symbol); r.statistics.current_stage=PipelineStage.PROFILE; r.statistics.success=False; r.statistics.error_message="Profile intelligence blocked before Score/Decision: Extreme market risk"; r.score=None; r.decision=None; self.result=r; raise PipelineError(r.statistics.error_message)
             def last_result(self): return self.result
-        c=create_runtime_config(baseline_commit="c54dc67792776da905a3efb1f667c1869c15db3db",symbols=REQUIRED_SYMBOLS,timeframes=REQUIRED_TIMEFRAMES,configuration={},session_id="EXP-20260817T200000Z-abcdef123456",runtime_commit="5db73bfb079655fd32e2127289f181938006a167")
+        c=create_runtime_config(baseline_commit="c54dc67792776da905a3efb1f667c1869c15db3d",symbols=REQUIRED_SYMBOLS,timeframes=REQUIRED_TIMEFRAMES,configuration={},session_id="EXP-20260817T200000Z-abcdef123456",runtime_commit="5db73bfb079655fd32e2127289f181938006a167")
         run=PhaseARuntimeObserver(c,orchestrator_factory=Stub).run(REQUIRED_SYMBOLS,REQUIRED_TIMEFRAMES); self.assertEqual(len([x for x in run.records if x["status"]=="OBSERVED" and x["symbol"]=="ADAUSDT"]),0); self.assertIn("PIPELINE_BLOCKED",{x["status"] for x in run.records if x["symbol"]=="ADAUSDT"})
 
     def test_no_score_or_decision_recalculation_in_observer(self):
