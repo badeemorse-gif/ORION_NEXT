@@ -4,6 +4,7 @@ import ast
 import builtins
 import sys
 import unittest
+from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
 from unittest import mock
@@ -138,7 +139,9 @@ class TestPhaseARuntimeObserver(unittest.TestCase):
 
     def test_missing_boundary_is_not_guessed(self):
         result = self._result()
-        result.profile.market.market_phase = ""
+        characteristics = replace(result.profile.market, market_phase="")
+        profile = replace(result.profile, market=characteristics)
+        result = replace(result, profile=profile)
         extraction = extract_observation(
             result, "1h", timestamp=datetime(2026, 8, 17, 20, 0, tzinfo=timezone.utc)
         )
@@ -369,6 +372,8 @@ class TestPhaseARuntimeObserver(unittest.TestCase):
         class Stub:
             def __init__(self):
                 self.result = None
+                self._analysis_engine = mock.Mock()
+                self._analysis_engine._select_primary_timeframe.side_effect = lambda dataset: (None, Timeframe.H1)
 
             def run(self, symbol, timeframes):
                 self.result = TestPhaseARuntimeObserver._result(symbol=symbol)
