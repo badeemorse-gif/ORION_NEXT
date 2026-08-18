@@ -39,6 +39,22 @@ jobs:
         env:
           PYTHONPATH: .:..
         run: python -m unittest tests.test_orion_phase_a_runtime_observer tests.test_orion_phase_a_runtime_lookback -v
+      - name: Canonical primary timeframe binding guard
+        working-directory: binansScanner
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import ast
+          p = Path("../tools/orion_phase_a_runtime_observer.py")
+          tree = ast.parse(p.read_text(encoding="utf-8"))
+          source = p.read_text(encoding="utf-8")
+          assert "_select_primary_timeframe" in source
+          assert "for tf in timeframes:" in source
+          assert "if tf != primary:" in source
+          assert "_PRIMARY_TIMEFRAME_UNAVAILABLE_REASON" in source
+          ast.parse(source)
+          print("CANONICAL_PRIMARY_TIMEFRAME_BINDING_GUARD=PASS")
+          PY
       - name: Phase A targeted verification
         working-directory: binansScanner
         env:
