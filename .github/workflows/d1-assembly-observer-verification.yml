@@ -1,0 +1,57 @@
+name: D1 Assembly Observer Verification
+
+on:
+  push:
+    branches:
+      - phase-a/experimental-observation-assembly
+  workflow_dispatch:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout exact head
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+
+      - name: Assert exact checkout
+        shell: bash
+        run: |
+          set -euo pipefail
+          EXPECTED_SHA="${GITHUB_SHA}"
+          ACTUAL_CHECKOUT_SHA="$(git rev-parse HEAD)"
+          test "$EXPECTED_SHA" = "$ACTUAL_CHECKOUT_SHA"
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+
+      - name: Assert Assembly Observer remains D3 deferred
+        shell: bash
+        run: |
+          set -euo pipefail
+          OBSERVER="tools/orion_phase_a_runtime_observer.py"
+          ! grep -nE 'Opportunity|OpportunityDirection|OpportunityRankingInput|OpportunityRelativeRanker|build_ranking_inputs|ranker\.rank' "$OBSERVER"
+          ! grep -nE '^\s*(from|import) .*engines\.opportunity_relative_ranking|^\s*(from|import) .*models\.opportunity' "$OBSERVER"
+
+      - name: Verify changed paths are workflow-only for this commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          PARENT_SHA="$(git rev-parse HEAD^1)"
+          CHANGED="$(git diff --name-only "$PARENT_SHA" "$GITHUB_SHA")"
+          test "$CHANGED" = ".github/workflows/d1-assembly-observer-verification.yml"
+
+      - name: Run D1 Assembly Observer tests
+        working-directory: binansScanner
+        run: |
+          python -m unittest \
+            tests.test_orion_phase_a_runtime_observer \
+            tests.test_orion_phase_a_runtime_lookback \
+            -v
+
+      - name: Verify working tree clean
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -z "$(git status --porcelain)"
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
