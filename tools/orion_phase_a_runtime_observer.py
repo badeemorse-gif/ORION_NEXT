@@ -48,9 +48,17 @@ def _commit(x):
 
 
 def _universe(symbols, tfs):
-    symbols = tuple(str(x).strip().upper() for x in symbols); tfs = tuple(str(x).strip() for x in tfs)
-    if symbols != REQUIRED_SYMBOLS: raise ValueError(f"symbols must be exactly {list(REQUIRED_SYMBOLS)}")
-    if tfs != REQUIRED_TIMEFRAMES: raise ValueError(f"timeframes must be exactly {list(REQUIRED_TIMEFRAMES)}")
+    symbols = tuple(str(x).strip().upper() for x in symbols)
+    tfs = tuple(str(x).strip() for x in tfs)
+    if not symbols:
+        raise ValueError("symbols must contain at least one Phase-A symbol")
+    unknown = tuple(x for x in symbols if x not in REQUIRED_SYMBOLS)
+    if unknown:
+        raise ValueError(f"symbols must be members of REQUIRED_SYMBOLS: {list(unknown)}")
+    if len(set(symbols)) != len(symbols):
+        raise ValueError("symbols must not contain duplicates")
+    if tfs != REQUIRED_TIMEFRAMES:
+        raise ValueError(f"timeframes must be exactly {list(REQUIRED_TIMEFRAMES)}")
     return symbols, tfs
 
 
