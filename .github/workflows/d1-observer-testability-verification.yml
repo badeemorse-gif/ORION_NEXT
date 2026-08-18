@@ -37,6 +37,7 @@ jobs:
           if [ -f binansScanner/requirements.txt ]; then pip install -r binansScanner/requirements.txt; fi
 
       - name: D1 observer tests
+        working-directory: binansScanner
         run: |
           python -m unittest tests.test_orion_phase_a_runtime_observer tests.test_orion_phase_a_runtime_lookback -v
 
