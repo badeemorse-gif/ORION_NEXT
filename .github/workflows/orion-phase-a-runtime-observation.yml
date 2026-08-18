@@ -40,7 +40,7 @@ jobs:
         env:
           PYTHONPATH: .:..
         run: python -m unittest tests.test_orion_phase_a_runtime_observer tests.test_orion_phase_a_runtime_lookback -v
-      - name: Canonical primary timeframe binding guard
+      - name: Canonical primary timeframe and D3 deferred guard
         working-directory: binansScanner
         run: |
           python - <<'PY'
@@ -53,17 +53,21 @@ jobs:
           assert "for timeframe in timeframes:" in source
           assert "if timeframe != primary:" in source
           assert "_PRIMARY_TIMEFRAME_UNAVAILABLE_REASON" in source
-          assert "OpportunityRelativeRanker" not in source
-          assert "OpportunityRankingInput" not in source
-          assert "Opportunity(" not in source
+          for forbidden in (
+              "OpportunityRelativeRanker",
+              "OpportunityRankingInput",
+              "Opportunity(",
+              "build_ranking_inputs",
+              "ranker.rank",
+          ):
+              assert forbidden not in source, forbidden
           print("CANONICAL_PRIMARY_TIMEFRAME_AND_D3_DEFERRED_GUARD=PASS")
           PY
       - name: Phase A targeted verification
         working-directory: binansScanner
         env:
           PYTHONPATH: .:..
-        run: |
-          python -m unittest tests.test_opportunity_relative_ranking_clean tests.test_signal_journal_contract tests.test_signal_observation_workflow tests.test_market_data_quality_contract tests.test_binance_mapper_quality -v
+        run: python -m unittest tests.test_opportunity_relative_ranking_clean tests.test_signal_journal_contract tests.test_signal_observation_workflow tests.test_market_data_quality_contract tests.test_binance_mapper_quality -v
       - name: Actual ORION runtime observation
         env:
           GITHUB_SHA: ${{ github.sha }}
