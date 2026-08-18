@@ -47,14 +47,16 @@ jobs:
           from pathlib import Path
           import ast
           p = Path("../tools/orion_phase_a_runtime_observer.py")
-          tree = ast.parse(p.read_text(encoding="utf-8"))
           source = p.read_text(encoding="utf-8")
-          assert "_select_primary_timeframe" in source
-          assert "for tf in timeframes:" in source
-          assert "if tf != primary:" in source
-          assert "_PRIMARY_TIMEFRAME_UNAVAILABLE_REASON" in source
           ast.parse(source)
-          print("CANONICAL_PRIMARY_TIMEFRAME_BINDING_GUARD=PASS")
+          assert "_select_primary_timeframe" in source
+          assert "for timeframe in timeframes:" in source
+          assert "if timeframe != primary:" in source
+          assert "_PRIMARY_TIMEFRAME_UNAVAILABLE_REASON" in source
+          assert "OpportunityRelativeRanker" not in source
+          assert "OpportunityRankingInput" not in source
+          assert "Opportunity(" not in source
+          print("CANONICAL_PRIMARY_TIMEFRAME_AND_D3_DEFERRED_GUARD=PASS")
           PY
       - name: Phase A targeted verification
         working-directory: binansScanner
@@ -75,7 +77,7 @@ jobs:
       - name: Working tree clean
         run: test -z "$(git status --porcelain)"
       - name: Upload runtime evidence
-        if: always()
+        if: success()
         uses: actions/upload-artifact@v4
         with:
           name: orion-phase-a-runtime-observation-${{ github.sha }}
