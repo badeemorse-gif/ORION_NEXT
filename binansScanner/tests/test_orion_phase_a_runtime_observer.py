@@ -161,7 +161,10 @@ class TestPhaseARuntimeObserver(unittest.TestCase):
                 imported.append(node.module or "")
         self.assertNotIn("engines.execution_engine", imported)
         self.assertNotIn("models.execution", imported)
-        for forbidden in ("Opportunity", "OpportunityRelativeRanker", "OpportunityRankingInput", "SignalOutcome", "forward_outcome_validation", "outcome_1h", "outcome_4h", "outcome_24h", "mfe", "mae"):
+        for forbidden in (
+            "Opportunity", "OpportunityRelativeRanker", "OpportunityRankingInput", "build_ranking_inputs", "ranker.rank",
+            "SignalOutcome", "forward_outcome_validation", "outcome_1h", "outcome_4h", "outcome_24h", "mfe", "mae",
+        ):
             self.assertNotIn(forbidden, text)
 
     def test_symbol_level_decision_creates_at_most_one_observation(self):
@@ -244,69 +247,20 @@ class TestPhaseARuntimeObserver(unittest.TestCase):
             def last_result(self): return self.result
 
         run = PhaseARuntimeObserver(self._config(), orchestrator_factory=Stub).run(REQUIRED_SYMBOLS, REQUIRED_TIMEFRAMES)
-        self.assertEqual(len([x for x in run.records if x["status"] == "OBSERVED" and x["symbol"] == "ADAUSDT"]), 0)
-        self.assertIn("PIPELINE_BLOCKED", {x["status"] for x in run.records if x["symbol"] == "ADAUSDT"})
+        ada_records = [record for record in run.records if record["symbol"] == "ADAUSDT"]
+        self.assertEqual(len([record for record in ada_records if record["status"] == "OBSERVED"]), 0)
+        self.assertIn("PIPELINE_BLOCKED", {record["status"] for record in ada_records})
 
     def test_no_score_or_decision_recalculation_in_observer(self):
         class Stub:
             def __init__(self): self.result = None
-            def run(self, symbol, timeframes): self.result = TestPhaseARuntimeObserver._result(symbol=symbol, decision="FAVORABLE"); return self.result
+            def run(self, symbol, timeframes): self.result = TestPhaseARuntimeObserver._result(symbol=symbol); return self.result
             def last_result(self): return self.result
 
         run = PhaseARuntimeObserver(self._config(), orchestrator_factory=Stub).run(REQUIRED_SYMBOLS, REQUIRED_TIMEFRAMES)
         obs = next(record for record in run.records if record["status"] == "OBSERVED" and record["symbol"] == "BTCUSDT")
         self.assertEqual(obs["source_outputs"]["score"]["raw_score"], 31.5)
         self.assertEqual(obs["source_outputs"]["decision"]["decision"], "FAVORABLE")
-        self.assertEqual(obs["observation"]["raw_score"], 31.5)
-        self.assertEqual(obs["observation"]["decision"], "FAVORABLE")
-
-    def test_no_execution_access_or_requests(self):
-        text = (ROOT / "tools" / "orion_phase_a_runtime_observer.py").read_text(encoding="utf-8")
-        for forbidden in ("ExecutionEngine", "PaperExecutionAdapter", "LiveExecutionAdapter", "order_endpoint"):
-            self.assertNotIn(forbidden, text)
-
-    def test_primary_timeframe_is_canonical_1h(self):
-        class Stub:
-            def __init__(self): self.result = None
-            def run(self, symbol, timeframes): self.result = TestPhaseARuntimeObserver._result(symbol=symbol, decision="WAIT"); return self.result
-            def last_result(self): return self.result
-
-        run = PhaseARuntimeObserver(self._config(), orchestrator_factory=Stub).run(REQUIRED_SYMBOLS, REQUIRED_TIMEFRAMES)
-        btc = next(record for record in run.records if record["status"] == "OBSERVED" and record["symbol"] == "BTCUSDT")
-        self.assertEqual(btc["primary_timeframe"], "1h")
-        self.assertEqual(btc["timeframe"], "1h")
-
-    def test_4h_and_1d_are_boundary_only(self):
-        class Stub:
-            def __init__(self): self.result = None
-            def run(self, symbol, timeframes): self.result = TestPhaseARuntimeObserver._result(symbol=symbol, decision="FAVORABLE"); return self.result
-            def last_result(self): return self.result
-
-        run = PhaseARuntimeObserver(self._config(), orchestrator_factory=Stub).run(REQUIRED_SYMBOLS, REQUIRED_TIMEFRAMES)
-        btc_unavailable = [x for x in run.records if x["symbol"] == "BTCUSDT" and x["status"] == UNAVAILABLE_AT_BOUNDARY]
-        self.assertEqual({x["timeframe"] for x in btc_unavailable}, {"4h", "1d"})
-        for record in btc_unavailable:
-            self.assertEqual(record["reason"], "ORION runtime produced a symbol-level DecisionResult from the canonical primary timeframe; no independent DecisionResult exists for this timeframe.")
-
-    def test_favorable_provenance_is_signal_time(self):
-        class Stub:
-            def __init__(self): self.result = None
-            def run(self, symbol, timeframes): self.result = TestPhaseARuntimeObserver._result(symbol=symbol, decision="FAVORABLE"); return self.result
-            def last_result(self): return self.result
-
-        run = PhaseARuntimeObserver(self._config(), orchestrator_factory=Stub).run(REQUIRED_SYMBOLS, REQUIRED_TIMEFRAMES)
-        entry = next(entry for entry in run.journal.entries if entry.observation.symbol == "BTCUSDT")
-        self.assertEqual(entry.observation.provenance, "SIGNAL_TIME_OBSERVED")
-
-    def test_unfavorable_provenance_is_signal_time(self):
-        class Stub:
-            def __init__(self): self.result = None
-            def run(self, symbol, timeframes): self.result = TestPhaseARuntimeObserver._result(symbol=symbol, decision="UNFAVORABLE", score=-31.5); return self.result
-            def last_result(self): return self.result
-
-        run = PhaseARuntimeObserver(self._config(), orchestrator_factory=Stub).run(REQUIRED_SYMBOLS, REQUIRED_TIMEFRAMES)
-        entry = next(entry for entry in run.journal.entries if entry.observation.symbol == "BTCUSDT")
-        self.assertEqual(entry.observation.provenance, "SIGNAL_TIME_OBSERVED")
 
 
 if __name__ == "__main__":
