@@ -12,6 +12,8 @@ on:
 jobs:
   verify:
     runs-on: ubuntu-latest
+    env:
+      EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
     steps:
       - name: Checkout exact head
         uses: actions/checkout@v4
@@ -23,7 +25,6 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          EXPECTED_SHA="${{ github.event.pull_request.head.sha || github.sha }}"
           ACTUAL_CHECKOUT_SHA="$(git rev-parse HEAD)"
           test "$EXPECTED_SHA" = "$ACTUAL_CHECKOUT_SHA"
           echo "VERIFICATION_COMMIT=$EXPECTED_SHA"
