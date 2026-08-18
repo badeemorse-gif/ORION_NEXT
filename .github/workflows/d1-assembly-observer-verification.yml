@@ -29,6 +29,17 @@ jobs:
           test "$EXPECTED_SHA" = "$ACTUAL_CHECKOUT_SHA"
           echo "VERIFICATION_COMMIT=$EXPECTED_SHA"
 
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install verification dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install numpy pandas pandas-ta python-binance requests
+          if [ -f binansScanner/requirements.txt ]; then pip install -r binansScanner/requirements.txt; fi
+
       - name: Assert Assembly Observer remains D3 deferred
         shell: bash
         run: |
