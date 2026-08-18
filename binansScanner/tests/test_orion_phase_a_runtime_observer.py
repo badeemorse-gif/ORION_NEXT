@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[2]
 sys.path.insert(0,str(ROOT))
-from core.orchestrator import OrchestratorResult, PipelineStage, PipelineStatistics
+from core.orchestrator import OrchestratorResult, PipelineError, PipelineStage, PipelineStatistics
 from enums import DataHealth, Timeframe
 from models.analysis import AnalysisResult
 from models.decision import DecisionResult
@@ -12,7 +12,7 @@ from models.market import MarketDataset, MarketMetadata, TimeframeData
 from models.profile import MarketCharacteristics, ProfileResult, ProfileStatistics, TimeframeProfile
 from models.score import ScoreResult
 from models.signal_journal import SignalJournal, SignalJournalEntry
-from tools.orion_phase_a_runtime_observer import REQUIRED_SYMBOLS, REQUIRED_TIMEFRAMES, UNAVAILABLE_AT_BOUNDARY, PhaseARuntimeObserver, build_ranking_inputs, create_runtime_config, extract_observation
+from tools.orion_phase_a_runtime_observer import REQUIRED_SYMBOLS, REQUIRED_TIMEFRAMES, UNAVAILABLE_AT_BOUNDARY, PhaseARuntimeObserver, build_ranking_inputs, create_runtime_config, extract_observation, extract_wait_observation
 
 class TestPhaseARuntimeObserver(unittest.TestCase):
     @staticmethod
@@ -58,6 +58,9 @@ class TestPhaseARuntimeObserver(unittest.TestCase):
 
     def test_wait_does_not_create_guessed_direction(self): self.assertEqual(build_ranking_inputs(self._result(decision="WAIT")),())
 
+    def test_wait_extracts_one_signal_time_observation(self):
+        r=self._result(decision="WAIT"); ex=extract_wait_observation(r,"1h",timestamp=datetime(2026,8,17,20,0,tzinfo=timezone.utc)); self.assertEqual(ex.status,"OBSERVED"); self.assertIsNotNone(ex.observation); self.assertEqual(ex.observation.timeframe,"1h"); self.assertEqual(ex.observation.decision,"WAIT"); self.assertIsNone(ex.observation.directional_raw_strength); self.assertIsNone(ex.observation.context_score); self.assertIsNone(ex.observation.composite); self.assertIsNone(ex.observation.relative_rank); self.assertIsNone(ex.observation.relative_percentile)
+
     def test_point_in_time_and_future_leakage(self):
         p=ROOT/"tools"/"orion_phase_a_runtime_observer.py"; text=p.read_text(encoding="utf-8"); tree=ast.parse(text); imported=[]
         for n in ast.walk(tree):
@@ -66,13 +69,47 @@ class TestPhaseARuntimeObserver(unittest.TestCase):
         self.assertNotIn("engines.execution_engine",imported); self.assertNotIn("models.execution",imported)
         for forbidden in ("SignalOutcome","forward_outcome_validation","outcome_1h","outcome_4h","outcome_24h","mfe","mae"): self.assertNotIn(forbidden,text)
 
-    def test_observer_creates_15_signal_time_records_and_journal(self):
+    def test_symbol_level_decision_creates_at_most_one_observation(self):
         class Stub:
             def __init__(self): self.result=None
             def run(self,symbol,timeframes): self.result=TestPhaseARuntimeObserver._result(symbol=symbol); return self.result
             def last_result(self): return self.result
-        c=create_runtime_config(baseline_commit="c54dc67792776da905a3efb1f667c1869c15db3d",symbols=REQUIRED_SYMBOLS,timeframes=REQUIRED_TIMEFRAMES,configuration={"execution":{"paper":False,"live":False}},session_id="EXP-20260817T200000Z-abcdef123456",runtime_commit="ce97cb6064dc0d0cfd02e15d4f30f1d80b824c2c")
-        run=PhaseARuntimeObserver(c,orchestrator_factory=Stub).run(REQUIRED_SYMBOLS,REQUIRED_TIMEFRAMES); self.assertEqual(len(run.journal),15); observed=[x for x in run.records if x["status"]=="OBSERVED"]; self.assertEqual(len(observed),15)
-        self.assertEqual(observed[0]["baseline_commit"],c.baseline_commit); self.assertEqual(observed[0]["configuration_fingerprint"],c.configuration_fingerprint); self.assertEqual(observed[0]["universe_id"],c.universe_identity); self.assertEqual(observed[0]["source_outputs"]["analysis"]["market_state"],"BULLISH"); self.assertNotIn("outcome",observed[0])
+        c=create_runtime_config(baseline_commit="c54dc67792776da905a3efb1f667c1869c15db3d",symbols=REQUIRED_SYMBOLS,timeframes=REQUIRED_TIMEFRAMES,configuration={"execution":{"paper":False,"live":False}},session_id="EXP-20260817T200000Z-abcdef123456",runtime_commit="5db73bfb079655fd32e2127289f181938006a167")
+        run=PhaseARuntimeObserver(c,orchestrator_factory=Stub).run(("BTCUSDT",),REQUIRED_TIMEFRAMES); observed=[x for x in run.records if x["status"]=="OBSERVED"]; self.assertEqual(len(observed),1); self.assertEqual(len(run.journal),1); self.assertEqual(observed[0]["timeframe"],"1h"); self.assertEqual(observed[0]["primary_timeframe"],"1h")
+        unavailable=[x for x in run.records if x["status"]==UNAVAILABLE_AT_BOUNDARY]; self.assertEqual({x["timeframe"] for x in unavailable},{"4h","1d"})
+        for x in unavailable: self.assertEqual(x["reason"],"ORION runtime produced a symbol-level DecisionResult from the canonical primary timeframe; no independent DecisionResult exists for this timeframe.")
+
+    def test_wait_creates_one_observation_and_no_4h_1d_duplicates(self):
+        class Stub:
+            def __init__(self): self.result=None
+            def run(self,symbol,timeframes): self.result=TestPhaseARuntimeObserver._result(symbol=symbol,decision="WAIT"); return self.result
+            def last_result(self): return self.result
+        c=create_runtime_config(baseline_commit="c54dc67792776da905a3efb1f667c1869c15db3d",symbols=REQUIRED_SYMBOLS,timeframes=REQUIRED_TIMEFRAMES,configuration={},session_id="EXP-20260817T200000Z-abcdef123456",runtime_commit="5db73bfb079655fd32e2127289f181938006a167")
+        run=PhaseARuntimeObserver(c,orchestrator_factory=Stub).run(("BTCUSDT",),REQUIRED_TIMEFRAMES); self.assertEqual(len(run.journal),1); self.assertEqual([e.observation.timeframe for e in run.journal.entries],["1h"])
+
+    def test_directional_creates_at_most_one_signal_observation(self):
+        class Stub:
+            def __init__(self): self.result=None
+            def run(self,symbol,timeframes): self.result=TestPhaseARuntimeObserver._result(symbol=symbol,decision="FAVORABLE"); return self.result
+            def last_result(self): return self.result
+        c=create_runtime_config(baseline_commit="c54dc67792776da905a3efb1f667c1869c15db3d",symbols=REQUIRED_SYMBOLS,timeframes=REQUIRED_TIMEFRAMES,configuration={},session_id="EXP-20260817T200000Z-abcdef123456",runtime_commit="5db73bfb079655fd32e2127289f181938006a167")
+        run=PhaseARuntimeObserver(c,orchestrator_factory=Stub).run(("BTCUSDT",),REQUIRED_TIMEFRAMES); observed=[x for x in run.records if x["status"]=="OBSERVED"]; self.assertEqual(len(observed),1); self.assertEqual(observed[0]["timeframe"],"1h")
+
+    def test_profile_blocked_creates_no_successful_observation(self):
+        class Stub:
+            def __init__(self): self.result=None
+            def run(self,symbol,timeframes):
+                r=TestPhaseARuntimeObserver._result(symbol=symbol); r.statistics.current_stage=PipelineStage.PROFILE; r.statistics.success=False; r.statistics.error_message="Profile intelligence blocked before Score/Decision: Extreme market risk"; r.score=None; r.decision=None; self.result=r; raise PipelineError(r.statistics.error_message)
+            def last_result(self): return self.result
+        c=create_runtime_config(baseline_commit="c54dc67792776da905a3efb1f667c1869c15db3d",symbols=REQUIRED_SYMBOLS,timeframes=REQUIRED_TIMEFRAMES,configuration={},session_id="EXP-20260817T200000Z-abcdef123456",runtime_commit="5db73bfb079655fd32e2127289f181938006a167")
+        run=PhaseARuntimeObserver(c,orchestrator_factory=Stub).run(("ADAUSDT",),REQUIRED_TIMEFRAMES); self.assertEqual(len([x for x in run.records if x["status"]=="OBSERVED"]),0); self.assertIn("PIPELINE_BLOCKED",{x["status"] for x in run.records})
+
+    def test_no_score_or_decision_recalculation_in_observer(self):
+        class Stub:
+            def __init__(self): self.result=None
+            def run(self,symbol,timeframes): self.result=TestPhaseARuntimeObserver._result(symbol=symbol); return self.result
+            def last_result(self): return self.result
+        c=create_runtime_config(baseline_commit="c54dc67792776da905a3efb1f667c1869c15db3d",symbols=REQUIRED_SYMBOLS,timeframes=REQUIRED_TIMEFRAMES,configuration={},session_id="EXP-20260817T200000Z-abcdef123456",runtime_commit="5db73bfb079655fd32e2127289f181938006a167")
+        run=PhaseARuntimeObserver(c,orchestrator_factory=Stub).run(("BTCUSDT",),REQUIRED_TIMEFRAMES); obs=next(x for x in run.records if x["status"]=="OBSERVED"); self.assertEqual(obs["source_outputs"]["score"]["raw_score"],31.5); self.assertEqual(obs["source_outputs"]["decision"]["decision"],"FAVORABLE")
 
 if __name__=="__main__": unittest.main()
