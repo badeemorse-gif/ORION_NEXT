@@ -109,7 +109,7 @@ class TestPhaseARuntimeObserver(unittest.TestCase):
             def __init__(self): self.result=None
             def run(self,symbol,timeframes): self.result=TestPhaseARuntimeObserver._result(symbol=symbol); return self.result
             def last_result(self): return self.result
-        c=create_runtime_config(baseline_commit="c54dc67792776da905a3efb1f667c1869c15db3db",symbols=REQUIRED_SYMBOLS,timeframes=REQUIRED_TIMEFRAMES,configuration={},session_id="EXP-20260817T200000Z-abcdef123456",runtime_commit="5db73bfb079655fd32e2127289f181938006a167")
+        c=create_runtime_config(baseline_commit="c54dc67792776da905a3efb1f667c1869c15db3d",symbols=REQUIRED_SYMBOLS,timeframes=REQUIRED_TIMEFRAMES,configuration={},session_id="EXP-20260817T200000Z-abcdef123456",runtime_commit="5db73bfb079655fd32e2127289f181938006a167")
         run=PhaseARuntimeObserver(c,orchestrator_factory=Stub).run(REQUIRED_SYMBOLS,REQUIRED_TIMEFRAMES); obs=next(x for x in run.records if x["status"]=="OBSERVED" and x["symbol"]=="BTCUSDT"); self.assertEqual(obs["source_outputs"]["score"]["raw_score"],31.5); self.assertEqual(obs["source_outputs"]["decision"]["decision"],"FAVORABLE")
 
 if __name__=="__main__": unittest.main()
