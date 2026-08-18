@@ -1,10 +1,16 @@
 from __future__ import annotations
 
+import sys
 import unittest
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from unittest.mock import patch
 
 import pandas as pd
+
+ROOT = Path(__file__).resolve().parents[2]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
 from enums import Timeframe
 from tools.orion_phase_a_runtime_observer import CLOSED_CANDLE_LOOKBACK, CRITICAL_PROFILE_INDICATORS, LOOKBACK_REQUEST_BUFFER, _ClosedLookbackMarketSource
