@@ -55,3 +55,5 @@ jobs:
           set -euo pipefail
           test -z "$(git status --porcelain)"
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+
+# Verification-only retrigger; no runtime or production semantics changed.
