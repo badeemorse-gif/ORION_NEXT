@@ -84,7 +84,7 @@ class TestPhaseARuntimeObserver(unittest.TestCase):
             def __init__(self): self.result=None
             def run(self,symbol,timeframes): self.result=TestPhaseARuntimeObserver._result(symbol=symbol,decision="WAIT"); return self.result
             def last_result(self): return self.result
-        c=create_runtime_config(baseline_commit="c54dc67792776da905a3efb1f667c1869c15db3ad",symbols=REQUIRED_SYMBOLS,timeframes=REQUIRED_TIMEFRAMES,configuration={},session_id="EXP-20260817T200000Z-abcdef123456",runtime_commit="5db73bfb079655fd32e2127289f181938006a167")
+        c=create_runtime_config(baseline_commit="c54dc67792776da905a3efb1f667c1869c15db3d",symbols=REQUIRED_SYMBOLS,timeframes=REQUIRED_TIMEFRAMES,configuration={},session_id="EXP-20260817T200000Z-abcdef123456",runtime_commit="5db73bfb079655fd32e2127289f181938006a167")
         run=PhaseARuntimeObserver(c,orchestrator_factory=Stub).run(REQUIRED_SYMBOLS,REQUIRED_TIMEFRAMES); records=[x for x in run.records if x["symbol"]=="BTCUSDT"]; btc_entries=[e for e in run.journal.entries if e.observation.symbol=="BTCUSDT"]; self.assertEqual(len([x for x in records if x["status"]=="OBSERVED"]),1); self.assertEqual(len(btc_entries),1); self.assertEqual([e.observation.timeframe for e in btc_entries],["1h"])
 
     def test_directional_creates_at_most_one_signal_observation(self):
@@ -92,7 +92,7 @@ class TestPhaseARuntimeObserver(unittest.TestCase):
             def __init__(self): self.result=None
             def run(self,symbol,timeframes): self.result=TestPhaseARuntimeObserver._result(symbol=symbol,decision="FAVORABLE"); return self.result
             def last_result(self): return self.result
-        c=create_runtime_config(baseline_commit="c54dc67792776da905a3efb1f667c1869c15db3ad",symbols=REQUIRED_SYMBOLS,timeframes=REQUIRED_TIMEFRAMES,configuration={},session_id="EXP-20260817T200000Z-abcdef123456",runtime_commit="5db73bfb079655fd32e2127289f181938006a167")
+        c=create_runtime_config(baseline_commit="c54dc67792776da905a3efb1f667c1869c15db3d",symbols=REQUIRED_SYMBOLS,timeframes=REQUIRED_TIMEFRAMES,configuration={},session_id="EXP-20260817T200000Z-abcdef123456",runtime_commit="5db73bfb079655fd32e2127289f181938006a167")
         run=PhaseARuntimeObserver(c,orchestrator_factory=Stub).run(REQUIRED_SYMBOLS,REQUIRED_TIMEFRAMES); observed=[x for x in run.records if x["status"]=="OBSERVED" and x["symbol"]=="BTCUSDT"]; self.assertEqual(len(observed),1); self.assertEqual(observed[0]["timeframe"],"1h")
 
     def test_profile_blocked_creates_no_successful_observation(self):
