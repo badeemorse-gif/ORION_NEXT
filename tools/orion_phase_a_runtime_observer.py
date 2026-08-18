@@ -77,8 +77,12 @@ def _commit(value: str) -> str:
 def _universe(symbols, timeframes):
     symbols = tuple(str(value).strip().upper() for value in symbols)
     timeframes = tuple(str(value).strip() for value in timeframes)
-    if symbols != REQUIRED_SYMBOLS:
-        raise ValueError(f"symbols must be exactly {list(REQUIRED_SYMBOLS)}")
+    if not symbols:
+        raise ValueError("symbols must not be empty")
+    if len(symbols) != len(set(symbols)):
+        raise ValueError("symbols must not contain duplicates")
+    if any(symbol not in REQUIRED_SYMBOLS for symbol in symbols):
+        raise ValueError(f"symbols must be members of {list(REQUIRED_SYMBOLS)}")
     if timeframes != REQUIRED_TIMEFRAMES:
         raise ValueError(f"timeframes must be exactly {list(REQUIRED_TIMEFRAMES)}")
     return symbols, timeframes
