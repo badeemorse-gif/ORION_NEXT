@@ -48,11 +48,21 @@ jobs:
           import ast
           p = Path("../tools/orion_phase_a_runtime_observer.py")
           source = p.read_text(encoding="utf-8")
-          ast.parse(source)
+          tree = ast.parse(source)
           assert "_select_primary_timeframe" in source
           assert "for timeframe in timeframes:" in source
           assert "if timeframe != primary:" in source
           assert "_PRIMARY_TIMEFRAME_UNAVAILABLE_REASON" in source
+          forbidden_modules = {
+              "engines.opportunity_relative_ranking",
+              "models.opportunity",
+          }
+          for node in ast.walk(tree):
+              if isinstance(node, ast.Import):
+                  for alias in node.names:
+                      assert alias.name not in forbidden_modules, alias.name
+              elif isinstance(node, ast.ImportFrom):
+                  assert node.module not in forbidden_modules, node.module
           for forbidden in (
               "OpportunityRelativeRanker",
               "OpportunityRankingInput",
