@@ -24,12 +24,14 @@ class TestProfileIntelligence(unittest.TestCase):
         confidence=80.0,
         completion_ratio=1.0,
         timeframes=True,
+        timeframe_names=("1d", "4h", "1h"),
         is_tradeable=True,
         timeframe_characteristics=None,
+        timeframe_characteristics_name="1h",
         missing_candles=0,
         timeframe_candles_count=100,
         timeframe_missing_candles=None,
-        timeframe_name="1h",
+        timeframe_target_name="1h",
         total_candles=100,
         statistics_missing_candles=None,
         symbol="BTCUSDT",
@@ -60,15 +62,29 @@ class TestProfileIntelligence(unittest.TestCase):
 
         profiles = ()
         if timeframes:
-            profiles = (
+            profiles = tuple(
                 TimeframeProfile(
-                    timeframe=timeframe_name,
-                    characteristics=timeframe_characteristics or market,
-                    candles_count=timeframe_candles_count,
+                    timeframe=name,
+                    characteristics=(
+                        timeframe_characteristics
+                        if timeframe_characteristics is not None
+                        and name == timeframe_characteristics_name
+                        else market
+                    ),
+                    candles_count=(
+                        timeframe_candles_count
+                        if name == timeframe_target_name
+                        else 100
+                    ),
                     first_timestamp=datetime(2026, 1, 1, tzinfo=timezone.utc),
                     last_timestamp=datetime(2026, 1, 2, tzinfo=timezone.utc),
-                    missing_candles=timeframe_missing_candles,
-                ),
+                    missing_candles=(
+                        timeframe_missing_candles
+                        if name == timeframe_target_name
+                        else 0
+                    ),
+                )
+                for name in timeframe_names
             )
 
         return ProfileResult(
@@ -252,7 +268,10 @@ class TestProfileIntelligence(unittest.TestCase):
         self.assertIn("incomplete candle coverage in timeframe 1h", result.reasons[0])
 
     def test_invalid_timeframe_name_fails_closed(self):
-        profile = self._profile(timeframe_name="2h")
+        profile = self._profile(
+            timeframe_names=("1d", "4h", "2h"),
+            timeframe_target_name="2h",
+        )
 
         result = self.intelligence.evaluate(profile)
 

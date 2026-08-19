@@ -1,208 +1,185 @@
-# ORION Restore — ALL Branch Synchronization Contract
+# ORION Restore — MAIN / ALL / Final Materialization Contract
 
-الإصدار: 2.3
-الحالة: MAIN + FAST ISOLATED ALL + INDEPENDENT MAIN PARITY VERIFIER
+الإصدار: 3.0  
+الحالة: ACTIVE — FINAL MATERIALIZATION CONTRACT
 
-## الهدف
+## 1. قاعدة الحوكمة
 
-أداة ORION Restore تحتوي الآن على مسارين مستقلين:
-
-- `MAIN` = نسخة مطابقة رسميًا لـ `origin/main` داخل المشروع الرئيسي.
-- `ALL` = نسخ معزولة لجميع الفروع داخل `ORION_NEXT_ALL_BRANCHES`.
-
-لا يوجد أي تداخل بين المسارين.
-
-## MAIN — exact mirror
-
-`MAIN` هو المسار الوحيد المسموح له بالكتابة داخل:
+أثناء التطوير:
 
 ```text
-C:\Users\badee\Desktop\ORION_NEXT
+GitHub = Source of Truth
 ```
 
-المصدر:
+`ORION_NEXT` هو Development / Integration Working Tree محلي، وليس mirror destination.
+
+أي Snapshot غير مرتبط بــ Git commit محدد لا يُعامل كمصدر تطوير أو Restore مرجعي.
+
+## 2. MAIN وALL isolation
+
+المسارات المرجعية المعزولة هي:
 
 ```text
-GitHub / origin/main
+ORION_NEXT_MAIN
+ORION_NEXT_ALL_BRANCHES
 ```
 
-النتيجة المطلوبة هي **Exact Mirror**:
-
-> كل مسار موجود في `origin/main` يجب أن يكون موجودًا محليًا بالمحتوى نفسه، وكل مسار غير موجود في `origin/main` يجب ألا يبقى محليًا، باستثناء `.git` لأنه بيانات Git الداخلية الخاصة بالمستودع.
-
-يستخدم MAIN:
-
-1. `git fetch --prune origin main` دون checkout أو تغيير الفرع الحالي.
-2. `git archive origin/main` لبناء snapshot رسمي مستقل عن working tree.
-3. manifest محليًا مع استثناء `.git` فقط.
-4. SHA-256 لمحتوى الملفات.
-5. نقل الملفات الجديدة وتحديث المتغيرة فقط.
-6. حذف كل المسارات الزائدة محليًا.
-7. معالجة collisions بين file/directory/symlink.
-8. verification كامل بعد materialization.
-
-لا يظهر `MAIN SUCCESS` إلا إذا كان:
+ولا يجوز لأي مسار MAIN/ALL أن يكتب فوق:
 
 ```text
-LOCAL_MANIFEST (excluding .git)
-        ==
-ORIGIN_MAIN_ARCHIVE_MANIFEST
+ORION_NEXT
 ```
 
-أي اختلاف يمنع النجاح.
+أثناء التطوير.
 
-## Independent parity verification
+القواعد المشتركة:
 
-أضيفت أداة مستقلة للغرض الوحيد التالي:
+- لا `checkout` أو `switch` إلى فرع بهدف materialization.
+- لا `reset --hard`.
+- لا `clean -fdx`.
+- لا mirror يومي destructive داخل `ORION_NEXT`.
+- لا branch يكتب في target فرع آخر.
+- file/directory/symlink collisions لا تتجاوز حدود staging.
+- لا target داخل `PROJECT_ROOT` أو داخل parent Git checkout.
+
+## 3. MAIN mirror — legacy/reference isolation
+
+الأدوات القديمة التي كانت تعرّف MAIN باعتباره كاتبًا داخل `ORION_NEXT` محفوظة كـ`LEGACY / FROZEN`.
+
+أما المسار الآمن الحالي فيستخدم snapshot معزولًا ومتحققًا. `tools/orion_main_sync_verify.py` يبقى verifier مستقلًا ولا يكتب إلى المشروع.
+
+عند وجود حاجة إلى MAIN mirror مرجعي، تكون الوجهة المعزولة خارج `ORION_NEXT`، ويجب أن يطابق manifest المصدر كاملًا.
+
+## 4. ALL mirror — legacy/reference isolation
+
+ALL يحتفظ بفكرة snapshots مستقلة لكل branch، لكن لا يملك صلاحية الكتابة في `ORION_NEXT`.
+
+التصميم لا يعتمد على `git worktree` ولا على تبديل الفرع الحالي. الأدوات القديمة وواجهات GUI التي تقوم بالنقل التقليدي تبقى `LEGACY / FROZEN` ما لم يصدر قرار قيادة مختلف.
+
+## 5. Final Materialization — المسار المعتمد
+
+Final Materialization ليست Sync يومية وليست Restore من Local snapshot.
+
+العقد هو:
 
 ```text
-tools/orion_main_sync_verify.py
+GitHub exact commit
+        ↓
+Fetch exact commit object
+        ↓
+git archive <commit>
+        ↓
+Clean isolated staging
+        ↓
+Complete manifest + SHA-256 parity
+        ↓
+Atomic target replacement
+        ↓
+Complete target parity
 ```
 
-هذه الأداة **Read-Only** ولا تعدّل المشروع. تقوم بـ:
-
-1. `git fetch --prune origin main`.
-2. تحديد commit الهدف من `origin/main`.
-3. بناء archive snapshot من `git archive origin/main`.
-4. حساب manifest محلي مستقل مع استثناء `.git` فقط.
-5. مقارنة كل المسارات والبصمات SHA-256.
-6. إظهار `RESULT: EXACT MATCH` فقط عند التطابق الكامل.
-7. إظهار `FAILED` مع المسارات الناقصة أو الزائدة أو المختلفة عند وجود أي خلل.
-
-وبذلك أصبح لدينا مستويان مستقلان من الحماية:
+المحرك المعتمد:
 
 ```text
-Sync MAIN
-    ↓
-Materialize
-    ↓
-Internal exact verification
-    ↓
-MAIN SUCCESS
-
-ثم عند الحاجة للتحقق المستقل:
-
-orion_main_sync_verify.py
-    ↓
-Fresh fetch
-    ↓
-Fresh archive
-    ↓
-Fresh local manifest
-    ↓
-EXACT MATCH / FAILED
+tools/orion_final_materialize.py
 ```
 
-هذا يمنع اعتمادنا على عداد الملفات أو commit hash وحدهما، ويجعل السؤال "هل النقل تم طبق الأصل؟" قابلًا للإجابة آليًا ببصمة محتوى كاملة.
+### المدخلات
 
-## ALL — التصميم المعتمد
+- `--commit`: SHA كامل من 40 خانة.
+- `--target`: مسار خارجي عن `ORION_NEXT`.
+- `--remote`: افتراضيًا `origin`، ويجب أن يشير إلى مستودع ORION_NEXT الرسمي.
 
-تم تثبيت تصميم ALL الحالي بعد نجاح اختبارات المزامنة.
+### المخرجات
 
-التصميم **لا يستخدم `git worktree` نهائيًا**.
-
-بدلًا من ذلك:
-
-1. `git fetch --prune origin +refs/heads/*:refs/remotes/origin/*` يتم مرة واحدة لجلب جميع الفروع.
-2. لكل فرع يتم استخدام `git archive origin/<branch>` لاستخراج snapshot كامل للفرع.
-3. يتم وضع المحتوى مباشرة داخل مجلد مستقل للفرع تحت:
+نجاح العملية لا يُعلن إلا بعد:
 
 ```text
-C:\Users\badee\Desktop\ORION_NEXT_ALL_BRANCHES\
-    main\
-    future__opportunity-evaluation-contract__...
-    phase2__core-intelligence-hardening__...
-    ops__...
+SOURCE: GitHub exact commit <SHA>
+PARITY: EXACT MATCH
+RESULT: FINAL MATERIALIZATION SUCCESS
 ```
 
-4. لا يتم تبديل `PROJECT_ROOT` إلى أي فرع أثناء ALL.
-5. لا يتم تنفيذ `reset --hard` أو `clean -fdx` أو `worktree add` داخل المشروع الرئيسي.
+## 6. Atomicity / rollback
 
-## ALL — المزامنة الفعلية
+لا يكتب المحرك مباشرة في target أثناء بناء snapshot.
 
-لكل فرع يتم:
+يُنشأ staging جديد، ثم:
 
-- قراءة snapshot الفعلي من GitHub عبر `git archive`.
-- مقارنة المحتوى الموجود محليًا مع snapshot الهدف باستخدام SHA-256.
-- نقل الملفات الجديدة فعليًا.
-- تحديث الملفات التي تغير محتواها فعليًا.
-- حذف الملفات التي لم تعد موجودة في الفرع الهدف.
-- الإبقاء على الملفات المطابقة دون إعادة كتابتها لتقليل الزمن والـI/O.
+1. يُستخرج archive داخله.
+2. يُتحقق من المسارات والأنواع والبصمات.
+3. بعد نجاح staging فقط يُنقل target القديم إلى backup مؤقت.
+4. يُنقل staging إلى target.
+5. تُعاد parity كاملة.
+6. عند النجاح يُحذف backup.
+7. عند الفشل يُعاد target السابق ويُحذف staging غير المكتمل.
 
-وبالتالي فإن كل مجلد فرع يصبح **Exact Mirror** لمحتوى GitHub لذلك الفرع.
+وبذلك لا توجد حالة نجاح تعتمد على نقل جزئي.
 
-## ALL — الحماية والعزل
+## 7. Parity contract
 
-كل فرع له مجلد مستقل.
+المقارنة ليست بعدد الملفات فقط.
 
-لا يجوز أن يكتب فرع في مجلد فرع آخر، ولا أن يكتب ALL فوق:
+لكل path تتم مطابقة:
 
 ```text
-C:\Users\badee\Desktop\ORION_NEXT
+type
+size
+SHA-256(content)
 ```
 
-## MAIN وALL — الفصل النهائي
+وتشمل directories وfiles وsymlinks المدعومة.
+
+أي:
 
 ```text
-MAIN:
-GitHub/main → PROJECT_ROOT
-
-ALL:
-GitHub/all branches → ALL_ROOT/<branch>
+missing path   → FAIL
+extra path     → FAIL
+different type → FAIL
+different size → FAIL
+different hash → FAIL
 ```
 
-القواعد:
+## 8. Collision safety
 
-- MAIN لا يستخدم `ALL_ROOT`.
-- ALL لا يستخدم `PROJECT_ROOT` كوجهة.
-- MAIN لا يغير أو يعيد تصميم محرك ALL.
-- ALL لا يكتب فوق المشروع الرئيسي.
-- لا يوجد `git worktree` في أي من المسارين.
-
-## إحصائيات الشاشة
-
-واجهة الأداة تعرض:
-
-- `BRANCHES`
-- `FILES`
-- `ADDED`
-- `UPDATED`
-- `REMOVED`
-
-في MAIN:
+إذا كان المصدر يحتوي على تعارض من نوع:
 
 ```text
-BRANCHES = 1
-FILES    = عدد ملفات origin/main
-ADDED    = الملفات التي أضيفت محليًا
-UPDATED  = الملفات التي اختلف محتواها وتم تحديثها
-REMOVED  = الملفات الزائدة محليًا التي أزيلت لتحقيق التطابق
+file ↔ directory
+file ↔ symlink
+directory ↔ symlink
 ```
 
-## الأدوات
+فلا يجوز الكتابة فوق `ORION_NEXT` ولا target أثناء بناء snapshot. المعالجة تتم داخل staging فقط، وأي archive غير صالح أو غير قابل للتمثيل بأمان يؤدي إلى رفض العملية.
 
-التصميم النهائي للأداة:
+## 9. الأدوات والحالة
 
 ```text
-tools/
-    orion_restore_gui.pyw       # محرك ALL المجمد
-    orion_restore_main_gui.pyw  # واجهة MAIN + ALL
-    orion_main_sync_verify.py   # مستقل: exact parity verification
-    orion_restore_gui.vbs       # Windows launcher
+tools/orion_sync.bat              LEGACY / FROZEN
+tools/orion_main_sync.bat         LEGACY / FROZEN
+tools/orion_all_sync.bat          LEGACY / FROZEN
+tools/orion_restore_gui.pyw       LEGACY / FROZEN
+tools/orion_restore_main_gui.pyw  compatibility launcher
+tools/orion_sync_safe.py          guarded legacy/reference controller
+tools/orion_sync_guard.py         safety guard
+tools/orion_main_sync_verify.py   independent MAIN parity verifier
+tools/orion_final_materialize.py  ACTIVE final materialization engine
 ```
 
-## النتيجة المعتمدة
+وجود الأدوات القديمة لا يجعلها مسار التطوير الجديد.
 
-`MAIN` =
+## 10. Definition of Done لهذا العقد
 
-**Fetch origin/main → Archive snapshot → Compare SHA-256 → Add new files → Update changed files → Remove all extra local paths → Verify exact manifest → SUCCESS**
+يُعتبر المسار مكتملًا عندما تكون القواعد التالية قابلة للتحقق:
 
-والتحقق المستقل =
-
-**Fresh fetch → Fresh archive snapshot → Fresh local manifest → EXACT MATCH / FAILED**
-
-و`ALL` =
-
-**Discover all branches → Batch Fetch → Archive each branch → Compare SHA-256 → Transfer only required files → Remove obsolete files → Resolve Windows path-type collisions → Show per-branch statistics**.
-
-يظل نجاح ALL baseline محميًا، ويظل MAIN هو المسار الوحيد الذي يجوز له تحديث `PROJECT_ROOT`.
+- GitHub commit محدد هو المصدر.
+- `ORION_NEXT` لا يُستخدم كهدف mirror أثناء التطوير.
+- MAIN وALL معزولان عن Development Working Tree.
+- لا cross-branch contamination.
+- لا destructive sync غير مقصود.
+- لا file/directory collision يتجاوز staging.
+- لا نقل لملفات خارج target snapshot.
+- staging parity وtarget parity كاملتان.
+- rollback موجود عند فشل post-install verification.
+- الأدوات القديمة باقية كـLEGACY/FROZEN.
+- لا تغيير في Production Logic أو business semantics.
