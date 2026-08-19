@@ -1,0 +1,44 @@
+name: ORION Developer 5 Experiment Harness
+
+on:
+  push:
+    branches:
+      - developer5/experiment-harness-phase-a
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  experiment-harness:
+    name: Phase A experiment harness
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout exact repository revision
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Repository parity gate
+        env:
+          GITHUB_SHA: ${{ github.sha }}
+        run: python tools/verify_repository_parity.py
+
+      - name: Experiment harness contract tests
+        env:
+          PYTHONPATH: .
+        run: python -m unittest tools.tests.test_experiment_harness -v
+
+      - name: Final repository parity gate
+        env:
+          GITHUB_SHA: ${{ github.sha }}
+        run: python tools/verify_repository_parity.py
