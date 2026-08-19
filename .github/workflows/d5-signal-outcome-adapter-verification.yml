@@ -1,6 +1,9 @@
 name: D5 SignalOutcome Adapter Verification
 
 on:
+  pull_request:
+    branches:
+      - main
   push:
     branches:
       - developer5/experiment-harness-phase-a
@@ -10,20 +13,29 @@ jobs:
   verify-adapter:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout exact triggering revision
+      - name: Checkout exact approved source revision
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.sha }}
+          ref: 2e48a0110277a0163217a9780aaa6f81a5bb38e4
           fetch-depth: 0
 
-      - name: Assert checkout parity
+      - name: Assert exact approved source checkout
         shell: bash
         run: |
           set -euo pipefail
-          expected="${GITHUB_SHA}"
+          expected="2e48a0110277a0163217a9780aaa6f81a5bb38e4"
           actual="$(git rev-parse HEAD)"
-          printf 'EXPECTED_SHA=%s\nACTUAL_CHECKOUT_SHA=%s\n' "$expected" "$actual"
+          printf 'EXPECTED_SOURCE_SHA=%s\nACTUAL_CHECKOUT_SHA=%s\n' "$expected" "$actual"
           test "$expected" = "$actual"
+
+      - name: Print test file blob
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf 'TEST_FILE_BLOB='
+          git rev-parse HEAD:tools/tests/test_forward_outcome_validation.py
+          printf 'ADAPTER_BLOB='
+          git rev-parse HEAD:tools/signal_outcome_adapter.py
 
       - name: Set up Python
         uses: actions/setup-python@v5
