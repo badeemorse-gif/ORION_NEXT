@@ -1,7 +1,7 @@
 # ORION — CONTROL INDEX
 
-الإصدار: 1.5
-الحالة: ACTIVE
+الإصدار: 1.6  
+الحالة: ACTIVE  
 المشروع: ORION
 
 ## الوثائق الرسمية ومالك كل معلومة
@@ -34,6 +34,8 @@
   المشاكل المؤكدة فقط.
 - RESTORE/ALL SYNC CONTRACT → `ORION_RESTORE_ALL_BRANCH_SYNC.md`
   عقد MAIN/ALL والعزل والمرايا.
+- FINAL MATERIALIZATION CONTRACT → `ORION_FINAL_MATERIALIZATION_CONTRACT.md`
+  العقد التنفيذي للـexact-commit materialization والـparity والـrollback.
 
 ## قاعدة المصدر الواحد
 
@@ -44,7 +46,7 @@
 - رسالة ORION عادية → GPT EXECUTION RULES + CONTROL INDEX.
 - أمر 1 → EXECUTION RULES + CONTROL INDEX + PROJECT STATE + ROADMAP ثم الوثائق المطلوبة فقط.
 - مراجعة تطوير → EXECUTION RULES + CONTROL INDEX + الحالة عند الحاجة + ARCHITECTURE/FINDINGS والكود المتأثر.
-- Workflow/Sync → EXECUTION RULES + CONTROL INDEX + WORK PROTOCOL + RESTORE/ALL SYNC CONTRACT عند تأثر MAIN/ALL.
+- Workflow/Sync → EXECUTION RULES + CONTROL INDEX + WORK PROTOCOL + RESTORE/ALL SYNC CONTRACT + FINAL MATERIALIZATION CONTRACT عند تأثر MAIN/ALL أو finalization.
 - مراجعة شاملة/تعارض → مراجعة موسعة للوثائق والكود والاختبارات المتأثرة.
 
 ## سياسة التطوير والمزامنة الحالية
@@ -57,7 +59,7 @@ GITHUB هو مصدر الحقيقة أثناء التطوير.
 
 `C:\Users\badee\Desktop\ORION_NEXT` هي بيئة Development / Integration محلية، وليست Sandbox لمزامنة كل فرع.
 
-عند اكتمال حالة التكامل فقط يتم إنشاء نسخة محلية نظيفة ومحددة بالـbranch/commit ثم تنفيذ Full Verification / E2E / parity.
+عند اكتمال حالة التكامل فقط يتم إنشاء نسخة محلية نظيفة ومحددة بالـcommit ثم تنفيذ Full Verification / E2E / parity. مسار finalization النشط هو exact-commit materialization إلى target معزول، ثم promotion إلى بيئة التكامل بقرار قيادة منفصل.
 
 لا يجوز لمطور ChatGPT الادعاء بأنه شغّل اختبارًا محليًا دون تنفيذ فعلي.
 
