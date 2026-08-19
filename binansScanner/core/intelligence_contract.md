@@ -1,0 +1,1 @@
+The Core Intelligence contract helpers are the semantic guard used by contract tests and can be invoked at orchestration boundaries without changing domain models. They reject non-finite values, fail-closed warnings, incomplete Profile timeframes, score/category contradictions, and decision/state/score contradictions.

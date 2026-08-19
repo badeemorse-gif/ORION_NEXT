@@ -1,0 +1,100 @@
+name: ORION Phase A Runtime Observation
+# Exact-head verification trigger marker; no runtime semantics changed.
+# Experimental D1 runtime evidence gate
+# Verification trigger: exact-head run required on every branch push.
+on:
+  push:
+    branches: [phase-a/experimental-observation-assembly]
+  workflow_dispatch:
+jobs:
+  phase-a-runtime:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout exact revision
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+      - name: Assert exact checkout SHA
+        env:
+          EXPECTED_SHA: ${{ github.sha }}
+        run: |
+          ACTUAL_CHECKOUT_SHA="$(git rev-parse HEAD)"
+          echo "EXPECTED_SHA=$EXPECTED_SHA"
+          echo "ACTUAL_CHECKOUT_SHA=$ACTUAL_CHECKOUT_SHA"
+          test "$EXPECTED_SHA" = "$ACTUAL_CHECKOUT_SHA"
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install numpy pandas pandas-ta python-binance requests
+          if [ -f binansScanner/requirements.txt ]; then pip install -r binansScanner/requirements.txt; fi
+      - name: Repository parity before
+        env:
+          GITHUB_SHA: ${{ github.sha }}
+        run: python tools/verify_repository_parity.py
+      - name: D1 dedicated tests
+        working-directory: binansScanner
+        env:
+          PYTHONPATH: .:..
+        run: python -m unittest tests.test_orion_phase_a_runtime_observer tests.test_orion_phase_a_runtime_lookback -v
+      - name: Canonical primary timeframe and D3 deferred guard
+        working-directory: binansScanner
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import ast
+          p = Path("../tools/orion_phase_a_runtime_observer.py")
+          source = p.read_text(encoding="utf-8")
+          tree = ast.parse(source)
+          assert "_select_primary_timeframe" in source
+          assert "for timeframe in timeframes:" in source
+          assert "if timeframe != primary:" in source
+          assert "_PRIMARY_TIMEFRAME_UNAVAILABLE_REASON" in source
+          forbidden_modules = {
+              "engines.opportunity_relative_ranking",
+              "models.opportunity",
+          }
+          for node in ast.walk(tree):
+              if isinstance(node, ast.Import):
+                  for alias in node.names:
+                      assert alias.name not in forbidden_modules, alias.name
+              elif isinstance(node, ast.ImportFrom):
+                  assert node.module not in forbidden_modules, node.module
+          for forbidden in (
+              "OpportunityRelativeRanker",
+              "OpportunityRankingInput",
+              "Opportunity(",
+              "build_ranking_inputs",
+              "ranker.rank",
+          ):
+              assert forbidden not in source, forbidden
+          print("CANONICAL_PRIMARY_TIMEFRAME_AND_D3_DEFERRED_GUARD=PASS")
+          PY
+      - name: Phase A targeted verification
+        working-directory: binansScanner
+        env:
+          PYTHONPATH: .:..
+        run: python -m unittest tests.test_opportunity_relative_ranking_clean tests.test_signal_journal_contract tests.test_signal_observation_workflow tests.test_market_data_quality_contract tests.test_binance_mapper_quality -v
+      - name: Actual ORION runtime observation
+        env:
+          GITHUB_SHA: ${{ github.sha }}
+        run: |
+          rm -rf /tmp/orion_phase_a_artifacts
+          python tools/orion_phase_a_runtime_observer.py --baseline c54dc67792776da905a3efb1f667c1869c15db3d --artifact-root /tmp/orion_phase_a_artifacts --runtime-commit "$GITHUB_SHA"
+      - name: Repository parity after
+        env:
+          GITHUB_SHA: ${{ github.sha }}
+        run: python tools/verify_repository_parity.py
+      - name: Working tree clean
+        run: test -z "$(git status --porcelain)"
+      - name: Upload runtime evidence
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: orion-phase-a-runtime-observation-${{ github.sha }}
+          path: /tmp/orion_phase_a_artifacts/
+          if-no-files-found: error
