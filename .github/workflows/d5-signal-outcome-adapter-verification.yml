@@ -1,0 +1,54 @@
+name: D5 SignalOutcome Adapter Verification
+
+on:
+  push:
+    branches:
+      - developer5/experiment-harness-phase-a
+
+jobs:
+  verify-adapter:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout exact triggering revision
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+
+      - name: Assert checkout parity
+        shell: bash
+        run: |
+          set -euo pipefail
+          expected="${GITHUB_SHA}"
+          actual="$(git rev-parse HEAD)"
+          printf 'EXPECTED_SHA=%s\nACTUAL_CHECKOUT_SHA=%s\n' "$expected" "$actual"
+          test "$expected" = "$actual"
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install D5 test dependencies
+        run: python -m pip install --upgrade pip
+
+      - name: Run D5 adapter and forward-outcome tests
+        env:
+          PYTHONPATH: .
+        run: |
+          set -o pipefail
+          python -m unittest tools.tests.test_forward_outcome_validation -v 2>&1 | tee d5-adapter-test.log
+
+      - name: Assert working tree clean
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -z "$(git status --porcelain)"
+
+      - name: Upload D5 test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: d5-signal-outcome-adapter-verification-${{ github.sha }}
+          path: d5-adapter-test.log
+          if-no-files-found: error
