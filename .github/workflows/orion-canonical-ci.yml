@@ -1,0 +1,106 @@
+name: ORION Canonical CI
+
+on:
+  push:
+    branches:
+      - main
+      - 'developer5/**'
+      - 'verification/**'
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  canonical-verification:
+    name: Canonical Verification
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: binansScanner
+
+    steps:
+      - name: Resolve exact source SHA
+        id: source
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${GITHUB_EVENT_NAME}" == "pull_request" ]]; then
+            expected_sha="${{ github.event.pull_request.head.sha }}"
+          else
+            expected_sha="${GITHUB_SHA}"
+          fi
+          printf 'EXPECTED_SHA=%s\n' "$expected_sha"
+          printf 'expected_sha=%s\n' "$expected_sha" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout exact source revision
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.source.outputs.expected_sha }}
+          fetch-depth: 0
+
+      - name: Assert exact checkout parity
+        id: parity
+        shell: bash
+        run: |
+          set -euo pipefail
+          expected="${{ steps.source.outputs.expected_sha }}"
+          actual="$(git rev-parse HEAD)"
+          printf 'EXPECTED_SHA=%s\nACTUAL_SHA=%s\n' "$expected" "$actual"
+          test "$expected" = "$actual"
+          {
+            printf 'repository=badeemorse-gif/ORION_NEXT\n'
+            printf 'workflow=ORION Canonical CI\n'
+            printf 'run_id=%s\n' "$GITHUB_RUN_ID"
+            printf 'trigger=%s\n' "$GITHUB_EVENT_NAME"
+            printf 'expected_sha=%s\n' "$expected"
+            printf 'actual_sha=%s\n' "$actual"
+          } > ../canonical-ci-metadata.txt
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: binansScanner/requirements.txt
+
+      - name: Install verification dependencies
+        run: python -m pip install -r requirements.txt
+
+      - name: Run canonical production verification
+        shell: bash
+        run: |
+          set -o pipefail
+          python verify.py -v 2>&1 | tee ../canonical-ci-test-results.txt
+
+      - name: Record test result
+        shell: bash
+        run: |
+          printf 'test_command=python verify.py -v\n' >> ../canonical-ci-metadata.txt
+          printf 'test_result=PASS\n' >> ../canonical-ci-metadata.txt
+
+      - name: Assert working tree clean
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -z "$(git status --porcelain)"
+          printf 'working_tree=clean\n' >> ../canonical-ci-metadata.txt
+
+      - name: Record evidence timestamp
+        shell: bash
+        run: |
+          printf 'timestamp=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> ../canonical-ci-metadata.txt
+
+      - name: Upload canonical CI evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: orion-canonical-ci-evidence-${{ github.run_id }}
+          path: |
+            canonical-ci-metadata.txt
+            canonical-ci-test-results.txt
+          if-no-files-found: error
