@@ -1,6 +1,6 @@
 # ORION — Sync & Final Materialization Policy
 
-الإصدار: 1.0
+الإصدار: 2.0  
 الحالة: ACTIVE
 
 ## 1. مصدر الحقيقة
@@ -13,7 +13,7 @@ GitHub = Source of Truth
 
 المطورون داخل ChatGPT يعملون على فروع GitHub ويكملون حزمًا كاملة داخل نطاقاتهم.
 
-لا تستخدم GITHUB → LOCAL كمزامنة يومية بعد كل تعديل صغير.
+لا تستخدم GITHUB → LOCAL كمزامنة يومية بعد كل تعديل صغير، ولا تعتبر أي Snapshot غير Git مرجعًا للتطوير.
 
 ## 2. بيئة ORION_NEXT المحلية
 
@@ -23,9 +23,9 @@ C:\Users\badee\Desktop\ORION_NEXT
 
 هذه هي بيئة Development / Integration المحلية.
 
-لا تعتبر وجهة لمرايا MAIN/ALL أثناء التطوير، ولا يجوز لأي Mirror مرجعي أن يكتب فوقها.
+أثناء البناء لا يجوز لأي sync/restore/mirror أن يكتب فوقها أو يستخدمها كوجهة لفرع آخر. لا توجد مزامنة تلقائية إلى هذه البيئة أثناء التطوير.
 
-## 3. نموذج تطوير المطورين
+## 3. نموذج التطوير
 
 ```text
 Architecture Boundary
@@ -43,54 +43,106 @@ Commit to GitHub Branch
 Final Report
 ```
 
-لا يحتاج المطور إلى مزامنة Local أو الرد بعد كل ملف.
+لا يحتاج المطور إلى نقل Local أثناء الحزمة. إذا ظهر blocker خارج نطاقه، يوثقه ولا يصلحه من تلقاء نفسه.
 
-إذا احتاج إلى blocker حقيقي خارج نطاقه، يتوقف ويبلغ القيادة.
+## 4. MAIN / ALL isolation
 
-## 4. الاختبارات
+`ORION_NEXT_MAIN` و`ORION_NEXT_ALL_BRANCHES` مرايا مرجعية معزولة وليستا Development Working Trees.
 
-يمكن للمطور كتابة Contract Tests وملفات الاختبار مع الحزمة.
+القواعد الصارمة:
 
-لكن مطور ChatGPT لا يدعي تنفيذ اختبار محلي لم ينفذه فعليًا.
+- MAIN لا يكتب `ORION_NEXT` أثناء التطوير.
+- ALL لا يكتب `ORION_NEXT` إطلاقًا.
+- لا يسمح لأي فرع بالكتابة داخل مجلد فرع آخر.
+- لا يوجد `checkout`, `switch`, `reset --hard`, أو `clean -fdx` ضمن مسار materialization.
+- file/directory/symlink collisions يجب أن تفشل بأمان أو تُعالج داخل staging فقط.
 
-Full local verification وE2E تؤجل إلى Integration Gate أو بوابة تتطلب تشغيلًا محليًا فعليًا.
+## 5. المزامنة القديمة
 
-## 5. MAIN وALL
-
-`ORION_NEXT_MAIN` و`ORION_NEXT_ALL_BRANCHES` هما مرايا مرجعية معزولة.
-
-لا تستخدمهما كـDevelopment Working Trees، ولا تشغّل اختبارات المشروع النهائي منهما.
-
-## 6. المزامنة القديمة
-
-`tools/orion_sync.bat` وأي Workflow آلي يعتمد على GITHUB → LOCAL بعد كل تعديل صغير يعتبر:
+الأدوات القديمة مثل `tools/orion_sync.bat` وواجهات restore/sync التي تعتمد على النقل اليومي تعتبر:
 
 ```text
 LEGACY / FROZEN
 ```
 
-ولا يجوز استخدامه كمسار التطوير الجديد.
+وجودها للحفاظ على lineage/compatibility ولا يعني أنها المسار المعتمد للتطوير أو finalization، ما لم يصدر قرار قيادة موثق.
 
-## 7. Final Materialization
+## 6. Final Materialization — العقد المعتمد
 
-عند اكتمال الحزم وقرار التكامل فقط:
+عند اكتمال التكامل وصدور قرار materialization فقط:
 
 ```text
-GitHub Integrated State
-↓
-Clean Final Materialization
-↓
-Local ORION_NEXT
-↓
-Full Verification / E2E / Parity
+GitHub exact commit
+        ↓
+Fetch exact commit object
+        ↓
+git archive <commit>
+        ↓
+Clean isolated staging
+        ↓
+Manifest + SHA-256 parity verification
+        ↓
+Atomic install into external target
+        ↓
+Final parity verification
 ```
 
-يجب أن تكون النسخة المحلية النهائية مبنية من branch/commit محدد ونسخة نظيفة.
+المسار التنفيذي المعتمد هو:
 
-## 8. السلامة
+```text
+tools/orion_final_materialize.py
+```
 
-لا توجد أداة Mirror تملك صلاحية الكتابة في Development Working Tree.
+ويجب إعطاؤه **40-character commit SHA** محددًا. لا يقبل branch name باعتباره مصدرًا نهائيًا، ولا يعتمد على working tree الحالي كمصدر snapshot.
 
-لا توجد عمليات مزامنة يومية destructive داخل `ORION_NEXT`.
+الهدف الافتراضي `ORION_NEXT_FINAL` خارج `ORION_NEXT`، ويمكن تحديد target خارجي صريح عند بوابة التكامل.
 
-أي تغيير جوهري في سياسة المزامنة يحتاج قرار قيادة موثق.
+## 7. Safe finalization invariants
+
+قبل أي كتابة:
+
+1. يتم التحقق من أن checkout المصدر هو مستودع ORION_NEXT وأن `origin` يشير إلى GitHub الرسمي.
+2. يتم جلب commit المطلوب من `origin` والتحقق من مطابقته حرفيًا.
+3. يتم إنشاء archive من commit نفسه، وليس من working tree.
+4. يتم إنشاء staging جديد ومعزول.
+5. تتم مقارنة manifest الكامل: paths + type + size + SHA-256.
+6. لا يُستبدل target الموجود إلا بعد نجاح parity داخل staging.
+7. بعد التثبيت تتم parity ثانية على target.
+8. عند الفشل يعاد target السابق، ولا يترك staging/backup غير مكتملين.
+
+## 8. Restore semantics
+
+Restore في هذا السياق يعني **materialize snapshot Git محدد**، وليس إعادة إحياء حالة Local قديمة.
+
+لذلك:
+
+```text
+GitHub commit → snapshot → isolated target
+```
+
+وليس:
+
+```text
+Local snapshot → ORION_NEXT
+```
+
+## 9. Verification
+
+`tools/orion_main_sync_verify.py` يبقى verifier مستقلًا للـMAIN mirror المعزول.
+
+التحقق النهائي للـmaterialization يستخدم نفس عقد parity داخل `orion_final_materialize.py` ويجب أن ينتهي إلى:
+
+```text
+PARITY: EXACT MATCH
+RESULT: FINAL MATERIALIZATION SUCCESS
+```
+
+لا تُعتبر عملية ناجحة اعتمادًا على عدد الملفات أو commit label فقط.
+
+## 10. الملكية
+
+هذا المسار يملك Synchronization Architecture / Restore / MAIN-ALL isolation / Final Materialization / Parity Safety فقط.
+
+لا يغيّر Core Intelligence أو Execution أو Opportunity أو Score أو Decision أو Reporting business semantics.
+
+أي تغيير جوهري في السياسة يحتاج قرار قيادة موثق.

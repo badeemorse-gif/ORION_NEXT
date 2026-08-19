@@ -1,0 +1,36 @@
+name: ORION Developer 5 Forward Outcomes
+
+on:
+  push:
+    branches:
+      - developer5/experiment-harness-phase-a
+  pull_request:
+
+jobs:
+  forward-outcomes:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout exact repository revision
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Repository parity gate
+        env:
+          GITHUB_SHA: ${{ github.sha }}
+        run: python tools/verify_repository_parity.py
+
+      - name: Forward outcome validation tests
+        env:
+          PYTHONPATH: .
+        run: python -m unittest tools.tests.test_experiment_harness tools.tests.test_forward_outcome_validation -v
+
+      - name: Final repository parity gate
+        env:
+          GITHUB_SHA: ${{ github.sha }}
+        run: python tools/verify_repository_parity.py

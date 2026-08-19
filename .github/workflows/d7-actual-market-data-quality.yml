@@ -1,0 +1,194 @@
+name: D7 actual market data quality evidence
+
+on:
+  push:
+    branches: [developer7-market-data-quality]
+
+permissions:
+  contents: read
+
+jobs:
+  gate:
+    name: D7 Actual Market Data Quality Gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install HTTP client
+        run: python -m pip install requests
+
+      - name: Run actual Binance evidence gate
+        env:
+          PYTHONUNBUFFERED: "1"
+        run: |
+          cat > /tmp/d7_gate.py <<'PY'
+          from __future__ import annotations
+          import json, math, time
+          from datetime import datetime, timezone
+          from decimal import Decimal, InvalidOperation
+          import requests
+
+          BASE = "https://data-api.binance.vision/api/v3"
+          SYMBOLS = ["BTCUSDT", "ETHUSDT", "BNBUSDT", "SOLUSDT", "ADAUSDT"]
+          INTERVALS = {"1h": 3_600_000, "4h": 14_400_000, "1d": 86_400_000}
+          LIMIT = 101
+
+          s = requests.Session()
+          s.headers.update({"User-Agent": "ORION-NEXT-D7-Actual-Data-Quality/1.0"})
+
+          def dec(x: object) -> Decimal:
+              try:
+                  d = Decimal(str(x))
+              except (InvalidOperation, ValueError, TypeError):
+                  raise ValueError(f"NON_NUMERIC_OHLCV:{x!r}")
+              if not d.is_finite():
+                  raise ValueError(f"NON_FINITE_OHLCV:{x!r}")
+              return d
+
+          def floor_open(now_ms: int, step: int) -> int:
+              return (now_ms // step) * step
+
+          server = s.get(f"{BASE}/time", timeout=15).json()["serverTime"]
+          now_ms = int(server)
+          now = datetime.fromtimestamp(now_ms/1000, tz=timezone.utc)
+          print(f"EVIDENCE_TIME_UTC={now.isoformat()}")
+
+          results = []
+          for symbol in SYMBOLS:
+              symbol_result = {"Symbol": symbol, "timeframes": {}, "exclusion": [], "liquidity": None}
+              try:
+                  info = s.get(f"{BASE}/exchangeInfo", params={"symbol": symbol}, timeout=15).json()
+                  entry = next((x for x in info.get("symbols", []) if x.get("symbol") == symbol), None)
+                  if not entry or entry.get("status") != "TRADING" or entry.get("quoteAsset") != "USDT":
+                      symbol_result["exclusion"].append("PROVENANCE_INVALID")
+                  else:
+                      symbol_result["provenance"] = {"source": BASE, "status": entry.get("status"), "baseAsset": entry.get("baseAsset"), "quoteAsset": entry.get("quoteAsset")}
+                  try:
+                      t = s.get(f"{BASE}/ticker/24hr", params={"symbol": symbol}, timeout=15).json()
+                      symbol_result["liquidity"] = {"quoteVolume24h": str(t.get("quoteVolume")), "trades24h": t.get("count")}
+                  except Exception:
+                      symbol_result["liquidity"] = {"quoteVolume24h": None, "trades24h": None}
+
+                  for interval, step in INTERVALS.items():
+                      tf = {"status": "EXCLUDE", "count": 0, "freshness": None, "completeness": None, "reasons": []}
+                      try:
+                          raw = s.get(f"{BASE}/klines", params={"symbol": symbol, "interval": interval, "limit": LIMIT}, timeout=15).json()
+                          if not isinstance(raw, list) or len(raw) < 2:
+                              tf["reasons"].append("MISSING_REQUIRED_TIMEFRAME")
+                              symbol_result["timeframes"][interval] = tf
+                              continue
+                          closed = [r for r in raw if isinstance(r, list) and len(r) >= 12 and int(r[6]) < now_ms]
+                          closed = closed[-100:]
+                          tf["count"] = len(closed)
+                          if len(closed) < 100:
+                              tf["reasons"].append("MISSING_REQUIRED_TIMEFRAME")
+                          opens = [int(r[0]) for r in closed]
+                          if len(opens) != len(set(opens)) or opens != sorted(opens):
+                              tf["reasons"].append("TIMESTAMP_GAP")
+                          deltas = [b-a for a,b in zip(opens, opens[1:])]
+                          if any(d != step for d in deltas):
+                              tf["reasons"].append("CADENCE_VIOLATION")
+                              tf["reasons"].append("TIMESTAMP_GAP")
+                          expected_last = floor_open(now_ms, step) - step
+                          if not opens or opens[-1] != expected_last:
+                              tf["reasons"].append("STALE_DATA")
+                          values=[]
+                          for r in closed:
+                              nums = [dec(r[i]) for i in (1,2,3,4,5)]
+                              o,h,l,c,v = nums
+                              if h < l or h < o or h < c or l > o or l > c:
+                                  tf["reasons"].append("INVALID_OHLC_RELATIONSHIP")
+                              if v < 0:
+                                  tf["reasons"].append("NEGATIVE_VOLUME")
+                              values.append((o,h,l,c,v))
+                          last_close = values[-1][3] if values else None
+                          tf["freshness"] = {"latest_closed_open_utc": datetime.fromtimestamp(opens[-1]/1000,tz=timezone.utc).isoformat() if opens else None, "expected_latest_closed_open_utc": datetime.fromtimestamp(expected_last/1000,tz=timezone.utc).isoformat()}
+                          tf["completeness"] = {"evidence_window_closed_candles": len(closed), "expected": 100}
+                          tf["last_close"] = str(last_close) if last_close is not None else None
+                          if not tf["reasons"]:
+                              tf["status"] = "PASS"
+                          symbol_result["timeframes"][interval] = tf
+                      except ValueError as exc:
+                          msg = str(exc)
+                          tf["reasons"].append("NON_FINITE_OHLCV" if msg.startswith("NON_FINITE") else "NON_NUMERIC_OHLCV")
+                          symbol_result["timeframes"][interval] = tf
+                      except Exception as exc:
+                          tf["reasons"].append("PROVENANCE_INVALID")
+                          tf["error"] = repr(exc)
+                          symbol_result["timeframes"][interval] = tf
+
+                  # Cross-TF checks: all latest closed windows must share the same UTC exchange boundaries,
+                  # and 4h/1d candles must aggregate the matching 1h candles for the latest closed period.
+                  if all(symbol_result["timeframes"].get(x, {}).get("status") == "PASS" for x in ("1h","4h","1d")):
+                      r1 = s.get(f"{BASE}/klines", params={"symbol": symbol, "interval": "1h", "limit": 26}, timeout=15).json()
+                      closed1 = [r for r in r1 if int(r[6]) < now_ms][-24:]
+                      latest_1d = s.get(f"{BASE}/klines", params={"symbol": symbol, "interval": "1d", "limit": 3}, timeout=15).json()
+                      latest_4h = s.get(f"{BASE}/klines", params={"symbol": symbol, "interval": "4h", "limit": 7}, timeout=15).json()
+                      c1 = [r for r in latest_1d if int(r[6]) < now_ms][-1]
+                      c4 = [r for r in latest_4h if int(r[6]) < now_ms][-1]
+                      # boundary containment
+                      if int(c4[0]) % INTERVALS["4h"] != 0 or int(c1[0]) % INTERVALS["1d"] != 0:
+                          symbol_result["exclusion"].append("CROSS_TIMEFRAME_INCONSISTENCY")
+                      if not closed1 or int(closed1[-1][0]) < int(c1[0]):
+                          symbol_result["exclusion"].append("CROSS_TIMEFRAME_INCONSISTENCY")
+                      # latest 4h aggregation from four 1h candles when aligned
+                      four = [r for r in closed1 if int(r[0]) >= int(c4[0]) and int(r[0]) < int(c4[0])+INTERVALS["4h"]]
+                      if len(four) == 4:
+                          agg = (dec(four[0][1]), max(dec(r[2]) for r in four), min(dec(r[3]) for r in four), dec(four[-1][4]), sum(dec(r[5]) for r in four))
+                          target = (dec(c4[1]), dec(c4[2]), dec(c4[3]), dec(c4[4]), dec(c4[5]))
+                          if agg != target:
+                              symbol_result["exclusion"].append("CROSS_TIMEFRAME_INCONSISTENCY")
+                      # latest daily aggregation when the full 24h 1h window is locally available
+                      one_day = [r for r in closed1 if int(r[0]) >= int(c1[0]) and int(r[0]) < int(c1[0])+INTERVALS["1d"]]
+                      if len(one_day) == 24:
+                          agg1 = (dec(one_day[0][1]), max(dec(r[2]) for r in one_day), min(dec(r[3]) for r in one_day), dec(one_day[-1][4]), sum(dec(r[5]) for r in one_day))
+                          target1 = (dec(c1[1]), dec(c1[2]), dec(c1[3]), dec(c1[4]), dec(c1[5]))
+                          if agg1 != target1:
+                              symbol_result["exclusion"].append("CROSS_TIMEFRAME_INCONSISTENCY")
+                      # scale sanity: all timeframes must represent the same USDT price scale.
+                      closes = [symbol_result["timeframes"][x]["last_close"] for x in ("1h","4h","1d")]
+                      if any(c in (None, "0") for c in closes):
+                          symbol_result["exclusion"].append("SCALE_NORMALIZATION_RISK")
+                      symbol_result["cross_tf"] = "PASS" if "CROSS_TIMEFRAME_INCONSISTENCY" not in symbol_result["exclusion"] else "FAIL"
+                  else:
+                      symbol_result["cross_tf"] = "NOT_CERTIFIED"
+
+                  if symbol_result["exclusion"]:
+                      symbol_result["eligibility"] = "EXCLUDE"
+                      symbol_result["reason"] = symbol_result["exclusion"][0]
+                  else:
+                      symbol_result["eligibility"] = "CALIBRATION_ELIGIBLE"
+                      symbol_result["reason"] = ""
+              except Exception as exc:
+                  symbol_result["eligibility"] = "EXCLUDE"
+                  symbol_result["reason"] = "PROVENANCE_INVALID"
+                  symbol_result["error"] = repr(exc)
+              results.append(symbol_result)
+              print(json.dumps({"Symbol":symbol,"1h":symbol_result["timeframes"].get("1h",{}).get("status"),"4h":symbol_result["timeframes"].get("4h",{}).get("status"),"1d":symbol_result["timeframes"].get("1d",{}).get("status"),"Freshness":{k:v.get("freshness") for k,v in symbol_result["timeframes"].items()},"Completeness":{k:v.get("completeness") for k,v in symbol_result["timeframes"].items()},"Exclusion":symbol_result.get("reason"),"Eligibility":symbol_result.get("eligibility"),"24hQuoteVolume":symbol_result.get("liquidity",{}).get("quoteVolume24h")}, ensure_ascii=False))
+
+          eligible = [r["Symbol"] for r in results if r.get("eligibility") == "CALIBRATION_ELIGIBLE"]
+          print("CALIBRATION-VERIFIED-UNIVERSE=" + ",".join(eligible) if eligible else "CALIBRATION-VERIFIED-UNIVERSE=NONE")
+          with open("d7_market_data_quality_evidence.json","w",encoding="utf-8") as f:
+              json.dump({"evidence_time_utc": now.isoformat(), "source": BASE, "results": results, "calibration_verified_universe": eligible}, f, indent=2)
+
+          # The gate deliberately fails when an asset is not certifiable; no data repair/fallback is attempted.
+          if not eligible:
+              raise SystemExit(2)
+          if len(eligible) != len(SYMBOLS):
+              raise SystemExit(1)
+          PY
+          python /tmp/d7_gate.py
+
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: d7-market-data-quality-evidence
+          path: d7_market_data_quality_evidence.json

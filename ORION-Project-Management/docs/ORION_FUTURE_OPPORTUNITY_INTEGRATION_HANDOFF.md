@@ -91,6 +91,23 @@ The current Core contract provides `score`, `category`, `factors`, and `warnings
 - Canonical freshness evidence from Core or an approved upstream boundary.
 - Canonical expected-move evidence only if a future product requirement actually requires that field.
 
+## Future risk / universe policy dependency
+
+The desired future product behavior is documented separately in:
+
+`ORION-Project-Management/docs/ORION_FUTURE_RISK_UNIVERSE_AND_CONTROL_CENTER_POLICY.md`
+
+Key decisions recorded there for later implementation:
+
+- signal existence must remain distinct from trade eligibility;
+- `High` and `Extreme` risk should be representable as risk states even when execution is blocked, subject to a future approved policy change;
+- new listings should not be permanently hidden merely for being new, but insufficient history must block automatic trading until evidence is sufficient;
+- the intended future market universe is Binance Spot `USDT` pairs with explicit eligibility and data-quality gates;
+- blocked signals may feed an `Explosive Watchlist` as analytics-only evidence without becoming execution intent;
+- the future GUI should expose signal, risk, data status, and trade status separately.
+
+This section is **deferred policy only**. It does not override the current fail-closed Opportunity/Profile contracts.
+
 ## Explicit non-scope
 
 - No Core Intelligence modification.
