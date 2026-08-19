@@ -19,9 +19,6 @@ jobs:
     name: Canonical Verification
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    defaults:
-      run:
-        working-directory: binansScanner
 
     steps:
       - name: Resolve exact source SHA
@@ -58,7 +55,7 @@ jobs:
             printf 'trigger=%s\n' "$GITHUB_EVENT_NAME"
             printf 'expected_sha=%s\n' "$expected"
             printf 'actual_sha=%s\n' "$actual"
-          } > ../canonical-ci-metadata.txt
+          } > canonical-ci-metadata.txt
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -68,9 +65,11 @@ jobs:
           cache-dependency-path: binansScanner/requirements.txt
 
       - name: Install verification dependencies
+        working-directory: binansScanner
         run: python -m pip install -r requirements.txt
 
       - name: Run canonical production verification
+        working-directory: binansScanner
         shell: bash
         run: |
           set -o pipefail
@@ -79,20 +78,20 @@ jobs:
       - name: Record test result
         shell: bash
         run: |
-          printf 'test_command=python verify.py\n' >> ../canonical-ci-metadata.txt
-          printf 'test_result=PASS\n' >> ../canonical-ci-metadata.txt
+          printf 'test_command=python verify.py\n' >> canonical-ci-metadata.txt
+          printf 'test_result=PASS\n' >> canonical-ci-metadata.txt
 
       - name: Assert working tree clean
         shell: bash
         run: |
           set -euo pipefail
           test -z "$(git status --porcelain)"
-          printf 'working_tree=clean\n' >> ../canonical-ci-metadata.txt
+          printf 'working_tree=clean\n' >> canonical-ci-metadata.txt
 
       - name: Record evidence timestamp
         shell: bash
         run: |
-          printf 'timestamp=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> ../canonical-ci-metadata.txt
+          printf 'timestamp=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> canonical-ci-metadata.txt
 
       - name: Upload canonical CI evidence
         if: always()
