@@ -4,6 +4,9 @@ on:
   push:
     branches:
       - verification/d6-exact-source-bootstrap
+  pull_request:
+    branches:
+      - main
   workflow_dispatch:
 
 permissions:
