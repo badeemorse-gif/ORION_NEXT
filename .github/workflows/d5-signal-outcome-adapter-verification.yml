@@ -4,6 +4,9 @@ on:
   push:
     branches:
       - developer5/experiment-harness-phase-a
+  pull_request:
+    branches:
+      - main
 
 jobs:
   verify-adapter:
@@ -12,14 +15,18 @@ jobs:
       - name: Checkout exact triggering revision
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.sha }}
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
           fetch-depth: 0
 
-      - name: Assert checkout parity
+      - name: Assert exact source checkout parity
         shell: bash
         run: |
           set -euo pipefail
-          expected="${GITHUB_SHA}"
+          if [ "${GITHUB_EVENT_NAME}" = "pull_request" ]; then
+            expected="${{ github.event.pull_request.head.sha }}"
+          else
+            expected="${GITHUB_SHA}"
+          fi
           actual="$(git rev-parse HEAD)"
           printf 'EXPECTED_SHA=%s\nACTUAL_CHECKOUT_SHA=%s\n' "$expected" "$actual"
           test "$expected" = "$actual"
@@ -28,9 +35,6 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-
-      - name: Install D5 test dependencies
-        run: python -m pip install --upgrade pip
 
       - name: Run D5 adapter and forward-outcome tests
         env:
@@ -49,6 +53,6 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: d5-signal-outcome-adapter-verification-${{ github.sha }}
+          name: d5-signal-outcome-adapter-verification-${{ github.event_name }}-${{ github.sha }}
           path: d5-adapter-test.log
           if-no-files-found: error
