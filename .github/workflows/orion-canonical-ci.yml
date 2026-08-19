@@ -14,6 +14,9 @@ on:
 permissions:
   contents: read
 
+env:
+  EVIDENCE_DIR: ${{ runner.temp }}/orion-canonical-ci
+
 jobs:
   canonical-verification:
     name: Canonical Verification
@@ -21,6 +24,10 @@ jobs:
     timeout-minutes: 20
 
     steps:
+      - name: Prepare evidence directory
+        shell: bash
+        run: mkdir -p "$EVIDENCE_DIR"
+
       - name: Resolve exact source SHA
         id: source
         shell: bash
@@ -48,14 +55,6 @@ jobs:
           actual="$(git rev-parse HEAD)"
           printf 'EXPECTED_SHA=%s\nACTUAL_SHA=%s\n' "$expected" "$actual"
           test "$expected" = "$actual"
-          {
-            printf 'repository=badeemorse-gif/ORION_NEXT\n'
-            printf 'workflow=ORION Canonical CI\n'
-            printf 'run_id=%s\n' "$GITHUB_RUN_ID"
-            printf 'trigger=%s\n' "$GITHUB_EVENT_NAME"
-            printf 'expected_sha=%s\n' "$expected"
-            printf 'actual_sha=%s\n' "$actual"
-          } > canonical-ci-metadata.txt
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -73,13 +72,7 @@ jobs:
         shell: bash
         run: |
           set -o pipefail
-          python verify.py 2>&1 | tee ../canonical-ci-test-results.txt
-
-      - name: Record test result
-        shell: bash
-        run: |
-          printf 'test_command=python verify.py\n' >> canonical-ci-metadata.txt
-          printf 'test_result=PASS\n' >> canonical-ci-metadata.txt
+          python verify.py 2>&1 | tee "$EVIDENCE_DIR/canonical-ci-test-results.txt"
 
       - name: Clean ignored test artifacts
         shell: bash
@@ -88,24 +81,38 @@ jobs:
           git clean -fdX
 
       - name: Assert working tree clean
+        id: tree
         shell: bash
         run: |
           set -euo pipefail
-          printf 'working_tree_before_assert=%s\n' "$(git status --porcelain --untracked-files=all)" >> canonical-ci-metadata.txt
-          test -z "$(git status --porcelain --untracked-files=all)"
-          printf 'working_tree=clean\n' >> canonical-ci-metadata.txt
+          status="$(git status --porcelain --untracked-files=all)"
+          printf 'WORKING_TREE_STATUS=%s\n' "$status"
+          test -z "$status"
+          printf 'working_tree=clean\n' > "$EVIDENCE_DIR/clean-tree.txt"
 
-      - name: Record evidence timestamp
+      - name: Build canonical CI metadata
         shell: bash
         run: |
-          printf 'timestamp=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> canonical-ci-metadata.txt
+          set -euo pipefail
+          expected="${{ steps.source.outputs.expected_sha }}"
+          actual="$(git rev-parse HEAD)"
+          {
+            printf 'repository=badeemorse-gif/ORION_NEXT\n'
+            printf 'workflow=ORION Canonical CI\n'
+            printf 'run_id=%s\n' "$GITHUB_RUN_ID"
+            printf 'trigger=%s\n' "$GITHUB_EVENT_NAME"
+            printf 'expected_sha=%s\n' "$expected"
+            printf 'actual_sha=%s\n' "$actual"
+            printf 'test_command=python verify.py\n'
+            printf 'test_result=PASS\n'
+            printf 'working_tree=clean\n'
+            printf 'timestamp=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          } > "$EVIDENCE_DIR/canonical-ci-metadata.txt"
 
       - name: Upload canonical CI evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: orion-canonical-ci-evidence-${{ github.run_id }}
-          path: |
-            canonical-ci-metadata.txt
-            canonical-ci-test-results.txt
+          path: ${{ env.EVIDENCE_DIR }}
           if-no-files-found: error
