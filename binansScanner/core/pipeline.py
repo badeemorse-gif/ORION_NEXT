@@ -106,10 +106,8 @@ class Pipeline:
             )
             if not isinstance(exec_res, ExecutionResult):
                 raise PipelineError("ExecutionEngine returned an invalid ExecutionResult.")
-            if exec_res.status is ExecutionStatus.FAILED:
-                raise PipelineError(
-                    f"Execution failed: {exec_res.message or 'ExecutionEngine returned FAILED.'}"
-                )
+
+            execution_failed = exec_res.status is ExecutionStatus.FAILED
 
             failed_stage = "REPORT"
             report_res = self._report_engine.build_report(
@@ -122,9 +120,22 @@ class Pipeline:
                 execution_time_ms=(
                     orch_res.statistics.elapsed_ms + exec_res.execution_time_ms
                 ),
+                stage_trace=("ORCHESTRATION", "EXECUTION", "REPORT"),
+                failure_stage="EXECUTION" if execution_failed else None,
+                failure_message=(
+                    exec_res.message or "ExecutionEngine returned FAILED."
+                    if execution_failed
+                    else None
+                ),
             )
             if not isinstance(report_res, ReportResult):
                 raise PipelineError("ReportEngine returned an invalid ReportResult.")
+
+            if execution_failed:
+                failed_stage = "EXECUTION"
+                raise PipelineError(
+                    f"Execution failed: {exec_res.message or 'ExecutionEngine returned FAILED.'}"
+                )
 
             success = True
             failed_stage = None
@@ -132,6 +143,40 @@ class Pipeline:
             error_message = str(exc)
             if orch_res is None:
                 orch_res = self._orchestrator.last_result()
+
+            # Preserve operational evidence even when orchestration itself
+            # fails before an ExecutionResult exists. Execution failures are
+            # already materialized above so the report cannot imply success.
+            if report_res is None and orch_res is not None:
+                try:
+                    trace = (
+                        ("ORCHESTRATION", "EXECUTION", "REPORT")
+                        if exec_res is not None
+                        else ("ORCHESTRATION", "REPORT")
+                    )
+                    report_res = self._report_engine.build_report(
+                        symbol=symbol,
+                        analysis=orch_res.analysis,
+                        profile=orch_res.profile,
+                        score=orch_res.score,
+                        decision=orch_res.decision,
+                        execution=exec_res,
+                        execution_time_ms=(
+                            orch_res.statistics.elapsed_ms
+                            + (exec_res.execution_time_ms if exec_res is not None else 0.0)
+                        ),
+                        stage_trace=trace,
+                        failure_stage=failed_stage or "UNKNOWN",
+                        failure_message=error_message,
+                    )
+                    if not isinstance(report_res, ReportResult):
+                        report_res = None
+                        raise PipelineError("ReportEngine returned an invalid failure ReportResult.")
+                except Exception as report_exc:
+                    self._logger.error(
+                        f"Failure evidence report could not be built for [{symbol}]: {report_exc}"
+                    )
+
             self._logger.error(
                 f"Pipeline failed for [{symbol}] at stage [{failed_stage}]: {exc}"
             )
