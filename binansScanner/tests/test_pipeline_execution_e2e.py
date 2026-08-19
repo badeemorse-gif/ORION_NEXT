@@ -14,6 +14,7 @@ from enums import DataHealth, Timeframe
 from models.decision import DecisionResult
 from models.execution import ExecutionResult, ExecutionSide, ExecutionStatus
 from models.market import MarketDataset, MarketMetadata, TimeframeData
+from models.profile import MarketCharacteristics, ProfileResult, ProfileStatistics
 
 
 class TestPipelineExecutionE2E(unittest.TestCase):
@@ -76,6 +77,19 @@ class TestPipelineExecutionE2E(unittest.TestCase):
             timeframes={Timeframe.H1: timeframe_data},
         )
 
+    @staticmethod
+    def _tradeable_profile() -> ProfileResult:
+        """Controlled Profile fixture: execution/report tests must not depend on profile construction."""
+        return ProfileResult(
+            symbol="BTCUSDT",
+            market=MarketCharacteristics(),
+            statistics=ProfileStatistics(),
+            timeframes=(),
+            warnings=(),
+            blocks=(),
+            is_tradeable=True,
+        )
+
     def _run_with_real_market_stages(
         self,
         decision: DecisionResult | None = None,
@@ -93,6 +107,10 @@ class TestPipelineExecutionE2E(unittest.TestCase):
 
         with patch.object(provider, "execute", return_value=dataset), patch.object(
             storage, "execute", return_value=None
+        ), patch.object(
+            pipeline._orchestrator._profile_engine,
+            "build_profile",
+            return_value=self._tradeable_profile(),
         ), decision_patch:
             return pipeline.run_symbol("BTCUSDT", [Timeframe.H1.value], quantity=1.0)
 
