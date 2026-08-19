@@ -39,12 +39,14 @@ jobs:
           fetch-depth: 0
 
       - name: Assert exact checkout
+        id: checkout
         shell: bash
         run: |
           set -euo pipefail
           expected="${{ steps.source.outputs.expected_sha }}"
           actual="$(git -C "$GITHUB_WORKSPACE" rev-parse HEAD)"
           printf 'EXPECTED_SHA=%s\nACTUAL_CHECKOUT_SHA=%s\n' "$expected" "$actual"
+          echo "actual_sha=$actual" >> "$GITHUB_OUTPUT"
           test "$actual" = "$expected"
 
       - name: Set up Python
@@ -94,7 +96,7 @@ jobs:
         shell: bash
         env:
           EXPECTED_SHA: ${{ steps.source.outputs.expected_sha }}
-          ACTUAL_SHA: ${{ steps.source.outputs.expected_sha }}
+          ACTUAL_SHA: ${{ steps.checkout.outputs.actual_sha }}
           TEST_RESULT: ${{ steps.tests.outputs.test_result }}
           WORKING_TREE: ${{ steps.clean.outputs.working_tree }}
           TEST_COMMAND: python verify.py
