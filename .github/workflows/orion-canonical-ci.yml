@@ -1,0 +1,127 @@
+name: ORION Canonical CI
+
+on:
+  push:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  canonical-verification:
+    name: Canonical verification
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: binansScanner
+    steps:
+      - name: Resolve exact source SHA
+        id: source
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "$GITHUB_EVENT_NAME" == "pull_request" ]]; then
+            expected_sha="${{ github.event.pull_request.head.sha }}"
+          else
+            expected_sha="$GITHUB_SHA"
+          fi
+          echo "expected_sha=$expected_sha" >> "$GITHUB_OUTPUT"
+          echo "trigger=$GITHUB_EVENT_NAME" >> "$GITHUB_OUTPUT"
+          printf 'EXPECTED_SHA=%s\n' "$expected_sha"
+
+      - name: Checkout exact source SHA
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.source.outputs.expected_sha }}
+          fetch-depth: 0
+
+      - name: Assert exact checkout
+        shell: bash
+        run: |
+          set -euo pipefail
+          expected="${{ steps.source.outputs.expected_sha }}"
+          actual="$(git -C "$GITHUB_WORKSPACE" rev-parse HEAD)"
+          printf 'EXPECTED_SHA=%s\nACTUAL_CHECKOUT_SHA=%s\n' "$expected" "$actual"
+          test "$actual" = "$expected"
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install verification dependencies
+        run: python -m pip install -r requirements.txt numpy pandas pandas-ta python-binance
+
+      - name: Run canonical verification
+        id: tests
+        shell: bash
+        run: |
+          set +e
+          test_command='python verify.py'
+          python verify.py > "$RUNNER_TEMP/orion-test-results.txt" 2>&1
+          status=$?
+          cat "$RUNNER_TEMP/orion-test-results.txt"
+          echo "exit_code=$status" >> "$GITHUB_OUTPUT"
+          if [[ "$status" -eq 0 ]]; then
+            echo "test_result=PASS" >> "$GITHUB_OUTPUT"
+          else
+            echo "test_result=FAIL" >> "$GITHUB_OUTPUT"
+          fi
+          exit "$status"
+
+      - name: Assert clean working tree
+        id: clean
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "$(git -C "$GITHUB_WORKSPACE" status --porcelain)" ]]; then
+            echo 'working_tree=CLEAN' >> "$GITHUB_OUTPUT"
+            echo 'CLEAN_TREE=PASS'
+          else
+            echo 'working_tree=DIRTY' >> "$GITHUB_OUTPUT"
+            echo 'CLEAN_TREE=FAIL'
+            git -C "$GITHUB_WORKSPACE" status --porcelain
+            exit 1
+          fi
+
+      - name: Write unified evidence
+        if: always()
+        shell: bash
+        env:
+          EXPECTED_SHA: ${{ steps.source.outputs.expected_sha }}
+          ACTUAL_SHA: ${{ steps.source.outputs.expected_sha }}
+          TEST_RESULT: ${{ steps.tests.outputs.test_result }}
+          WORKING_TREE: ${{ steps.clean.outputs.working_tree }}
+          TEST_COMMAND: python verify.py
+          TRIGGER: ${{ steps.source.outputs.trigger }}
+        run: |
+          set -euo pipefail
+          evidence_dir="$RUNNER_TEMP/orion-ci-evidence"
+          mkdir -p "$evidence_dir"
+          timestamp="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          {
+            printf 'repository=%s\n' "$GITHUB_REPOSITORY"
+            printf 'workflow=%s\n' "$GITHUB_WORKFLOW"
+            printf 'run_id=%s\n' "$GITHUB_RUN_ID"
+            printf 'trigger=%s\n' "$TRIGGER"
+            printf 'expected_sha=%s\n' "$EXPECTED_SHA"
+            printf 'actual_sha=%s\n' "$ACTUAL_SHA"
+            printf 'test_command=%s\n' "$TEST_COMMAND"
+            printf 'test_result=%s\n' "${TEST_RESULT:-NOT_AVAILABLE}"
+            printf 'working_tree=%s\n' "${WORKING_TREE:-NOT_AVAILABLE}"
+            printf 'timestamp=%s\n' "$timestamp"
+          } > "$evidence_dir/metadata.txt"
+          cp "$RUNNER_TEMP/orion-test-results.txt" "$evidence_dir/test-results.txt" 2>/dev/null || true
+
+      - name: Upload unified evidence artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: orion-canonical-ci-evidence-${{ github.sha }}
+          path: ${{ runner.temp }}/orion-ci-evidence
+          if-no-files-found: error
