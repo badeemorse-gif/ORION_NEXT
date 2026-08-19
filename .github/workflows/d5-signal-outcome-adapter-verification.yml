@@ -1,0 +1,66 @@
+name: D5 SignalOutcome Adapter Verification
+
+on:
+  push:
+    branches:
+      - developer5/experiment-harness-phase-a
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  verify-adapter:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout exact source revision
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+
+      - name: Assert source checkout parity
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "${GITHUB_EVENT_NAME}" = "pull_request" ]; then
+            expected="${{ github.event.pull_request.head.sha }}"
+          else
+            expected="${GITHUB_SHA}"
+          fi
+          actual="$(git rev-parse HEAD)"
+          printf 'EXPECTED_SHA=%s\nACTUAL_CHECKOUT_SHA=%s\n' "$expected" "$actual"
+          test "$expected" = "$actual"
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install D5 test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install numpy pandas pandas-ta python-binance requests
+          if [ -f binansScanner/requirements.txt ]; then pip install -r binansScanner/requirements.txt; fi
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+
+      - name: Run D5 adapter and forward-outcome tests
+        env:
+          PYTHONPATH: .
+        run: |
+          set -o pipefail
+          python -m unittest tools.tests.test_forward_outcome_validation -v 2>&1 | tee d5-adapter-test.log
+
+      - name: Assert working tree clean
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -z "$(git status --porcelain)"
+
+      - name: Upload D5 test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: d5-signal-outcome-adapter-verification-${{ github.event_name }}-${{ github.sha }}
+          path: d5-adapter-test.log
+          if-no-files-found: error
