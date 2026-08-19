@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - developer5/experiment-harness-phase-a
+  workflow_dispatch:
 
 jobs:
   verify-adapter:
