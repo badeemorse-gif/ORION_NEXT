@@ -2,6 +2,10 @@ name: ORION Canonical CI
 
 on:
   push:
+    branches:
+      - main
+      - 'developer5/**'
+      - 'verification/**'
   pull_request:
     branches:
       - main
