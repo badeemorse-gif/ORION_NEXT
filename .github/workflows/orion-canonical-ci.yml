@@ -116,3 +116,6 @@ jobs:
           name: orion-canonical-ci-evidence-${{ github.run_id }}
           path: ${{ env.EVIDENCE_DIR }}
           if-no-files-found: error
+
+      # Verification-only touch: intentionally non-semantic.
+      # Ensures a fresh push-triggered run for this workflow revision.
