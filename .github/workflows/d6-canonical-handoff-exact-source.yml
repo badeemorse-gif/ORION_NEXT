@@ -1,65 +1,44 @@
-name: ORION verification
+name: D6 Canonical Handoff Exact-Source Evidence
 
 on:
   push:
-    branches: [main]
+    branches:
+      - verification/d6-exact-source-bootstrap
   pull_request:
-    branches: [main]
+    branches:
+      - main
+  workflow_dispatch:
 
 permissions:
   contents: read
 
+env:
+  SOURCE_SHA: f5d4323b12bfb9d92b19dcba1a60e4cdb7984877
+  EVIDENCE_DIR: ${{ runner.temp }}/d6-exact-source-bootstrap-evidence
+
 jobs:
-  verify-binans-scanner:
-    name: Verify binansScanner
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    defaults:
-      run:
-        working-directory: binansScanner
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-          cache: pip
-
-      - name: Install verification dependencies
-        run: python -m pip install -r requirements.txt numpy pandas pandas-ta python-binance
-
-      - name: Verify syntax and full unittest suite
-        run: python verify.py
-
-  d6-exact-source-bootstrap:
-    name: D6 exact-source bootstrap evidence
-    if: github.event_name == 'pull_request' && github.head_ref == 'verification/d6-exact-source-bootstrap'
+  verify-exact-source:
+    name: D6 exact-source bootstrap verification
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    env:
-      SOURCE_SHA: f5d4323b12bfb9d92b19dcba1a60e4cdb7984877
-      EVIDENCE_DIR: ${{ runner.temp }}/d6-exact-source-bootstrap-evidence
 
     steps:
-      - name: Prepare external evidence directory
+      - name: Prepare evidence directory
         shell: bash
         run: mkdir -p "$EVIDENCE_DIR"
 
-      - name: Checkout exact D6 source
+      - name: Checkout exact source
         uses: actions/checkout@v4
         with:
           ref: ${{ env.SOURCE_SHA }}
           fetch-depth: 0
           clean: true
 
-      - name: Assert exact source checkout
+      - name: Assert exact source SHA
         shell: bash
         run: |
           set -euo pipefail
-          EXPECTED_SHA="$SOURCE_SHA"
+          EXPECTED_SHA="${SOURCE_SHA}"
           ACTUAL_CHECKOUT_SHA="$(git rev-parse HEAD)"
           printf 'EXPECTED_SHA=%s\nACTUAL_CHECKOUT_SHA=%s\n' "$EXPECTED_SHA" "$ACTUAL_CHECKOUT_SHA" | tee "$EVIDENCE_DIR/exact-source.txt"
           test "$EXPECTED_SHA" = "$ACTUAL_CHECKOUT_SHA"
@@ -68,7 +47,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          python-version: '3.12'
           cache: pip
           cache-dependency-path: binansScanner/requirements.txt
 
@@ -104,21 +83,21 @@ jobs:
           printf 'EXPECTED_SHA=%s\nACTUAL_CHECKOUT_SHA=%s\nWORKING_TREE_STATUS=%s\n' "$SOURCE_SHA" "$ACTUAL_CHECKOUT_SHA" "$STATUS" | tee "$EVIDENCE_DIR/closure-metadata.txt"
           test "$SOURCE_SHA" = "$ACTUAL_CHECKOUT_SHA"
           test -z "$STATUS"
+          printf 'CLEAN_TREE=PASS\n' >> "$EVIDENCE_DIR/closure-metadata.txt"
           {
             printf 'run_id=%s\n' "$GITHUB_RUN_ID"
             printf 'repository=%s\n' "$GITHUB_REPOSITORY"
             printf 'workflow=%s\n' "$GITHUB_WORKFLOW"
             printf 'event=%s\n' "$GITHUB_EVENT_NAME"
-            printf 'ref=%s\n' "$GITHUB_REF\n"
+            printf 'ref=%s\n' "$GITHUB_REF"
             printf 'source_sha=%s\n' "$SOURCE_SHA"
             printf 'checked_out_sha=%s\n' "$ACTUAL_CHECKOUT_SHA"
             printf 'd6_handoff_tests=PASS\n'
             printf 'full_verify=PASS\n'
             printf 'clean_tree=PASS\n'
           } >> "$EVIDENCE_DIR/closure-metadata.txt"
-          printf 'CLEAN_TREE=PASS\n' >> "$EVIDENCE_DIR/closure-metadata.txt"
 
-      - name: Upload D6 exact-source evidence
+      - name: Upload exact-source evidence artifact
         if: always()
         uses: actions/upload-artifact@v4
         with:
