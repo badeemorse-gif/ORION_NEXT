@@ -9,7 +9,7 @@ import types
 import unittest
 
 from tools.experiment_harness import ExperimentFixture, ExperimentHarness, ObservationSpec, SignalDirection
-from tools.forward_outcome_validation import ForwardOutcomeValidator, HistoricalObservation
+from tools.forward_outcome_validation import ForwardOutcomeValidator, ForwardOutcomeRecord, HistoricalObservation
 from tools.signal_outcome_adapter import METRIC_UNIT, to_signal_outcome
 
 
@@ -190,7 +190,7 @@ class TestForwardOutcomeValidation(unittest.TestCase):
             horizon=outcomes[0].horizon,
             observed_at=outcomes[0].observed_at,
             as_of=outcomes[0].as_of,
-            entry_price=outcomes[0].entry_price,
+            entry_price=record.entry_price,
             close_price=outcomes[0].close_price,
             return_pct=outcomes[0].return_pct,
             mfe_pct=10.0,
@@ -200,7 +200,7 @@ class TestForwardOutcomeValidation(unittest.TestCase):
             horizon=outcomes[1].horizon,
             observed_at=outcomes[1].observed_at,
             as_of=outcomes[1].as_of,
-            entry_price=outcomes[1].entry_price,
+            entry_price=record.entry_price,
             close_price=outcomes[1].close_price,
             return_pct=outcomes[1].return_pct,
             mfe_pct=20.0,
@@ -210,7 +210,7 @@ class TestForwardOutcomeValidation(unittest.TestCase):
             horizon=outcomes[2].horizon,
             observed_at=outcomes[2].observed_at,
             as_of=outcomes[2].as_of,
-            entry_price=outcomes[2].entry_price,
+            entry_price=record.entry_price,
             close_price=outcomes[2].close_price,
             return_pct=outcomes[2].return_pct,
             mfe_pct=5.0,
