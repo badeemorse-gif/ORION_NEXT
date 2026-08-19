@@ -183,21 +183,70 @@ class TestForwardOutcomeValidation(unittest.TestCase):
         sys.modules[module.__name__] = module
         return module
 
-    def test_adapter_maps_all_returns_and_24h_mfe_mae(self) -> None:
-        self._install_signal_outcome_test_double()
+    def _adapter_record_with_distinct_mfe_mae(self) -> ForwardOutcomeRecord:
         record = self.validator.process_one(self._item(10, score=20.0, confidence=60.0, relative_rank=80.0))
+        outcomes = list(record.outcomes)
+        outcomes[0] = type(outcomes[0])(
+            horizon=outcomes[0].horizon,
+            observed_at=outcomes[0].observed_at,
+            as_of=outcomes[0].as_of,
+            entry_price=outcomes[0].entry_price,
+            close_price=outcomes[0].close_price,
+            return_pct=outcomes[0].return_pct,
+            mfe_pct=10.0,
+            mae_pct=2.0,
+        )
+        outcomes[1] = type(outcomes[1])(
+            horizon=outcomes[1].horizon,
+            observed_at=outcomes[1].observed_at,
+            as_of=outcomes[1].as_of,
+            entry_price=outcomes[1].entry_price,
+            close_price=outcomes[1].close_price,
+            return_pct=outcomes[1].return_pct,
+            mfe_pct=20.0,
+            mae_pct=3.0,
+        )
+        outcomes[2] = type(outcomes[2])(
+            horizon=outcomes[2].horizon,
+            observed_at=outcomes[2].observed_at,
+            as_of=outcomes[2].as_of,
+            entry_price=outcomes[2].entry_price,
+            close_price=outcomes[2].close_price,
+            return_pct=outcomes[2].return_pct,
+            mfe_pct=5.0,
+            mae_pct=1.0,
+        )
+        return type(record)(
+            signal_id=record.signal_id,
+            entry_time=record.entry_time,
+            entry_price=record.entry_price,
+            score=record.score,
+            confidence=record.confidence,
+            relative_rank=record.relative_rank,
+            outcomes=tuple(outcomes),
+        )
+
+    def test_adapter_maps_returns_and_aggregates_mfe_mae_across_all_horizons(self) -> None:
+        self._install_signal_outcome_test_double()
+        record = self._adapter_record_with_distinct_mfe_mae()
         outcome = to_signal_outcome(record, self.fixture.candles[10].timestamp)
         self.assertEqual(outcome.outcome_1h, record.outcome("1h").return_pct)
         self.assertEqual(outcome.outcome_4h, record.outcome("4h").return_pct)
         self.assertEqual(outcome.outcome_24h, record.outcome("24h").return_pct)
-        self.assertEqual(outcome.mfe, record.outcome("24h").mfe_pct)
-        self.assertEqual(outcome.mae, record.outcome("24h").mae_pct)
+        self.assertNotEqual(record.outcome("1h").mfe_pct, record.outcome("24h").mfe_pct)
+        self.assertNotEqual(record.outcome("4h").mfe_pct, record.outcome("24h").mfe_pct)
+        self.assertNotEqual(record.outcome("1h").mae_pct, record.outcome("24h").mae_pct)
+        self.assertNotEqual(record.outcome("4h").mae_pct, record.outcome("24h").mae_pct)
+        self.assertEqual(outcome.mfe, max(o.mfe_pct for o in record.outcomes))
+        self.assertEqual(outcome.mae, max(o.mae_pct for o in record.outcomes))
+        self.assertEqual(outcome.mfe, 20.0)
+        self.assertEqual(outcome.mae, 3.0)
 
-    def test_adapter_requires_explicit_metric_unit(self) -> None:
-        self.assertEqual(METRIC_UNIT, "PCT")
+    def test_adapter_requires_explicit_percent_metric_unit(self) -> None:
+        self.assertEqual(METRIC_UNIT, "%")
         self.assertTrue(METRIC_UNIT.strip())
 
-    def test_adapter_uses_24h_timestamp_and_enforces_future_boundary(self) -> None:
+    def test_adapter_uses_24h_timestamp_and_enforces_strict_future_boundary(self) -> None:
         self._install_signal_outcome_test_double()
         record = self.validator.process_one(self._item(10, score=20.0, confidence=60.0, relative_rank=80.0))
         observation_timestamp = self.fixture.candles[10].timestamp
@@ -216,7 +265,7 @@ class TestForwardOutcomeValidation(unittest.TestCase):
 
     def test_adapter_does_not_mutate_forward_record_and_keeps_per_horizon_details(self) -> None:
         self._install_signal_outcome_test_double()
-        record = self.validator.process_one(self._item(10, score=20.0, confidence=60.0, relative_rank=80.0))
+        record = self._adapter_record_with_distinct_mfe_mae()
         before = tuple((o.horizon, o.as_of, o.mfe_pct, o.mae_pct) for o in record.outcomes)
         _ = to_signal_outcome(record, self.fixture.candles[10].timestamp)
         after = tuple((o.horizon, o.as_of, o.mfe_pct, o.mae_pct) for o in record.outcomes)
@@ -226,6 +275,7 @@ class TestForwardOutcomeValidation(unittest.TestCase):
     def test_adapter_module_has_no_score_decision_execution_imports(self) -> None:
         source = __import__("tools.signal_outcome_adapter", fromlist=["*"]).__dict__
         self.assertNotIn("engines", str(source.get("__annotations__", {})))
+        self.assertNotIn("execution", str(source.get("__annotations__", {})))
 
 
 if __name__ == "__main__":
