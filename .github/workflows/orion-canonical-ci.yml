@@ -81,11 +81,18 @@ jobs:
           printf 'test_command=python verify.py\n' >> canonical-ci-metadata.txt
           printf 'test_result=PASS\n' >> canonical-ci-metadata.txt
 
+      - name: Clean ignored test artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+          git clean -fdX
+
       - name: Assert working tree clean
         shell: bash
         run: |
           set -euo pipefail
-          test -z "$(git status --porcelain)"
+          printf 'working_tree_before_assert=%s\n' "$(git status --porcelain --untracked-files=all)" >> canonical-ci-metadata.txt
+          test -z "$(git status --porcelain --untracked-files=all)"
           printf 'working_tree=clean\n' >> canonical-ci-metadata.txt
 
       - name: Record evidence timestamp
