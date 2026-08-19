@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from unittest import TestCase
 from unittest.mock import MagicMock
 
@@ -10,10 +10,15 @@ import pandas as pd
 
 from core.orchestrator import Orchestrator, OrchestratorConfig, PipelineError, PipelineStage
 from enums import DataHealth, Timeframe
+from models.analysis import AnalysisResult
+from models.decision import DecisionResult
 from models.market import MarketDataset, MarketMetadata, TimeframeData
+from models.profile import MarketCharacteristics, ProfileResult, ProfileStatistics, TimeframeProfile
+from models.score import ScoreResult
 
 
 class TestOrchestratorValidationOrder(TestCase):
+    # Verification-only fixture: WAIT uses the current canonical confidence contract.
     def _dataset(self) -> MarketDataset:
         now = datetime.now(timezone.utc)
         dataframe = pd.DataFrame(
@@ -34,11 +39,42 @@ class TestOrchestratorValidationOrder(TestCase):
             },
         )
 
+    @staticmethod
+    def _valid_profile() -> ProfileResult:
+        now = datetime.now(timezone.utc)
+        timeframes = tuple(
+            TimeframeProfile(
+                timeframe=timeframe.value,
+                characteristics=MarketCharacteristics(),
+                candles_count=1,
+                first_timestamp=now,
+                last_timestamp=now,
+                data_health=DataHealth.GOOD,
+                missing_candles=0,
+                warnings=(),
+            )
+            for timeframe in (Timeframe.D1, Timeframe.H4, Timeframe.H1)
+        )
+        return ProfileResult(
+            symbol="BTCUSDT",
+            market=MarketCharacteristics(),
+            statistics=ProfileStatistics(completion_ratio=1.0, total_candles=3),
+            timeframes=timeframes,
+            is_tradeable=True,
+            warnings=(),
+            blocks=(),
+        )
+
     def _orchestrator(self, provider: MagicMock, storage: MagicMock, validation: MagicMock) -> Orchestrator:
         return Orchestrator(
-            provider=provider, storage=storage,
-            indicator_engine=MagicMock(), analysis_engine=MagicMock(), profile_engine=MagicMock(),
-            score_engine=MagicMock(), decision_engine=MagicMock(), validation_engine=validation,
+            provider=provider,
+            storage=storage,
+            indicator_engine=MagicMock(),
+            analysis_engine=MagicMock(),
+            profile_engine=MagicMock(),
+            score_engine=MagicMock(),
+            decision_engine=MagicMock(),
+            validation_engine=validation,
             config=OrchestratorConfig(ENABLE_TIMING=False),
         )
 
@@ -60,7 +96,7 @@ class TestOrchestratorValidationOrder(TestCase):
         self.assertEqual(orchestrator.statistics().current_stage, PipelineStage.VALIDATION)
 
     def test_valid_dataset_is_persisted_after_validation(self) -> None:
-        """A valid dataset reaches storage only after successful validation."""
+        """A canonical valid analysis/profile fixture must reach and prove the storage boundary."""
         dataset = self._dataset()
         provider = MagicMock()
         provider.execute.return_value = dataset
@@ -70,23 +106,43 @@ class TestOrchestratorValidationOrder(TestCase):
 
         indicator = MagicMock()
         indicator.calculate_dataset.return_value = dataset
+
+        canonical_analysis = AnalysisResult(
+            market_state="NEUTRAL",
+            strength=0.0,
+            signals=["VALIDATION_ORDER_FIXTURE"],
+            warnings=[],
+        )
         analysis = MagicMock()
-        analysis.analyze.return_value = MagicMock()
+        analysis.analyze.return_value = canonical_analysis
+
         profile = MagicMock()
-        profile.build_profile.return_value = MagicMock()
+        profile_result = self._valid_profile()
+        profile.build_profile.return_value = profile_result
+
         score = MagicMock()
-        score.calculate.return_value = MagicMock()
+        score.calculate.return_value = ScoreResult(
+            score=0.0,
+            category="NEUTRAL",
+            factors=["VALIDATION_ORDER_FIXTURE"],
+        )
+
         decision = MagicMock()
-        decision_result = MagicMock()
-        decision_result.decision = "WAIT"
-        decision_result.confidence = 50.0
-        decision_result.reasons = ["test"]
-        decision.decide.return_value = decision_result
+        decision.decide.return_value = DecisionResult(
+            decision="WAIT",
+            confidence=0.0,
+            reasons=["VALIDATION_ORDER_FIXTURE"],
+        )
 
         orchestrator = Orchestrator(
-            provider=provider, storage=storage, indicator_engine=indicator,
-            analysis_engine=analysis, profile_engine=profile, score_engine=score,
-            decision_engine=decision, validation_engine=validation,
+            provider=provider,
+            storage=storage,
+            indicator_engine=indicator,
+            analysis_engine=analysis,
+            profile_engine=profile,
+            score_engine=score,
+            decision_engine=decision,
+            validation_engine=validation,
             config=OrchestratorConfig(ENABLE_TIMING=False),
         )
 
@@ -94,6 +150,15 @@ class TestOrchestratorValidationOrder(TestCase):
 
         validation.validate_dataset.assert_called_once_with(dataset)
         storage.execute.assert_called_once_with(dataset)
+        analysis.analyze.assert_called_once_with(dataset)
+        profile.build_profile.assert_called_once_with(dataset)
+        self.assertEqual(profile_result.timeframe_count, 3)
+        self.assertEqual(
+            {item.timeframe for item in profile_result.timeframes},
+            {"1d", "4h", "1h"},
+        )
+        score.calculate.assert_called_once_with(canonical_analysis)
+        decision.decide.assert_called_once_with(canonical_analysis, score.calculate.return_value)
         self.assertTrue(result.statistics.success)
         self.assertEqual(result.statistics.current_stage, PipelineStage.FINISHED)
 
