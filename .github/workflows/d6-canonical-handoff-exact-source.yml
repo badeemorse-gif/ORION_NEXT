@@ -1,0 +1,102 @@
+name: D6 Canonical Handoff Exact-Source Evidence
+
+on:
+  push:
+    branches:
+      - d6/canonical-signal-outcome-handoff
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  SOURCE_SHA: f5d4323b12bfb9d92b19dcba1a60e4cdb7984877
+  EVIDENCE_DIR: ${{ runner.temp }}/d6-handoff-evidence
+
+jobs:
+  verify-exact-source:
+    name: D6 exact-source closure
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    steps:
+      - name: Prepare evidence directory
+        shell: bash
+        run: mkdir -p "$EVIDENCE_DIR"
+
+      - name: Checkout exact source SHA
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.SOURCE_SHA }}
+          fetch-depth: 0
+
+      - name: Assert exact source checkout
+        shell: bash
+        run: |
+          set -euo pipefail
+          EXPECTED_SHA="${SOURCE_SHA}"
+          ACTUAL_CHECKOUT_SHA="$(git rev-parse HEAD)"
+          printf 'EXPECTED_SHA=%s\nACTUAL_CHECKOUT_SHA=%s\n' "$EXPECTED_SHA" "$ACTUAL_CHECKOUT_SHA"
+          test "$EXPECTED_SHA" = "$ACTUAL_CHECKOUT_SHA"
+          printf 'EXACT_SOURCE_PASS=PASS\n' > "$EVIDENCE_DIR/exact-source.txt"
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: binansScanner/requirements.txt
+
+      - name: Install verification dependencies
+        working-directory: binansScanner
+        run: python -m pip install -r requirements.txt numpy pandas pandas-ta python-binance
+
+      - name: Run D6 handoff tests
+        working-directory: binansScanner
+        shell: bash
+        env:
+          PYTHONPATH: .
+        run: |
+          set -euo pipefail
+          python -m unittest tests.test_canonical_signal_outcome_handoff -v 2>&1 | tee "$EVIDENCE_DIR/handoff-tests.txt"
+          printf 'HANDOFF_TESTS=PASS\n' >> "$EVIDENCE_DIR/handoff-tests.txt"
+
+      - name: Run full verify.py
+        working-directory: binansScanner
+        shell: bash
+        run: |
+          set -euo pipefail
+          python verify.py 2>&1 | tee "$EVIDENCE_DIR/full-verify.txt"
+          printf 'FULL_VERIFY=PASS\n' >> "$EVIDENCE_DIR/full-verify.txt"
+
+      - name: Assert clean tree and build metadata
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Remove ignored runtime/test artifacts only; tracked changes remain a hard failure.
+          git clean -fdX
+          STATUS="$(git status --porcelain --untracked-files=all)"
+          ACTUAL_CHECKOUT_SHA="$(git rev-parse HEAD)"
+          printf 'EXPECTED_SHA=%s\nACTUAL_CHECKOUT_SHA=%s\n' "$SOURCE_SHA" "$ACTUAL_CHECKOUT_SHA"
+          printf 'WORKING_TREE_STATUS=%s\n' "$STATUS"
+          test "$SOURCE_SHA" = "$ACTUAL_CHECKOUT_SHA"
+          test -z "$STATUS"
+          {
+            printf 'repository=badeemorse-gif/ORION_NEXT\n'
+            printf 'source_sha=%s\n' "$SOURCE_SHA"
+            printf 'checked_out_sha=%s\n' "$ACTUAL_CHECKOUT_SHA"
+            printf 'handoff_tests=PASS\n'
+            printf 'full_verify=PASS\n'
+            printf 'clean_tree=PASS\n'
+            printf 'pr=50\n'
+            printf 'workflow_run_id=%s\n' "$GITHUB_RUN_ID"
+          } > "$EVIDENCE_DIR/closure-metadata.txt"
+          printf 'CLEAN_TREE=PASS\n' >> "$EVIDENCE_DIR/closure-metadata.txt"
+
+      - name: Upload exact-source evidence artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: d6-canonical-handoff-exact-source-${{ github.run_id }}
+          path: ${{ env.EVIDENCE_DIR }}
+          if-no-files-found: error
