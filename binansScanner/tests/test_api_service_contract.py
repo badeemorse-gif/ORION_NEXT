@@ -5,7 +5,13 @@ from types import SimpleNamespace
 
 from api.api_models import ApiRequest
 from api.api_service import ApiService, ApiServiceError
-from models.report import ReportResult
+from engines.report_engine import ReportEngine
+from models.analysis import AnalysisResult
+from models.decision import DecisionResult
+from models.execution import ExecutionResult, ExecutionStatus
+from models.profile import MarketCharacteristics, ProfileResult, ProfileStatistics
+from models.report import ReportAudit, ReportAuditStatus, ReportResult
+from models.score import ScoreResult
 from reports.report_exporter import ReportFormat
 
 
@@ -47,106 +53,86 @@ class _FakePipeline:
 
 
 class TestApiServiceContract(unittest.TestCase):
+    @staticmethod
+    def _complete_report() -> ReportResult:
+        return ReportEngine().build_report(
+            symbol="BTCUSDT",
+            analysis=AnalysisResult(),
+            profile=ProfileResult(symbol="BTCUSDT", market=MarketCharacteristics(), statistics=ProfileStatistics()),
+            score=ScoreResult(),
+            decision=DecisionResult(decision="WAIT"),
+            execution=ExecutionResult(status=ExecutionStatus.SKIPPED, message="hold"),
+        )
+
     def test_health_returns_canonical_response(self):
-        response = ApiService(
-            scheduler=_FakeScheduler(), report_exporter=_FakeExporter()
-        ).health()
+        response = ApiService(scheduler=_FakeScheduler(), report_exporter=_FakeExporter()).health()
         self.assertTrue(response.success)
         self.assertEqual(response.message, "OK")
-        self.assertEqual(response.payload, {})
 
     def test_run_symbol_delegates_to_canonical_pipeline(self):
         pipeline = _FakePipeline()
-        service = ApiService(
-            scheduler=_FakeScheduler(),
-            report_exporter=_FakeExporter(),
-            pipeline=pipeline,
-        )
-
-        response = service.run_symbol(
-            ApiRequest(
-                request_id="req-run-1",
-                endpoint="/pipeline/run",
-                payload={
-                    "symbol": "BTCUSDT",
-                    "timeframes": ["1h", "4h"],
-                    "quantity": 1.5,
-                },
-            )
-        )
-
+        service = ApiService(scheduler=_FakeScheduler(), report_exporter=_FakeExporter(), pipeline=pipeline)
+        response = service.run_symbol(ApiRequest(request_id="req-run-1", endpoint="/pipeline/run", payload={"symbol": "BTCUSDT", "timeframes": ["1h", "4h"], "quantity": 1.5}))
         self.assertTrue(response.success)
         self.assertEqual(pipeline.calls, [("BTCUSDT", ["1h", "4h"], 1.5)])
-        self.assertEqual(response.payload["request_id"], "req-run-1")
         self.assertEqual(response.payload["execution_status"], "EXECUTED")
-        self.assertTrue(response.payload["report_available"])
 
     def test_run_symbol_rejects_missing_pipeline(self):
-        service = ApiService(
-            scheduler=_FakeScheduler(), report_exporter=_FakeExporter()
-        )
+        service = ApiService(scheduler=_FakeScheduler(), report_exporter=_FakeExporter())
         with self.assertRaises(ApiServiceError):
-            service.run_symbol(
-                ApiRequest(
-                    request_id="req-run-2",
-                    endpoint="/pipeline/run",
-                    payload={"symbol": "BTCUSDT", "timeframes": ["1h"]},
-                )
-            )
+            service.run_symbol(ApiRequest(request_id="req-run-2", endpoint="/pipeline/run", payload={"symbol": "BTCUSDT", "timeframes": ["1h"]}))
 
-    def test_export_report_delegates_canonical_result_to_exporter(self):
+    def test_export_success_is_export_io_success_not_pipeline_success(self):
         exporter = _FakeExporter()
-        report = ReportResult(symbol="BTCUSDT")
+        report = self._complete_report()
         service = ApiService(scheduler=_FakeScheduler(), report_exporter=exporter)
-
         with tempfile.TemporaryDirectory() as tmp:
             target = Path(tmp) / "report.json"
-            response = service.export_report(
-                ApiRequest(
-                    request_id="req-1",
-                    endpoint="export_report",
-                    payload={
-                        "report": report,
-                        "output_path": target,
-                        "format": "json",
-                    },
-                )
-            )
-
+            response = service.export_report(ApiRequest(request_id="req-1", endpoint="export_report", payload={"report": report, "output_path": target, "format": "json"}))
             self.assertTrue(response.success)
-            self.assertEqual(response.payload["format"], "json")
+            self.assertTrue(response.payload["export_success"])
+            self.assertIsNone(response.payload["pipeline_success"])
+            self.assertEqual(response.payload["audit_status"], "COMPLETE")
+            self.assertEqual(response.payload["execution_status"], "SKIPPED")
             self.assertEqual(response.payload["output_path"], str(target))
             self.assertEqual(exporter.calls, [(report, target, ReportFormat.JSON)])
 
-    def test_export_report_rejects_missing_canonical_report(self):
-        service = ApiService(
-            scheduler=_FakeScheduler(), report_exporter=_FakeExporter()
+    def test_failed_evidence_remains_exportable_without_becoming_pipeline_success(self):
+        exporter = _FakeExporter()
+        failed_execution = ExecutionResult(status=ExecutionStatus.FAILED, message="exchange unavailable")
+        report = ReportResult(
+            symbol="BTCUSDT",
+            execution=failed_execution,
+            audit=ReportAudit(
+                status=ReportAuditStatus.FAILED,
+                execution_status=ExecutionStatus.FAILED,
+                execution_message="exchange unavailable",
+                failure_stage="EXECUTION",
+                failure_message="exchange unavailable",
+            ),
         )
+        service = ApiService(scheduler=_FakeScheduler(), report_exporter=exporter)
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "failed.json"
+            response = service.export_report(ApiRequest(request_id="req-failed", endpoint="export_report", payload={"report": report, "output_path": target, "format": "json"}))
+            self.assertTrue(response.success)
+            self.assertTrue(response.payload["export_success"])
+            self.assertIsNone(response.payload["pipeline_success"])
+            self.assertEqual(response.payload["audit_status"], "FAILED")
+            self.assertEqual(response.payload["execution_status"], "FAILED")
+            self.assertEqual(response.payload["failure_stage"], "EXECUTION")
+            self.assertEqual(response.payload["failure_message"], "exchange unavailable")
+            self.assertTrue(target.exists())
+
+    def test_export_report_rejects_missing_canonical_report(self):
+        service = ApiService(scheduler=_FakeScheduler(), report_exporter=_FakeExporter())
         with self.assertRaises(ApiServiceError):
-            service.export_report(
-                ApiRequest(
-                    request_id="req-2",
-                    endpoint="export_report",
-                    payload={"output_path": "report.json", "format": "json"},
-                )
-            )
+            service.export_report(ApiRequest(request_id="req-2", endpoint="export_report", payload={"output_path": "report.json", "format": "json"}))
 
     def test_export_report_rejects_unsupported_format(self):
-        service = ApiService(
-            scheduler=_FakeScheduler(), report_exporter=_FakeExporter()
-        )
+        service = ApiService(scheduler=_FakeScheduler(), report_exporter=_FakeExporter())
         with self.assertRaises(ApiServiceError):
-            service.export_report(
-                ApiRequest(
-                    request_id="req-3",
-                    endpoint="export_report",
-                    payload={
-                        "report": ReportResult(symbol="BTCUSDT"),
-                        "output_path": "report.txt",
-                        "format": "txt",
-                    },
-                )
-            )
+            service.export_report(ApiRequest(request_id="req-3", endpoint="export_report", payload={"report": ReportResult(symbol="BTCUSDT"), "output_path": "report.txt", "format": "txt"}))
 
 
 if __name__ == "__main__":

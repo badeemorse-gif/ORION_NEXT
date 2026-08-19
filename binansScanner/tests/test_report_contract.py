@@ -1,4 +1,7 @@
-"""Canonical ReportResult contract tests."""
+"""Canonical ReportResult contract tests.
+
+The audit fields are part of the canonical reporting evidence boundary.
+"""
 
 from __future__ import annotations
 
@@ -8,7 +11,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import Mock
 
-from models.report import ReportResult
+from models.report import ReportAuditStatus, ReportResult
 from reports.html_report import HtmlReportRenderer
 from reports.json_report import JsonReportRenderer
 from reports.report_exporter import ReportExporter, ReportFormat
@@ -25,24 +28,17 @@ class TestReportResultContract(unittest.TestCase):
         self.assertEqual(report.symbol, "BTCUSDT")
         self.assertEqual(report.summary, ())
         self.assertEqual(report.warnings, ())
+        self.assertEqual(report.audit.status, ReportAuditStatus.INCOMPLETE)
+        self.assertIsNone(report.audit.execution_status)
 
     def test_report_result_does_not_require_market_dataset(self) -> None:
-        report = ReportResult(symbol="BTCUSDT")
-        self.assertIsNotNone(report)
+        self.assertIsNotNone(ReportResult(symbol="BTCUSDT"))
 
     def test_report_result_is_incomplete_when_an_upstream_result_is_missing(self) -> None:
-        report = ReportResult(symbol="BTCUSDT")
-        self.assertFalse(report.is_complete)
+        self.assertFalse(ReportResult(symbol="BTCUSDT").is_complete)
 
     def test_report_result_is_structurally_complete_when_all_results_exist(self) -> None:
-        report = ReportResult(
-            symbol="BTCUSDT",
-            analysis=Mock(),
-            execution=Mock(),
-            profile=Mock(),
-            score=Mock(),
-            decision=Mock(),
-        )
+        report = ReportResult(symbol="BTCUSDT", analysis=Mock(), execution=Mock(), profile=Mock(), score=Mock(), decision=Mock())
         self.assertTrue(report.is_complete)
 
     def test_report_result_metadata_is_canonical(self) -> None:
@@ -57,46 +53,36 @@ class TestReportResultContract(unittest.TestCase):
             report.symbol = "ETHUSDT"  # type: ignore[misc]
 
     def test_report_result_warning_state(self) -> None:
-        report = ReportResult(symbol="BTCUSDT", warnings=("test warning",))
-        self.assertEqual(report.warnings, ("test warning",))
+        self.assertEqual(ReportResult(symbol="BTCUSDT", warnings=("test warning",)).warnings, ("test warning",))
 
     def test_json_renderer_consumes_canonical_report_result(self) -> None:
-        report = ReportResult(
-            symbol="BTCUSDT",
-            summary=("canonical report",),
-            warnings=("test warning",),
-        )
-        rendered = JsonReportRenderer().render(report)
-        payload = json.loads(rendered)
+        report = ReportResult(symbol="BTCUSDT", summary=("canonical report",), warnings=("test warning",))
+        payload = json.loads(JsonReportRenderer().render(report))
         self.assertEqual(payload["symbol"], "BTCUSDT")
         self.assertEqual(payload["summary"], ["canonical report"])
         self.assertIn("analysis", payload)
         self.assertIn("execution", payload)
+        self.assertIn("audit", payload)
 
     def test_html_renderer_consumes_canonical_report_result(self) -> None:
-        report = ReportResult(
-            symbol="BTCUSDT",
-            summary=("canonical report",),
-            warnings=("test warning",),
-        )
+        report = ReportResult(symbol="BTCUSDT", summary=("canonical report",), warnings=("test warning",))
         rendered = HtmlReportRenderer().render(report)
         self.assertIn("ORION Report", rendered)
         self.assertIn("BTCUSDT", rendered)
         self.assertIn("canonical report", rendered)
         self.assertIn("test warning", rendered)
+        self.assertIn("INCOMPLETE", rendered)
 
     def test_report_exporter_uses_renderer_boundary(self) -> None:
         report = ReportResult(symbol="BTCUSDT")
-        exporter = ReportExporter(
-            html_renderer=HtmlReportRenderer(),
-            json_renderer=JsonReportRenderer(),
-        )
+        exporter = ReportExporter(html_renderer=HtmlReportRenderer(), json_renderer=JsonReportRenderer())
         with tempfile.TemporaryDirectory() as temp_dir:
             output_path = Path(temp_dir) / "report.json"
             exporter.export(report, output_path, ReportFormat.JSON)
             self.assertTrue(output_path.exists())
             payload = json.loads(output_path.read_text(encoding="utf-8"))
             self.assertEqual(payload["symbol"], "BTCUSDT")
+            self.assertEqual(payload["audit"]["status"], "INCOMPLETE")
 
 
 if __name__ == "__main__":
