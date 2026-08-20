@@ -53,7 +53,7 @@ jobs:
           set -euo pipefail
           expected="${{ steps.source.outputs.expected_sha }}"
           actual="$(git rev-parse HEAD)"
-          printf 'EXPECTED_SHA=%s\nACTUAL_SHA=%s\n' "$expected" "$actual"
+          printf 'EXPECTED_SHA=%s\nACTUAL_CHECKOUT_SHA=%s\n' "$expected" "$actual"
           test "$expected" = "$actual"
 
       - name: Set up Python
@@ -81,41 +81,33 @@ jobs:
           git clean -fdX
 
       - name: Assert working tree clean
-        id: tree
         shell: bash
         run: |
           set -euo pipefail
           status="$(git status --porcelain --untracked-files=all)"
           printf 'WORKING_TREE_STATUS=%s\n' "$status"
           test -z "$status"
-          printf 'working_tree=clean\n' > "$EVIDENCE_DIR/clean-tree.txt"
 
-      - name: Build canonical CI metadata
+      - name: Build unified canonical evidence
         shell: bash
         run: |
           set -euo pipefail
           expected="${{ steps.source.outputs.expected_sha }}"
           actual="$(git rev-parse HEAD)"
           {
-            printf 'repository=badeemorse-gif/ORION_NEXT\n'
-            printf 'workflow=ORION Canonical CI\n'
             printf 'run_id=%s\n' "$GITHUB_RUN_ID"
             printf 'trigger=%s\n' "$GITHUB_EVENT_NAME"
             printf 'expected_sha=%s\n' "$expected"
             printf 'actual_sha=%s\n' "$actual"
-            printf 'test_command=python verify.py\n'
             printf 'test_result=PASS\n'
             printf 'working_tree=clean\n'
             printf 'timestamp=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-          } > "$EVIDENCE_DIR/canonical-ci-metadata.txt"
+          } > "$EVIDENCE_DIR/canonical-ci-evidence.txt"
 
-      - name: Upload canonical CI evidence
+      - name: Upload unified canonical evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: orion-canonical-ci-evidence-${{ github.run_id }}
           path: ${{ env.EVIDENCE_DIR }}
           if-no-files-found: error
-
-      # Verification-only touch: intentionally non-semantic.
-      # Ensures a fresh push-triggered run for this workflow revision.
