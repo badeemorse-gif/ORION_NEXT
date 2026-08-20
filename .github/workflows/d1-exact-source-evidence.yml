@@ -1,0 +1,116 @@
+name: D1 Exact Source Evidence
+
+on:
+  pull_request:
+    branches:
+      - main
+    types: [opened, synchronize, reopened]
+  workflow_dispatch:
+    inputs:
+      source_sha:
+        description: Exact source commit SHA to verify
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+env:
+  SOURCE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || inputs.source_sha }}
+  EVIDENCE_DIR: /tmp/d1-exact-source-evidence
+
+jobs:
+  d1-exact-source-verification:
+    name: D1 exact source verification
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Prepare evidence directory
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf "$EVIDENCE_DIR"
+          mkdir -p "$EVIDENCE_DIR"
+
+      - name: Checkout exact source SHA
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.SOURCE_SHA }}
+          fetch-depth: 0
+          clean: true
+
+      - name: Verify exact checkout
+        shell: bash
+        run: |
+          set -euo pipefail
+          EXPECTED_SHA="$SOURCE_SHA"
+          ACTUAL_SHA="$(git rev-parse HEAD)"
+          printf 'RUN_ID=%s\nEXPECTED_SHA=%s\nACTUAL_SHA=%s\ntimestamp=%s\n' \
+            "$GITHUB_RUN_ID" "$EXPECTED_SHA" "$ACTUAL_SHA" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            | tee "$EVIDENCE_DIR/metadata.txt"
+          test "$EXPECTED_SHA" = "$ACTUAL_SHA"
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: binansScanner/requirements.txt
+
+      - name: Install verification dependencies
+        working-directory: binansScanner
+        run: python -m pip install -r requirements.txt numpy pandas pandas-ta python-binance
+
+      - name: Run D1 Observer tests
+        id: d1_tests
+        working-directory: binansScanner
+        shell: bash
+        run: |
+          set -o pipefail
+          python -m unittest tests.test_orion_phase_a_runtime_observer tests.test_orion_phase_a_runtime_lookback -v 2>&1 | tee "$EVIDENCE_DIR/d1-tests.log"
+          printf 'D1_TEST_RESULT=PASS\n' > "$EVIDENCE_DIR/d1-test-result.txt"
+
+      - name: Run canonical full verification
+        id: full_verify
+        working-directory: binansScanner
+        shell: bash
+        run: |
+          set -o pipefail
+          python verify.py 2>&1 | tee "$EVIDENCE_DIR/full-verify.log"
+          printf 'FULL_VERIFY_RESULT=PASS\n' > "$EVIDENCE_DIR/full-verify-result.txt"
+
+      - name: Verify working tree clean
+        id: clean_tree
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          status="$(git status --porcelain)"
+          printf '%s\n' "$status" > "$EVIDENCE_DIR/git-status-porcelain.txt"
+          test -z "$status"
+          printf 'CLEAN_TREE=YES\n' > "$EVIDENCE_DIR/clean-tree.txt"
+
+      - name: Final exact-source evidence
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          {
+            printf 'RUN_ID=%s\n' "$GITHUB_RUN_ID"
+            printf 'EXPECTED_SHA=%s\n' "$SOURCE_SHA"
+            printf 'ACTUAL_SHA=%s\n' "$(git rev-parse HEAD)"
+            if [ -f "$EVIDENCE_DIR/d1-test-result.txt" ]; then cat "$EVIDENCE_DIR/d1-test-result.txt"; else printf 'D1_TEST_RESULT=FAIL\n'; fi
+            if [ -f "$EVIDENCE_DIR/full-verify-result.txt" ]; then cat "$EVIDENCE_DIR/full-verify-result.txt"; else printf 'FULL_VERIFY_RESULT=FAIL\n'; fi
+            if [ -f "$EVIDENCE_DIR/clean-tree.txt" ]; then cat "$EVIDENCE_DIR/clean-tree.txt"; else printf 'CLEAN_TREE=FAIL\n'; fi
+            printf 'timestamp=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          } > "$EVIDENCE_DIR/final-summary.txt"
+
+      - name: Upload D1 exact-source evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: d1-exact-source-evidence-${{ github.run_id }}
+          path: ${{ env.EVIDENCE_DIR }}
+          if-no-files-found: error
+          retention-days: 14
