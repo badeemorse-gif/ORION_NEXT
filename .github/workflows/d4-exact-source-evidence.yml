@@ -19,9 +19,11 @@ jobs:
     name: D4 exact source verification
     runs-on: ubuntu-latest
     timeout-minutes: 15
+
     env:
       SOURCE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || inputs.source_sha }}
       EVIDENCE_DIR: /tmp/d4-exact-source-evidence
+
     steps:
       - name: Prepare external evidence directory
         shell: bash
@@ -30,13 +32,17 @@ jobs:
           rm -rf "$EVIDENCE_DIR"
           mkdir -p "$EVIDENCE_DIR"
           printf '%s\n' "$SOURCE_SHA" > "$EVIDENCE_DIR/source_sha.txt"
-          printf 'RUN_ID=%s\nEVENT=%s\nREF=%s\nSOURCE_SHA=%s\n' "$GITHUB_RUN_ID" "$GITHUB_EVENT_NAME" "$GITHUB_REF" "$SOURCE_SHA" > "$EVIDENCE_DIR/metadata.txt"
+          printf 'RUN_ID=%s\nEVENT=%s\nREF=%s\nSOURCE_SHA=%s\n' \
+            "$GITHUB_RUN_ID" "$GITHUB_EVENT_NAME" "$GITHUB_REF" "$SOURCE_SHA" \
+            > "$EVIDENCE_DIR/metadata.txt"
+
       - name: Checkout exact PR source SHA
         uses: actions/checkout@v4
         with:
           ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || inputs.source_sha }}
           fetch-depth: 1
           clean: true
+
       - name: Verify exact source checkout
         shell: bash
         run: |
@@ -48,16 +54,24 @@ jobs:
           {
             printf 'EXPECTED_SHA=%s\n' "$EXPECTED_SHA"
             printf 'ACTUAL_CHECKOUT_SHA=%s\n' "$ACTUAL_SHA"
-            if [ "$EXPECTED_SHA" = "$ACTUAL_SHA" ]; then printf 'SHA_MATCH=YES\n'; else printf 'SHA_MATCH=NO\n'; exit 1; fi
+            if [ "$EXPECTED_SHA" = "$ACTUAL_SHA" ]; then
+              printf 'SHA_MATCH=YES\n'
+            else
+              printf 'SHA_MATCH=NO\n'
+              exit 1
+            fi
           } | tee "$EVIDENCE_DIR/sha_verification.txt"
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.12'
           cache: pip
+
       - name: Install verification dependencies
         working-directory: binansScanner
         run: python -m pip install -r requirements.txt numpy pandas pandas-ta python-binance
+
       - name: Run canonical D4 verification
         working-directory: binansScanner
         shell: bash
@@ -68,14 +82,20 @@ jobs:
           VERIFY_EXIT_CODE=${PIPESTATUS[0]}
           printf 'VERIFY_EXIT_CODE=%s\n' "$VERIFY_EXIT_CODE" | tee "$EVIDENCE_DIR/verify_exit_code.txt"
           exit "$VERIFY_EXIT_CODE"
+
       - name: Verify working tree is clean
         if: always()
         shell: bash
         run: |
           set -euo pipefail
           git status --porcelain > "$EVIDENCE_DIR/git_status_porcelain.txt"
-          if [ -s "$EVIDENCE_DIR/git_status_porcelain.txt" ]; then printf 'CLEAN_TREE=NO\n' | tee "$EVIDENCE_DIR/clean_tree.txt"; cat "$EVIDENCE_DIR/git_status_porcelain.txt"; exit 1; fi
+          if [ -s "$EVIDENCE_DIR/git_status_porcelain.txt" ]; then
+            printf 'CLEAN_TREE=NO\n' | tee "$EVIDENCE_DIR/clean_tree.txt"
+            cat "$EVIDENCE_DIR/git_status_porcelain.txt"
+            exit 1
+          fi
           printf 'CLEAN_TREE=YES\n' | tee "$EVIDENCE_DIR/clean_tree.txt"
+
       - name: Write final evidence summary
         if: always()
         shell: bash
@@ -89,6 +109,7 @@ jobs:
             if [ -f "$EVIDENCE_DIR/verify_exit_code.txt" ]; then cat "$EVIDENCE_DIR/verify_exit_code.txt"; fi
             if [ -f "$EVIDENCE_DIR/clean_tree.txt" ]; then cat "$EVIDENCE_DIR/clean_tree.txt"; fi
           } > "$EVIDENCE_DIR/final_summary.txt"
+
       - name: Upload D4 exact source evidence
         if: always()
         uses: actions/upload-artifact@v4
