@@ -5,31 +5,109 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  workflow_dispatch:
 
 permissions:
   contents: read
 
+env:
+  EVIDENCE_DIR: ${{ runner.temp }}/orion-verification-evidence
+
 jobs:
   verify-binans-scanner:
-    name: Verify binansScanner
+    name: Canonical ORION Verification
     runs-on: ubuntu-latest
-    timeout-minutes: 15
-    defaults:
-      run:
-        working-directory: binansScanner
+    timeout-minutes: 20
 
     steps:
-      - name: Checkout repository
+      - name: Prepare evidence directory
+        shell: bash
+        run: mkdir -p "$EVIDENCE_DIR"
+
+      - name: Resolve exact source SHA
+        id: source
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "$GITHUB_EVENT_NAME" == "pull_request" ]]; then
+            expected_sha="${{ github.event.pull_request.head.sha }}"
+          else
+            expected_sha="$GITHUB_SHA"
+          fi
+          printf 'EXPECTED_SHA=%s\n' "$expected_sha"
+          printf 'expected_sha=%s\n' "$expected_sha" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout exact source revision
         uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.source.outputs.expected_sha }}
+          fetch-depth: 0
+
+      - name: Assert exact checkout parity
+        shell: bash
+        run: |
+          set -euo pipefail
+          expected="${{ steps.source.outputs.expected_sha }}"
+          actual="$(git rev-parse HEAD)"
+          printf 'EXPECTED_SHA=%s\nACTUAL_CHECKOUT_SHA=%s\n' "$expected" "$actual"
+          test "$expected" = "$actual"
 
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
           cache: pip
+          cache-dependency-path: binansScanner/requirements.txt
 
       - name: Install verification dependencies
+        working-directory: binansScanner
         run: python -m pip install -r requirements.txt numpy pandas pandas-ta python-binance
 
       - name: Verify syntax and full unittest suite
-        run: python verify.py
+        working-directory: binansScanner
+        shell: bash
+        run: |
+          set -o pipefail
+          python verify.py 2>&1 | tee "$EVIDENCE_DIR/test-results.txt"
+
+      - name: Remove ignored test artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+          git clean -fdX
+
+      - name: Assert working tree clean
+        shell: bash
+        run: |
+          set -euo pipefail
+          status="$(git status --porcelain --untracked-files=all)"
+          printf 'WORKING_TREE_STATUS=%s\n' "$status"
+          test -z "$status"
+
+      - name: Build canonical evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          expected="${{ steps.source.outputs.expected_sha }}"
+          actual="$(git rev-parse HEAD)"
+          {
+            printf 'repository=badeemorse-gif/ORION_NEXT\n'
+            printf 'workflow=ORION verification\n'
+            printf 'run_id=%s\n' "$GITHUB_RUN_ID"
+            printf 'trigger=%s\n' "$GITHUB_EVENT_NAME"
+            printf 'expected_sha=%s\n' "$expected"
+            printf 'actual_checkout_sha=%s\n' "$actual"
+            printf 'test_result=PASS\n'
+            printf 'working_tree=clean\n'
+            printf 'timestamp=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          } > "$EVIDENCE_DIR/canonical-evidence.txt"
+
+      - name: Upload canonical evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: orion-verification-evidence-${{ github.run_id }}
+          path: ${{ env.EVIDENCE_DIR }}
+          if-no-files-found: error
+
+      # Bootstrap touch: force a fresh post-merge main push verification run.
