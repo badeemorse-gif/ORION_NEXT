@@ -190,6 +190,11 @@ class Orchestrator:
 
             self._change_stage(PipelineStage.PROFILE)
             profile = self._profile_engine.build_profile(dataset)
+            if not profile.is_tradeable:
+                blocked = "; ".join(profile.blocks) or "Profile intelligence is not tradeable."
+                raise PipelineError(
+                    f"Profile intelligence blocked before Score/Decision: {blocked}"
+                )
             completed += 1
 
             self._change_stage(PipelineStage.SCORE)
