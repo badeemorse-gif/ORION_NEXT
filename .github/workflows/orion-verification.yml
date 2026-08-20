@@ -10,9 +10,6 @@ on:
 permissions:
   contents: read
 
-env:
-  EVIDENCE_DIR: ${{ runner.temp }}/orion-verification-evidence
-
 jobs:
   verify-binans-scanner:
     name: Canonical ORION Verification
@@ -22,7 +19,11 @@ jobs:
     steps:
       - name: Prepare evidence directory
         shell: bash
-        run: mkdir -p "$EVIDENCE_DIR"
+        run: |
+          set -euo pipefail
+          EVIDENCE_DIR="$RUNNER_TEMP/orion-verification-evidence"
+          mkdir -p "$EVIDENCE_DIR"
+          printf 'EVIDENCE_DIR=%s\n' "$EVIDENCE_DIR" >> "$GITHUB_ENV"
 
       - name: Resolve exact source SHA
         id: source
@@ -107,7 +108,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: orion-verification-evidence-${{ github.run_id }}
-          path: ${{ env.EVIDENCE_DIR }}
+          path: "$EVIDENCE_DIR"
           if-no-files-found: error
 
       # Bootstrap touch: force a fresh post-merge main push verification run.
