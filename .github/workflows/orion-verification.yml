@@ -108,7 +108,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: orion-verification-evidence-${{ github.run_id }}
-          path: "$EVIDENCE_DIR"
+          path: ${{ runner.temp }}/orion-verification-evidence
           if-no-files-found: error
 
       # Bootstrap touch: force a fresh post-merge main push verification run.
