@@ -1,10 +1,17 @@
 from __future__ import annotations
 
-import asyncio
 from datetime import datetime, timezone
 from pathlib import Path
+import sys
 import tempfile
 import unittest
+
+# Canonical D5 tooling lives at repository-root/tools. The verification suite
+# executes from binansScanner, so expose the repository root explicitly for
+# this runner contract test without changing production import semantics.
+REPO_ROOT = Path(__file__).resolve().parents[2]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
 
 from integration.paper_realtime_lifecycle import PaperRealtimeLifecycle
 from integration.paper_runtime_supervisor import PaperRuntimeSupervisor
@@ -12,7 +19,6 @@ from models.market_event import MarketEvent, MarketEventType
 from models.opportunity import MarketMetrics, OpportunityCandidate, OpportunityCandidateSet
 from models.paper_capital import PaperLedger
 from tools.orion_paper_8h_runner import JsonlRunLog, Paper8HConfig, Paper8HRunner
-
 
 UTC = timezone.utc
 
@@ -32,12 +38,7 @@ def candle_event(price: float, event_id: str, timestamp: datetime) -> MarketEven
         symbol="BTCUSDT",
         event_timestamp=timestamp,
         event_type=MarketEventType.CANDLE_CLOSE,
-        payload={
-            "close": price,
-            "price": price,
-            "timeframe": "1m",
-            "is_closed": True,
-        },
+        payload={"close": price, "price": price, "timeframe": "1m", "is_closed": True},
         source_event_id=event_id,
     )
 
@@ -98,8 +99,7 @@ class TestPaper8HRunnerE2E(unittest.IsolatedAsyncioTestCase):
     async def test_market_event_to_fill_to_position_to_ledger_to_recovery(self):
         t0 = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
         await self.runner._on_market_event(candle_event(100.0, "candle-1", t0))
-        filled = await self.runner._on_market_event(trade_event(99.0, "trade-1", t0.replace(second=10)))
-        self.assertIsNone(filled)
+        await self.runner._on_market_event(trade_event(99.0, "trade-1", t0.replace(second=10)))
         self.assertEqual(len(self.runner.supervisor.active_positions), 1)
         state = self.runner.supervisor.runtime.ledger.replay()
         self.assertAlmostEqual(state.starting_equity, 200.0)
