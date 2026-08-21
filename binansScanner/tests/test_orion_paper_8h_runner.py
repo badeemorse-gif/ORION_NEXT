@@ -62,10 +62,15 @@ class TestPaper8HConfig(unittest.TestCase):
         self.assertEqual(config.duration_hours, 8.0)
         self.assertEqual(config.starting_capital, 200.0)
         self.assertEqual(config.symbols, ("BTCUSDT",))
+        self.assertEqual(config.max_notional_pct, 20.0)
 
     def test_invalid_duration_fails_closed(self):
         with self.assertRaises(ValueError):
             Paper8HConfig(duration_hours=0)
+
+    def test_invalid_notional_limit_fails_closed(self):
+        with self.assertRaises(ValueError):
+            Paper8HConfig(max_notional_pct=100.1)
 
 
 class TestPaper8HRunnerE2E(unittest.IsolatedAsyncioTestCase):
