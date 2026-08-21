@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+from unittest.mock import Mock
 import unittest
 
 from integration.paper_runtime_supervisor import PaperRuntimeSupervisor
@@ -123,9 +124,10 @@ class TestPaperRuntimeSupervisor(unittest.TestCase):
         t0 = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
         runtime = PaperRuntimeSupervisor()
         runtime.submit_signal(snapshot(version=1, price=100.0, generated_at=t0), now=t0)
+        runtime.runtime.on_market_event = Mock(side_effect=ValueError("simulated runtime failure"))
         with self.assertRaises(ValueError):
             runtime.process_market_event(market(100.0, t0 + timedelta(seconds=1), "first"))
-        self.assertTrue(runtime.health.healthy is False)
+        self.assertFalse(runtime.health.healthy)
         self.assertEqual(runtime.process_market_event(market(100.0, t0 + timedelta(seconds=2), "second")), ())
 
 
