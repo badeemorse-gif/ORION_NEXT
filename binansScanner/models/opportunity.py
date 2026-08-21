@@ -2,7 +2,7 @@
 
 Discovery/ranking only. No signal, decision, execution, or position state.
 """
-from __future__
+from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Optional
