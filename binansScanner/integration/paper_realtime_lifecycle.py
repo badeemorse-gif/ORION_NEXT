@@ -116,15 +116,15 @@ class PaperRealtimeLifecycle:
         self._last_signal[intent_id] = snapshot
         return result.action
 
-    def _d4_fill_eligible(self, order_id: str) -> bool:
-        """Use D4 lifecycle state/history as the sole fill authority."""
+    def _d4_fill_eligible(self, order_id: str, market_price: float) -> bool:
+        """D4 owns fill authority; integrated Paper semantics require exact entry touch."""
         order = self.orders.get(order_id)
         if order.state is not OrderState.PENDING:
             return False
         history = self.orders.history(order_id)
-        if not history:
+        if not history or history[-1].event_type != "ORDER_CREATED":
             return False
-        return history[-1].event_type == "ORDER_CREATED"
+        return float(market_price) == float(order.price)
 
     def on_market_event(self, event: MarketEvent) -> tuple[str, ...]:
         if event.event_id in self._seen_market_events:
@@ -134,13 +134,14 @@ class PaperRealtimeLifecycle:
         if price is None:
             return ()
         filled: list[str] = []
+        market_price = float(price)
         for order in self.pending.pending():
             if order.symbol != event.symbol:
                 continue
-            if not self._d4_fill_eligible(order.order_id):
+            if not self._d4_fill_eligible(order.order_id, market_price):
                 continue
             try:
-                matched = self.pending.try_fill(order.order_id, float(price), event.event_timestamp)
+                matched = self.pending.try_fill(order.order_id, market_price, event.event_timestamp)
             except (RuntimeError, KeyError, ValueError):
                 continue
             fill = FillMetadata(fill_id=f"FILL-{matched.order_id}", quantity=matched.quantity, price=matched.entry_price, occurred_at=event.event_timestamp, source="PAPER")
