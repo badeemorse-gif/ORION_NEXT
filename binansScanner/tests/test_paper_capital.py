@@ -61,11 +61,14 @@ class TestPaperCapitalContracts(unittest.TestCase):
         state = ledger.replay()
         self.assertEqual(state.position("BTCUSDT").quantity, 1.0)
         self.assertAlmostEqual(state.position("BTCUSDT").average_price, 101.0)
-        self.assertAlmostEqual(state.wallet.cash, 98.0)
+        self.assertAlmostEqual(state.wallet.cash, 97.99)
         self.assertAlmostEqual(state.open_position_value, 105.0)
         self.assertAlmostEqual(state.unrealized_pnl, 4.0)
         self.assertAlmostEqual(state.cumulative_fees, 1.01)
         self.assertAlmostEqual(state.cumulative_slippage, 1.0)
+        event_types = {event.event_type for event in ledger.events}
+        self.assertIn(LedgerEventType.FEE, event_types)
+        self.assertIn(LedgerEventType.SLIPPAGE, event_types)
 
     def test_sell_fill_realizes_pnl_and_closes_position(self):
         ledger = PaperLedger(FeeModel(rate=0.01), SlippageModel(rate=0.0))
@@ -74,12 +77,14 @@ class TestPaperCapitalContracts(unittest.TestCase):
         state = ledger.replay()
         self.assertEqual(state.position("BTCUSDT").quantity, 0.0)
         self.assertAlmostEqual(state.realized_pnl, 10.0)
-        self.assertAlmostEqual(state.wallet.cash, 208.0)
-        self.assertAlmostEqual(state.equity, 208.0)
+        self.assertAlmostEqual(state.cumulative_fees, 2.1)
+        self.assertAlmostEqual(state.wallet.cash, 207.9)
+        self.assertAlmostEqual(state.equity, 207.9)
+        self.assertTrue(state.accounting_identity_holds())
+        self.assertIn(LedgerEventType.PNL, {event.event_type for event in ledger.events})
 
     def test_required_trade_event_types_are_written(self):
         ledger = PaperLedger().record_order(self.t0, "BTCUSDT", LedgerSide.BUY, 1.0, 100.0)
-        ledger = ledger.record_exit(self.t0 + timedelta(minutes=1), "BTCUSDT", 0.0, 100.0) if False else ledger
         ledger = ledger.record_fill(self.t0 + timedelta(seconds=1), "BTCUSDT", LedgerSide.BUY, 1.0, 100.0)
         ledger = ledger.record_exit(self.t0 + timedelta(minutes=1), "BTCUSDT", 1.0, 110.0)
         ledger = ledger.mark(self.t0 + timedelta(minutes=2), "BTCUSDT", 110.0)
@@ -93,7 +98,8 @@ class TestPaperCapitalContracts(unittest.TestCase):
         ledger = ledger.mark(self.t0 + timedelta(minutes=5), "BTCUSDT", 102.0)
         state = ledger.replay()
         self.assertTrue(state.accounting_identity_holds())
-        self.assertAlmostEqual(state.equity, 200.0 - state.accounting_adjustments + 0.0, places=9)
+        self.assertAlmostEqual(state.equity, VIRTUAL_STARTING_EQUITY - state.accounting_adjustments, places=9)
+        self.assertAlmostEqual(state.cumulative_slippage, 0.5)
         replay_again = ledger.replay()
         self.assertEqual(state, replay_again)
 
@@ -129,6 +135,8 @@ class TestPaperCapitalContracts(unittest.TestCase):
             PaperLedger().record_fill(self.t0, "BTCUSDT", LedgerSide.BUY, -1.0, 100.0)
         with self.assertRaises(ValueError):
             PaperLedger().record_fill(self.t0, "BTCUSDT", LedgerSide.BUY, 1.0, float("inf"))
+        with self.assertRaises(ValueError):
+            PaperLedger().record_fill(self.t0, "BTCUSDT", LedgerSide.SELL, 1.0, 100.0)
 
 
 if __name__ == "__main__":
