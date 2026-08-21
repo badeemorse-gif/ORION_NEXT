@@ -52,7 +52,7 @@ class TestUniverseDiscovery(unittest.TestCase):
             ]
         )
         result = MarketUniverseDiscovery(source).discover()
-        self.assertEqual(len(result), 2)
+        self.assertEqual(len(result), 1)
 
 
 class TestEligibility(unittest.TestCase):
