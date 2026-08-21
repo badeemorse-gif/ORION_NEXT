@@ -82,7 +82,7 @@ class MarketUniverseDiscovery:
     def discover(self) -> tuple[UniverseCandidate, ...]:
         payload = self._source.exchange_info()
         symbols = payload.get("symbols", [])
-        candidates: list[UniverseCandidate] = []
+        by_symbol: dict[str, UniverseCandidate] = {}
 
         for item in symbols:
             if not isinstance(item, Mapping):
@@ -101,9 +101,13 @@ class MarketUniverseDiscovery:
                 continue
             if item.get("isSpotTradingAllowed") is False:
                 continue
-            candidates.append(UniverseCandidate(symbol=symbol, base_asset=base, quote_asset=quote))
+            by_symbol[symbol] = UniverseCandidate(
+                symbol=symbol,
+                base_asset=base,
+                quote_asset=quote,
+            )
 
-        return tuple(sorted(candidates, key=lambda candidate: candidate.symbol))
+        return tuple(sorted(by_symbol.values(), key=lambda candidate: candidate.symbol))
 
 
 class MarketEligibilityFilter:
