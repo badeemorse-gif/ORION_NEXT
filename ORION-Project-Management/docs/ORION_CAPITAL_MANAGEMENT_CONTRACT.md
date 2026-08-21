@@ -51,7 +51,7 @@ Every allocation records:
 
 ## Portfolio allocation
 
-Ranked candidates are processed deterministically by rank, then score, then symbol/intent. The manager can reserve multiple concurrent allocations up to available capital and the configured `max_concurrent_positions`.
+Ranked candidates are processed deterministically by rank, then score, then symbol/intent. The default policy does **not** impose an artificial single-position concurrency cap. `max_concurrent_positions` is an explicit optional portfolio risk limit; when configured, it caps simultaneous pending/active symbols. When omitted, concurrency remains bounded by available/reserved capital and duplicate-symbol protection.
 
 An existing active symbol or duplicate pending/committed symbol+intent is not allocated again. The manager never closes an existing position to make room for a better candidate.
 
