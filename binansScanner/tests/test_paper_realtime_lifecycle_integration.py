@@ -53,6 +53,57 @@ class TestPaperRealtimeLifecycleIntegration(unittest.TestCase):
         self.assertEqual(runtime.positions.active_for_symbol("BTCUSDT").quantity, 1.0)
         self.assertEqual(len(runtime.ledger.events), 5)
 
+    def test_replacement_buy_limit_fills_below_current_entry(self) -> None:
+        runtime = PaperRealtimeLifecycle()
+        t0 = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
+        first = runtime.submit_signal(snapshot(version=1, price=100.0, generated_at=t0), now=t0)
+        t1 = t0 + timedelta(minutes=1)
+        runtime.revalidate(intent_id=first.intent_id, snapshot=snapshot(version=2, price=118.0, generated_at=t1), market_price=120.0, now=t1)
+        replacement = runtime.pending.active_for_intent(first.intent_id)
+        self.assertIsNotNone(replacement)
+        self.assertEqual(runtime.on_market_event(event(117.0, t1 + timedelta(minutes=1), "p117")), (replacement.order_id,))
+        self.assertEqual(runtime.orders.get(replacement.order_id).state, OrderState.FILLED)
+
+    def test_buy_limit_above_entry_does_not_fill(self) -> None:
+        runtime = PaperRealtimeLifecycle()
+        t0 = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
+        order = runtime.submit_signal(snapshot(version=1, price=118.0, generated_at=t0), now=t0)
+        self.assertEqual(runtime.on_market_event(event(119.0, t0 + timedelta(seconds=1), "p119")), ())
+        self.assertEqual(runtime.orders.get(order.order_id).state, OrderState.PENDING)
+
+    def test_buy_limit_at_entry_fills_once(self) -> None:
+        runtime = PaperRealtimeLifecycle()
+        t0 = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
+        order = runtime.submit_signal(snapshot(version=1, price=118.0, generated_at=t0), now=t0)
+        self.assertEqual(runtime.on_market_event(event(118.0, t0 + timedelta(seconds=1), "p118")), (order.order_id,))
+        self.assertEqual(runtime.on_market_event(event(118.0, t0 + timedelta(seconds=2), "p118-duplicate-source")), ())
+        self.assertEqual(runtime.orders.get(order.order_id).state, OrderState.FILLED)
+
+    def test_sell_limit_at_or_above_entry_fills(self) -> None:
+        runtime = PaperRealtimeLifecycle()
+        t0 = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
+        order = runtime.submit_signal(snapshot(version=1, price=118.0, direction="SELL", generated_at=t0), now=t0)
+        self.assertEqual(runtime.on_market_event(event(119.0, t0 + timedelta(seconds=1), "sell119")), (order.order_id,))
+        self.assertEqual(runtime.orders.get(order.order_id).state, OrderState.FILLED)
+
+    def test_sell_limit_below_entry_does_not_fill(self) -> None:
+        runtime = PaperRealtimeLifecycle()
+        t0 = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
+        order = runtime.submit_signal(snapshot(version=1, price=118.0, direction="SELL", generated_at=t0), now=t0)
+        self.assertEqual(runtime.on_market_event(event(117.0, t0 + timedelta(seconds=1), "sell117")), ())
+        self.assertEqual(runtime.orders.get(order.order_id).state, OrderState.PENDING)
+
+    def test_replacement_does_not_inherit_terminal_state(self) -> None:
+        runtime = PaperRealtimeLifecycle()
+        t0 = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
+        first = runtime.submit_signal(snapshot(version=1, price=100.0, generated_at=t0), now=t0)
+        t1 = t0 + timedelta(minutes=1)
+        runtime.revalidate(intent_id=first.intent_id, snapshot=snapshot(version=2, price=118.0, generated_at=t1), market_price=120.0, now=t1)
+        replacement = runtime.pending.active_for_intent(first.intent_id)
+        self.assertIsNotNone(replacement)
+        self.assertEqual(runtime.orders.get(first.order_id).state, OrderState.REPLACED)
+        self.assertEqual(runtime.orders.get(replacement.order_id).state, OrderState.PENDING)
+
     def test_replacement_has_single_active_intent_and_old_is_terminal(self) -> None:
         runtime = PaperRealtimeLifecycle()
         t0 = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
@@ -144,7 +195,7 @@ class TestPaperRealtimeLifecycleIntegration(unittest.TestCase):
         self.assertAlmostEqual(state_a.wallet.cash, 210.0)
         self.assertTrue(runtime.no_live_execution())
 
-    def test_repriced_order_only_fills_at_current_entry_price(self) -> None:
+    def test_repriced_order_only_fills_at_or_below_current_buy_entry(self) -> None:
         runtime = PaperRealtimeLifecycle()
         t0 = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
         first = runtime.submit_signal(snapshot(version=1, price=100.0, generated_at=t0), now=t0)
@@ -152,8 +203,8 @@ class TestPaperRealtimeLifecycleIntegration(unittest.TestCase):
         runtime.revalidate(intent_id=first.intent_id, snapshot=snapshot(version=2, price=118.0, generated_at=t1), market_price=120.0, now=t1)
         replacement = runtime.pending.active_for_intent(first.intent_id)
         self.assertIsNotNone(replacement)
-        self.assertEqual(runtime.on_market_event(event(100.0, t1 + timedelta(minutes=1), "below-current-entry")), ())
-        self.assertEqual(runtime.on_market_event(event(118.0, t1 + timedelta(minutes=2), "current-entry")), (replacement.order_id,))
+        self.assertEqual(runtime.on_market_event(event(100.0, t1 + timedelta(minutes=1), "old-entry")), ())
+        self.assertEqual(runtime.on_market_event(event(117.0, t1 + timedelta(minutes=2), "below-current-entry")), (replacement.order_id,))
         self.assertEqual(runtime.positions.active_for_symbol("BTCUSDT").source_order_id, replacement.order_id)
 
 
