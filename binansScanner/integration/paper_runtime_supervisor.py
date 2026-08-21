@@ -11,7 +11,7 @@ from typing import Callable, Iterable, Optional
 
 from integration.paper_realtime_lifecycle import PaperRealtimeLifecycle
 from models.market_event import MarketEvent
-from models.order_position_lifecycle import OrderState
+from models.order_position_lifecycle import ExitReason, OrderState
 from models.signal_snapshot import SignalSnapshot
 from tools.pending_order_revalidation import PendingOrder, RevalidationAction
 
@@ -94,6 +94,15 @@ class PaperRuntimeSupervisor:
         self._operations.append(("revalidate", intent_id, snapshot, market_price, now, timeframe, market_regime, canonical_replacement_id))
         return action
 
+    def exit_position(self, *, symbol: str, price: float, now: datetime, reason: ExitReason = ExitReason.SIGNAL_REVERSAL) -> str:
+        if self._failed:
+            raise RuntimeError("paper runtime is failed closed")
+        order_id = self.runtime.exit_position(symbol=symbol, price=price, now=now, reason=reason)
+        position = self.runtime.positions.active_for_symbol(symbol)
+        position_id = order_id.removeprefix("EXIT-")
+        self._operations.append(("exit", symbol, price, now, reason, order_id, position_id))
+        return order_id
+
     def process_market_event(self, event: MarketEvent) -> tuple[str, ...]:
         if self._failed:
             return ()
@@ -130,6 +139,9 @@ class PaperRuntimeSupervisor:
             elif operation[0] == "revalidate":
                 _, intent_id, snapshot, market_price, now, timeframe, market_regime, replacement_order_id = operation
                 recovered.revalidate(intent_id=intent_id, snapshot=snapshot, market_price=market_price, now=now, timeframe=timeframe, market_regime=market_regime, replacement_order_id=replacement_order_id)
+            elif operation[0] == "exit":
+                _, symbol, price, now, reason, _, _ = operation
+                recovered.exit_position(symbol=symbol, price=price, now=now, reason=reason)
             elif operation[0] == "market":
                 recovered.process_market_event(operation[1])
         return recovered
