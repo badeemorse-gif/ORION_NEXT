@@ -11,7 +11,7 @@ from typing import Callable, Iterable, Optional
 
 from integration.paper_realtime_lifecycle import PaperRealtimeLifecycle
 from models.market_event import MarketEvent
-from models.order_position_lifecycle import ExitReason, OrderState
+from models.order_position_lifecycle import OrderState
 from models.signal_snapshot import SignalSnapshot
 from tools.pending_order_revalidation import PendingOrder, RevalidationAction
 
@@ -94,45 +94,6 @@ class PaperRuntimeSupervisor:
         self._operations.append(("revalidate", intent_id, snapshot, market_price, now, timeframe, market_regime, canonical_replacement_id))
         return action
 
-    def exit_position(self, *, symbol: str, price: float, now: datetime, reason: ExitReason = ExitReason.SIGNAL_REVERSAL) -> str:
-        if self._failed:
-            raise RuntimeError("paper runtime is failed closed")
-        position = self.runtime.positions.active_for_symbol(symbol)
-        if position is None:
-            raise ValueError(f"no active position for {symbol}")
-        order_id = f"EXIT-{position.position_id}"
-        before_orders = len(self.runtime.orders.events)
-        before_positions = len(self.runtime.positions.events)
-        before_ledger = len(self.runtime.ledger.events)
-        self.runtime.exit_position(symbol=symbol, price=price, now=now, reason=reason)
-        exit_order = self.runtime.orders.get(order_id)
-        exit_order_events = self.runtime.orders.events[before_orders:]
-        position_events = self.runtime.positions.events[before_positions:]
-        ledger_events = self.runtime.ledger.events[before_ledger:]
-        fill = exit_order.fill
-        if fill is None:
-            raise RuntimeError("D4 exit order completed without fill metadata")
-        self._operations.append(("exit", {
-            "order_id": exit_order.order_id,
-            "symbol": exit_order.symbol,
-            "side": exit_order.side.value,
-            "quantity": exit_order.quantity,
-            "price": exit_order.price,
-            "timestamp": exit_order.created_at,
-            "fill_id": fill.fill_id,
-            "fill_quantity": fill.quantity,
-            "fill_price": fill.price,
-            "fill_timestamp": fill.occurred_at,
-            "fill_source": fill.source,
-            "position_id": position.position_id,
-            "position_action": "EXIT",
-            "reason": reason,
-            "order_events": exit_order_events,
-            "position_events": position_events,
-            "ledger_events": ledger_events,
-        }))
-        return order_id
-
     def process_market_event(self, event: MarketEvent) -> tuple[str, ...]:
         if self._failed:
             return ()
@@ -160,13 +121,7 @@ class PaperRuntimeSupervisor:
         return processed
 
     def recover(self) -> "PaperRuntimeSupervisor":
-        """Rebuild a fresh aggregate from canonical journal operations.
-
-        EXIT operations retain the canonical order/fill/position/ledger
-        evidence and are replayed exactly once, after their entry position
-        exists. D4 remains the authority for lifecycle transitions and D6
-        remains the authority for accounting; recovery only orchestrates them.
-        """
+        """Rebuild a fresh aggregate using journaled canonical identities."""
         recovered = PaperRuntimeSupervisor(runtime=PaperRealtimeLifecycle(revalidation_policy=self.runtime.revalidation_policy))
         for operation in self._operations:
             if operation[0] == "submit":
@@ -175,9 +130,6 @@ class PaperRuntimeSupervisor:
             elif operation[0] == "revalidate":
                 _, intent_id, snapshot, market_price, now, timeframe, market_regime, replacement_order_id = operation
                 recovered.revalidate(intent_id=intent_id, snapshot=snapshot, market_price=market_price, now=now, timeframe=timeframe, market_regime=market_regime, replacement_order_id=replacement_order_id)
-            elif operation[0] == "exit":
-                data = operation[1]
-                recovered.exit_position(symbol=data["symbol"], price=data["fill_price"], now=data["fill_timestamp"], reason=data["reason"])
             elif operation[0] == "market":
                 recovered.process_market_event(operation[1])
         return recovered

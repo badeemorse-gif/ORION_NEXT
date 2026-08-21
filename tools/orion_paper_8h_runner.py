@@ -27,68 +27,18 @@ if str(_BINANS_SCANNER) not in sys.path:
     sys.path.insert(0, str(_BINANS_SCANNER))
 
 from decision_engine import evaluate_decision
-from engines.indicator_engine import IndicatorEngine
-from engines.profile_engine import ProfileEngine
 from enums import Timeframe
 from integration.paper_realtime_lifecycle import PaperRealtimeLifecycle
 from integration.paper_runtime_supervisor import PaperRuntimeSupervisor
 from models.market_event import MarketEvent, MarketEventType
-from models.opportunity import MarketMetrics, OpportunityCandidate
+from models.opportunity import MarketMetrics
 from models.paper_capital import PaperLedger
 from models.signal_snapshot import MaterialChangePolicy, SignalIdentity, SignalSnapshot, build_next_snapshot
-from providers.binance_mapper import BinanceMapper
 from providers.market_stream import BinanceWebSocketMarketStream, MarketStreamRunner
 from services.opportunity_discovery import MarketUniverseDiscovery, OpportunityConfig, OpportunityDiscovery
 
 UTC = timezone.utc
 BINANCE_PUBLIC_API = "https://api.binance.com"
-
-
-class CanonicalDecisionContextProvider:
-    """Build the actual upstream profile context used at the decision boundary."""
-
-    _PROFILE_TIMEFRAMES = (("1h", Timeframe.H1), ("4h", Timeframe.H4), ("1d", Timeframe.D1))
-
-    def __init__(self, api_base: str = BINANCE_PUBLIC_API) -> None:
-        self._api_base = api_base.rstrip("/")
-        self._mapper = BinanceMapper()
-        self._indicator_engine = IndicatorEngine()
-        self._profile_engine = ProfileEngine()
-        self._cache: dict[str, tuple[float, Mapping[str, Any]]] = {}
-
-    def _get_json(self, path: str, params: Mapping[str, str]) -> Any:
-        request = Request(f"{self._api_base}{path}?{urlencode(params)}", headers={"User-Agent": "ORION-paper-runner/1.0"}, method="GET")
-        with urlopen(request, timeout=10) as response:
-            return json.loads(response.read().decode("utf-8"))
-
-    def build(self, symbol: str) -> Mapping[str, Any]:
-        symbol = symbol.upper()
-        cached = self._cache.get(symbol)
-        now = time.monotonic()
-        if cached is not None and now - cached[0] < 30.0:
-            return cached[1]
-        timeframe_data = {}
-        for interval, timeframe in self._PROFILE_TIMEFRAMES:
-            payload = self._get_json("/api/v3/klines", {"symbol": symbol, "interval": interval, "limit": "250"})
-            if not isinstance(payload, list) or not payload:
-                raise RuntimeError(f"No canonical profile data for {symbol} {interval}")
-            timeframe_data[timeframe] = self._mapper.convert_klines_to_dataframe(payload)
-        dataset = self._mapper.create_market_dataset(symbol=symbol, timeframe_data=timeframe_data, source="BINANCE_PUBLIC_PROFILE")
-        dataset = self._indicator_engine.calculate_dataset(dataset)
-        profile = self._profile_engine.build_profile(dataset)
-        context: Mapping[str, Any] = {
-            "health_score": float(profile.statistics.health_score),
-            "trade_mode": "FULL_ANALYSIS" if profile.is_tradeable else "NEW_LISTING",
-        }
-        self._cache[symbol] = (now, context)
-        return context
-
-
-def canonical_decision(candidate: OpportunityCandidate, context: Optional[Mapping[str, Any]] = None) -> Mapping[str, Any]:
-    """Evaluate actual D1 score against canonical upstream decision context."""
-    if context is None:
-        raise ValueError("canonical decision context is required")
-    return evaluate_decision({"score": float(candidate.opportunity_score)}, dict(context))
 
 
 @dataclass(frozen=True, slots=True)
@@ -118,6 +68,7 @@ class Paper8HConfig:
 
 class BinancePublicOpportunitySource:
     """Read-only public Binance REST adapter for D1's required metrics."""
+
     def __init__(self, symbols: tuple[str, ...], *, ttl_seconds: float = 30.0, api_base: str = BINANCE_PUBLIC_API) -> None:
         self._symbols = tuple(sorted({symbol.upper() for symbol in symbols}))
         self._ttl = ttl_seconds
@@ -168,14 +119,17 @@ class BinancePublicOpportunitySource:
 class JsonlRunLog:
     path: Path
     _handle: Any = field(default=None, init=False, repr=False)
+
     def open(self) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self._handle = self.path.open("a", encoding="utf-8")
+
     def write(self, record_type: str, **payload: Any) -> None:
         if self._handle is None:
             raise RuntimeError("run log is not open")
         self._handle.write(json.dumps({"timestamp": datetime.now(UTC).isoformat(), "event_type": record_type, **payload}, sort_keys=True, default=str) + "\n")
         self._handle.flush()
+
     def close(self) -> None:
         if self._handle is not None:
             self._handle.close()
@@ -189,7 +143,6 @@ class Paper8HRunner:
     supervisor: PaperRuntimeSupervisor
     opportunity: OpportunityDiscovery
     log: JsonlRunLog
-    decision_context: Any = field(default_factory=CanonicalDecisionContextProvider)
     previous_signals: dict[str, SignalSnapshot] = field(default_factory=dict)
     last_prices: dict[str, float] = field(default_factory=dict)
     started_at: Optional[datetime] = None
@@ -206,7 +159,7 @@ class Paper8HRunner:
         opportunity_config = OpportunityConfig(default_top_n=config.top_n)
         opportunity = OpportunityDiscovery(MarketUniverseDiscovery(public_source, opportunity_config), public_source, opportunity_config)
         stream = BinanceWebSocketMarketStream(config.symbols, [Timeframe.M1])
-        return cls(config, stream, supervisor, opportunity, JsonlRunLog(config.output_dir / "events.jsonl"), CanonicalDecisionContextProvider(), peak_equity=config.starting_capital)
+        return cls(config, stream, supervisor, opportunity, JsonlRunLog(config.output_dir / "events.jsonl"), peak_equity=config.starting_capital)
 
     async def run(self) -> dict[str, Any]:
         self.started_at = datetime.now(UTC)
@@ -268,25 +221,23 @@ class Paper8HRunner:
             self.log.write("signal_cycle_failure", error=f"{type(exc).__name__}: {exc}")
             return
         for candidate in opportunities.candidates:
-            try:
-                context = await asyncio.to_thread(self.decision_context.build, candidate.symbol)
-                decision = canonical_decision(candidate, context)
-            except Exception as exc:
-                self.log.write("decision_context_failure", symbol=candidate.symbol, error=f"{type(exc).__name__}: {exc}")
-                continue
+            decision = evaluate_decision({"score": candidate.opportunity_score, "confidence": f"{candidate.opportunity_score:.2f}%", "modules": []}, {"health_score": 100, "trade_mode": "STANDARD"})
             entry_price = self.last_prices.get(candidate.symbol)
             if entry_price is None or entry_price <= 0.0:
                 continue
-            active_position = self.supervisor.runtime.positions.active_for_symbol(candidate.symbol)
-            previous = self.previous_signals.get(candidate.symbol)
-            if active_position is not None and (decision["decision"] != "BUY" or (previous is not None and previous.is_expired(event.event_timestamp))):
-                exit_order_id = self.supervisor.exit_position(symbol=candidate.symbol, price=entry_price, now=event.event_timestamp)
-                state = self._account_state()
-                self.log.write("signal_event", symbol=candidate.symbol, direction="SELL", decision=decision["decision"], exit_trigger="DECISION_NOT_BUY" if decision["decision"] != "BUY" else "SIGNAL_EXPIRED", entry_price=entry_price, realized_pnl=state.realized_pnl)
-                self.log.write("order_lifecycle", action="EXIT_SELL", order_id=exit_order_id, symbol=candidate.symbol, price=entry_price, quantity=active_position.quantity)
-                self.previous_signals.pop(candidate.symbol, None)
-                continue
-            snapshot = build_next_snapshot(previous=previous, identity=SignalIdentity(candidate.symbol, "D1_D3_PAPER", "ENTRY"), direction="BUY", decision=decision["decision"], confidence=float(candidate.opportunity_score), entry_plan={"entry_price": entry_price, "quantity": self._quantity_for(entry_price)}, generated_at=event.event_timestamp, valid_until=event.event_timestamp + timedelta(minutes=15), policy=MaterialChangePolicy(entry_price_change_pct=0.10), market_context_fingerprint=f"d1:{candidate.symbol}:{candidate.rank}:{candidate.opportunity_score:.8f}", quality=float(candidate.opportunity_score)).current
+            snapshot = build_next_snapshot(
+                previous=self.previous_signals.get(candidate.symbol),
+                identity=SignalIdentity(candidate.symbol, "D1_D3_PAPER", "ENTRY"),
+                direction="BUY",
+                decision="FAVORABLE" if decision["decision"] == "BUY" else "WAIT",
+                confidence=float(candidate.opportunity_score),
+                entry_plan={"entry_price": entry_price, "quantity": self._quantity_for(entry_price)},
+                generated_at=event.event_timestamp,
+                valid_until=event.event_timestamp + timedelta(minutes=15),
+                policy=MaterialChangePolicy(entry_price_change_pct=0.10),
+                market_context_fingerprint=f"d1:{candidate.symbol}:{candidate.rank}:{candidate.opportunity_score:.8f}",
+                quality=float(candidate.opportunity_score),
+            ).current
             self.previous_signals[candidate.symbol] = snapshot
             self.log.write("signal_event", symbol=candidate.symbol, version=snapshot.version, decision=decision["decision"], direction=snapshot.direction, confidence=snapshot.confidence, entry_price=entry_price, quantity=snapshot.entry_plan["quantity"], opportunity_score=candidate.opportunity_score, rank=candidate.rank)
             active = self.supervisor.runtime.pending.active_for_intent(snapshot.identity.identity_key)
@@ -303,10 +254,13 @@ class Paper8HRunner:
     def _quantity_for(self, price: float) -> float:
         state = self._account_state()
         return max(state.wallet.available_cash * self.config.max_notional_pct / 100.0 / price, 0.0)
+
     def _account_state(self):
         return self.supervisor.runtime.ledger.replay()
+
     def _marked_equity(self, state: Any) -> float:
         return state.wallet.cash + sum(position.quantity * self.last_prices[position.symbol] for position in state.positions if position.symbol in self.last_prices)
+
     def _finalize(self, stream_runner: MarketStreamRunner) -> dict[str, Any]:
         state = self._account_state()
         original = self.supervisor.replay_state()
@@ -316,7 +270,28 @@ class Paper8HRunner:
         repeat_equal = recovered.replay_state() == recovered_again.replay_state()
         health = self.supervisor.health
         marked_equity = self._marked_equity(state)
-        report = {"starting_equity": state.starting_equity, "ending_equity": marked_equity, "realized_pnl": state.realized_pnl, "unrealized_pnl": sum(position.quantity * (self.last_prices.get(position.symbol, position.average_price) - position.average_price) for position in state.positions), "fees": state.cumulative_fees, "slippage": state.cumulative_slippage, "max_drawdown": self.maximum_drawdown, "orders": len(self.supervisor.runtime.orders.events), "fills": sum(1 for event in self.supervisor.runtime.orders.events if event.event_type == "ORDER_FILLED"), "cancelled_replaced_orders": sum(1 for event in self.supervisor.runtime.orders.events if event.event_type in {"ORDER_CANCELLED", "ORDER_REPLACED"}), "open_position_at_end": [position.symbol for position in state.positions if position.quantity > 0.0], "reconnect_count": stream_runner.stats.reconnects, "duplicate_event_count": stream_runner.stats.duplicates, "runtime_health": health.healthy, "paper_only": health.paper_only, "runtime_failure": self.runtime_failure, "replay_equal_after_recovery": replay_equal, "replay_equal_after_repeated_recovery": repeat_equal, "last_market_event_id": health.last_market_event_id, "duration_seconds": ((self.finished_at or datetime.now(UTC)) - (self.started_at or datetime.now(UTC))).total_seconds()}
+        report = {
+            "starting_equity": state.starting_equity,
+            "ending_equity": marked_equity,
+            "realized_pnl": state.realized_pnl,
+            "unrealized_pnl": sum(position.quantity * (self.last_prices.get(position.symbol, position.average_price) - position.average_price) for position in state.positions),
+            "fees": state.cumulative_fees,
+            "slippage": state.cumulative_slippage,
+            "max_drawdown": self.maximum_drawdown,
+            "orders": len(self.supervisor.runtime.orders.events),
+            "fills": sum(1 for event in self.supervisor.runtime.orders.events if event.event_type == "ORDER_FILLED"),
+            "cancelled_replaced_orders": sum(1 for event in self.supervisor.runtime.orders.events if event.event_type in {"ORDER_CANCELLED", "ORDER_REPLACED"}),
+            "open_position_at_end": [position.symbol for position in state.positions if position.quantity > 0.0],
+            "reconnect_count": stream_runner.stats.reconnects,
+            "duplicate_event_count": stream_runner.stats.duplicates,
+            "runtime_health": health.healthy,
+            "paper_only": health.paper_only,
+            "runtime_failure": self.runtime_failure,
+            "replay_equal_after_recovery": replay_equal,
+            "replay_equal_after_repeated_recovery": repeat_equal,
+            "last_market_event_id": health.last_market_event_id,
+            "duration_seconds": ((self.finished_at or datetime.now(UTC)) - (self.started_at or datetime.now(UTC))).total_seconds(),
+        }
         if not replay_equal or not repeat_equal:
             raise RuntimeError("recovery/replay verification failed")
         if not health.paper_only:
