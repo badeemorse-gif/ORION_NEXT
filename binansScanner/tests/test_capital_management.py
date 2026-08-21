@@ -1,6 +1,6 @@
 import unittest
 
-from binansScanner.models.capital_management import (
+from models.capital_management import (
     AllocationCandidate,
     AllocationConfig,
     AllocationRejection,
