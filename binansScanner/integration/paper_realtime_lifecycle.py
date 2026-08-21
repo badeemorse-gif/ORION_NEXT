@@ -78,7 +78,11 @@ class PaperRealtimeLifecycle:
         )
 
     def submit_signal(self, snapshot: SignalSnapshot, *, now: datetime, timeframe: str = "1m", market_regime: str = "PAPER", intent_id: Optional[str] = None) -> PendingOrder:
-        if self.positions.active_for_symbol(snapshot.identity.symbol) is not None:
+        active_position = self.positions.active_for_symbol(snapshot.identity.symbol)
+        direction = snapshot.direction.strip().upper()
+        # D6 is EXIT-only for SELL: a SELL fill must reduce an existing long.
+        # BUY remains blocked while a position is open to preserve single-position safety.
+        if active_position is not None and direction != "SELL":
             raise ValueError(f"active position already exists for {snapshot.identity.symbol}")
         observation = self._observation(snapshot, timeframe=timeframe, market_regime=market_regime)
         plan = self._execution_plan(snapshot, now=now)
@@ -96,7 +100,21 @@ class PaperRealtimeLifecycle:
         previous = self._last_signal.get(intent_id)
         material = previous is not None and bool(material_change_reasons(previous, snapshot, policy=MaterialChangePolicy(entry_price_change_pct=self.revalidation_policy.minimum_entry_change_pct / 100.0)))
         validity = SignalValidity.EXPIRED.value if snapshot.is_expired(now) else SignalValidity.ACTIVE.value
-        result = revalidate_pending_order(current, self._observation(snapshot, timeframe=timeframe, market_regime=market_regime), self._execution_plan(snapshot, now=now), market_price=market_price, now=now, policy=self.revalidation_policy, signal_validity=validity, material_signal_change=material, signal_version=snapshot.version, position_state=_PositionStateAdapter(self.positions))
+        result = revalidate_pending_order(
+            current,
+            self._observation(snapshot, timeframe=timeframe, market_regime=market_regime),
+            self._execution_plan(snapshot, now=now),
+            market_price=market_price,
+            now=now,
+            policy=self.revalidation_policy,
+            signal_validity=validity,
+            material_signal_change=material,
+            signal_version=snapshot.version,
+            # D6 defines SELL as EXIT-only. A pending SELL is therefore valid
+            # only against an already-open long and must not be rejected merely
+            # because PositionState reports that position.
+            position_state=None if current.side is ExecutionSide.SELL else _PositionStateAdapter(self.positions),
+        )
         if result.action is RevalidationAction.KEEP:
             self._last_signal[intent_id] = snapshot
             return result.action
@@ -144,6 +162,18 @@ class PaperRealtimeLifecycle:
             return market >= entry
         return False
 
+    def _revalidate_before_fill(self, order: PendingOrder, market_price: float, event_timestamp: datetime) -> RevalidationAction:
+        """D5 must approve the current intent before D4 is allowed to fill it."""
+        snapshot = self._last_signal.get(order.intent_id)
+        if snapshot is None:
+            return RevalidationAction.NO_TRADE
+        return self.revalidate(
+            intent_id=order.intent_id,
+            snapshot=snapshot,
+            market_price=market_price,
+            now=event_timestamp,
+        )
+
     def on_market_event(self, event: MarketEvent) -> tuple[str, ...]:
         if event.event_id in self._seen_market_events:
             return ()
@@ -153,13 +183,22 @@ class PaperRealtimeLifecycle:
             return ()
         filled: list[str] = []
         market_price = float(price)
-        for order in self.pending.pending():
+        for order in tuple(self.pending.pending()):
             if order.symbol != event.symbol:
                 continue
-            if not self._d4_fill_eligible(order, market_price, event.event_timestamp):
+            # D5 revalidation is deliberately before the D4 fill gate. A
+            # MARKET_DISTANCE_LIMIT/expiry/WAIT/opposite decision cancels the
+            # current D4 order and removes it from the active pending set.
+            action = self._revalidate_before_fill(order, market_price, event.event_timestamp)
+            if action is not RevalidationAction.KEEP:
+                continue
+            current = self.pending.active_for_intent(order.intent_id)
+            if current is None or current.order_id != order.order_id:
+                continue
+            if not self._d4_fill_eligible(current, market_price, event.event_timestamp):
                 continue
             try:
-                matched = self.pending.try_fill(order.order_id, market_price, event.event_timestamp)
+                matched = self.pending.try_fill(current.order_id, market_price, event.event_timestamp)
             except (RuntimeError, KeyError, ValueError):
                 continue
             fill = FillMetadata(fill_id=f"FILL-{matched.order_id}", quantity=matched.quantity, price=matched.entry_price, occurred_at=event.event_timestamp, source="PAPER")
