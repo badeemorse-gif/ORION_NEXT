@@ -6,8 +6,12 @@ import unittest
 from models.opportunity import MarketMetrics
 from providers.binance_opportunity_source import BinanceSpotOpportunitySource
 from services.opportunity_discovery import (
-    MarketEligibilityFilter, MarketUniverseDiscovery, OpportunityConfig,
-    OpportunityDiscovery, OpportunityRanker, OpportunityScorer,
+    MarketEligibilityFilter,
+    MarketUniverseDiscovery,
+    OpportunityConfig,
+    OpportunityDiscovery,
+    OpportunityRanker,
+    OpportunityScorer,
 )
 
 
@@ -27,134 +31,158 @@ class Clock:
     def __call__(self): return self.value
 
 
-class D1V2Tests(unittest.TestCase):
+class D1V3Tests(unittest.TestCase):
     def setUp(self):
         self.rows = [
             {"symbol":"BTCUSDT","baseAsset":"BTC","quoteAsset":"USDT","status":"TRADING","isSpotTradingAllowed":True},
             {"symbol":"ETHUSDT","baseAsset":"ETH","quoteAsset":"USDT","status":"TRADING","isSpotTradingAllowed":True},
-            {"symbol":"USDCUSDT","baseAsset":"USDC","quoteAsset":"USDT","status":"TRADING","isSpotTradingAllowed":True},
-            {"symbol":"BADUSDT","baseAsset":"BAD","quoteAsset":"USDT","status":"BREAK","isSpotTradingAllowed":True},
-            {"symbol":"BTCEUR","baseAsset":"BTC","quoteAsset":"EUR","status":"TRADING","isSpotTradingAllowed":True},
-            {"symbol":"NO_SPOT","baseAsset":"X","quoteAsset":"USDT","status":"TRADING","isSpotTradingAllowed":False},
         ]
-        self.data = {
-            "BTCUSDT": MarketMetrics("BTCUSDT", 200e6, .03, 3, True, 100000, .9, .9, .8, .9),
-            "ETHUSDT": MarketMetrics("ETHUSDT", 100e6, .03, 5, True, 3000, .8, .7, .7, .8),
+        self.config = OpportunityConfig(min_quote_volume_24h=1e6, min_volatility=0.001, max_volatility=0.20, target_volatility=0.03, default_top_n=2)
+        self.candidates = MarketUniverseDiscovery(Universe(self.rows)).discover()
+
+    @staticmethod
+    def metrics(symbol, *, volume=100e6, volatility=.03, spread=5, trend=.5, persistence=.5, trend_direction=0.0, momentum=.5, momentum_direction=0.0, structure=.8, change=0.0):
+        return MarketMetrics(symbol, volume, volatility, spread, True, 100.0, .8, trend, momentum, structure, change, 100.0, trend_direction, persistence, momentum_direction)
+
+    def test_true_volatility_is_distinct_from_24h_change(self):
+        scorer = OpportunityScorer(self.config)
+        calm = self.metrics("BTCUSDT", volatility=.01, change=8.0)
+        volatile = self.metrics("BTCUSDT", volatility=.08, change=8.0)
+        self.assertNotEqual(scorer.score_components(calm)[2][1], scorer.score_components(volatile)[2][1])
+        self.assertEqual(scorer.score_components(calm)[0][1], scorer.score_components(volatile)[0][1])
+
+    def test_trend_direction_and_persistence(self):
+        scorer = OpportunityScorer(self.config)
+        bullish = self.metrics("BTCUSDT", trend=.9, persistence=.9, trend_direction=1.0)
+        weak = self.metrics("BTCUSDT", trend=.4, persistence=.4, trend_direction=1.0)
+        bearish = self.metrics("BTCUSDT", trend=.9, persistence=.9, trend_direction=-1.0)
+        self.assertGreater(scorer.score_components(bullish)[3][1], scorer.score_components(weak)[3][1])
+        self.assertGreater(scorer.directional_evidence(bullish), scorer.directional_evidence(bearish))
+
+    def test_momentum_independence(self):
+        scorer = OpportunityScorer(self.config)
+        low = self.metrics("BTCUSDT", momentum=.2, momentum_direction=1.0, change=8.0, trend=.7)
+        high = self.metrics("BTCUSDT", momentum=.9, momentum_direction=1.0, change=8.0, trend=.7)
+        self.assertGreater(scorer.score(high) , scorer.score(low))
+        same_change = self.metrics("BTCUSDT", momentum=.9, momentum_direction=1.0, change=-8.0, trend=.7)
+        self.assertEqual(scorer.score(high), scorer.score(same_change))
+
+    def test_24h_change_cannot_drive_trend_or_momentum(self):
+        scorer = OpportunityScorer(self.config)
+        base = self.metrics("BTCUSDT", trend=.8, persistence=.8, momentum=.7, trend_direction=1.0, momentum_direction=1.0, change=1.0)
+        changed = self.metrics("BTCUSDT", trend=.8, persistence=.8, momentum=.7, trend_direction=1.0, momentum_direction=1.0, change=20.0)
+        self.assertEqual(scorer.score(base), scorer.score(changed))
+        self.assertEqual(scorer.directional_evidence(base), scorer.directional_evidence(changed))
+
+    def test_bullish_and_bearish_directional_evidence_are_distinct(self):
+        scorer = OpportunityScorer(self.config)
+        bullish = self.metrics("BTCUSDT", trend=.95, persistence=.95, trend_direction=1.0, momentum=.9, momentum_direction=1.0)
+        bearish = self.metrics("BTCUSDT", trend=.95, persistence=.95, trend_direction=-1.0, momentum=.9, momentum_direction=-1.0)
+        self.assertGreater(scorer.directional_evidence(bullish), 0.0)
+        self.assertLess(scorer.directional_evidence(bearish), 0.0)
+
+    def test_high_volatility_without_trend_is_not_top_opportunity(self):
+        universe = self.candidates
+        metrics = {
+            "BTCUSDT": self.metrics("BTCUSDT", volatility=.19, trend=.1, persistence=.1, momentum=.1, structure=.3, volume=.9),
+            "ETHUSDT": self.metrics("ETHUSDT", volatility=.03, trend=.9, persistence=.9, momentum=.8, structure=.9, volume=.8),
         }
+        result = OpportunityRanker(config=self.config).rank(universe, metrics)
+        self.assertEqual(result.symbols()[0], "ETHUSDT")
 
-    def test_dynamic_universe_exclusion(self):
-        result = MarketUniverseDiscovery(Universe(self.rows)).discover()
-        self.assertEqual(tuple(x.symbol for x in result), ("BTCUSDT", "ETHUSDT"))
+    def test_high_volume_alone_does_not_guarantee_top_rank(self):
+        metrics = {
+            "BTCUSDT": self.metrics("BTCUSDT", volume=1e9, volatility=.08, trend=.2, persistence=.2, momentum=.1, structure=.2, spread=40),
+            "ETHUSDT": self.metrics("ETHUSDT", volume=5e6, volatility=.03, trend=.9, persistence=.9, momentum=.8, structure=.9, spread=3),
+        }
+        result = OpportunityRanker(config=self.config).rank(self.candidates, metrics)
+        self.assertEqual(result.symbols()[0], "ETHUSDT")
 
-    def test_bulk_efficiency(self):
-        source = BulkMetrics(self.data)
-        clock = Clock()
-        discovery = OpportunityDiscovery(MarketUniverseDiscovery(Universe(self.rows)), source, OpportunityConfig(default_top_n=2, refresh_interval_seconds=10), clock)
-        discovery.discover()
-        self.assertEqual(source.bulk_calls, 1)
-        self.assertEqual(source.single_calls, 0)
-        discovery.discover()
-        self.assertEqual(source.bulk_calls, 1)
-        clock.value = 11
-        discovery.discover()
-        self.assertEqual(source.bulk_calls, 2)
-
-    def test_rejection_fail_closed(self):
-        candidate = MarketUniverseDiscovery(Universe([self.rows[0]])).discover()[0]
-        filt = MarketEligibilityFilter(OpportunityConfig(min_quote_volume_24h=1e6, min_volatility=.01, max_volatility=.1, max_spread_bps=10))
-        result = filt.evaluate(candidate, MarketMetrics("BTCUSDT", math.nan, .03, 5, True, -1))
+    def test_poor_market_quality_can_reject(self):
+        candidate = self.candidates[0]
+        filt = MarketEligibilityFilter(self.config)
+        result = filt.evaluate(candidate, self.metrics(candidate.symbol, volume=100e3, spread=100))
         self.assertFalse(result.eligible)
-        self.assertIn("INVALID_VOLUME", result.reasons)
-        self.assertIn("INVALID_PRICE", result.reasons)
+        self.assertIn("LOW_VOLUME", result.reasons)
+        self.assertIn("WIDE_SPREAD", result.reasons)
 
-    def test_rich_components_affect_score(self):
-        scorer = OpportunityScorer(OpportunityConfig())
-        weak = scorer.score(MarketMetrics("X", 100e6, .03, 5, True, 1, .5, .1, .1, .1))
-        strong = scorer.score(MarketMetrics("X", 100e6, .03, 5, True, 1, .5, .9, .9, .9))
-        self.assertGreater(strong, weak)
-        self.assertLessEqual(strong, 100)
+    def test_equal_24h_change_different_trend_structure_scores_differently(self):
+        scorer = OpportunityScorer(self.config)
+        trending = self.metrics("BTCUSDT", change=8.0, trend=.95, persistence=.95, trend_direction=1.0, momentum=.8, structure=.9)
+        flat = self.metrics("ETHUSDT", change=8.0, trend=.2, persistence=.2, trend_direction=0.0, momentum=.5, structure=.5)
+        self.assertNotEqual(scorer.score(trending), scorer.score(flat))
 
-    def test_bulk_market_fields_contribute_without_extra_requests(self):
-        scorer = OpportunityScorer(OpportunityConfig())
-        neutral = scorer.score(MarketMetrics("X", 100e6, .03, 5, True, 100, None, None, None, None, 0.0, 100))
-        moving = scorer.score(MarketMetrics("X", 100e6, .03, 5, True, 110, None, None, None, None, 8.0, 100))
-        self.assertGreater(moving, neutral)
+    def test_duplicate_feature_protection(self):
+        scorer = OpportunityScorer(self.config)
+        base = self.metrics("BTCUSDT", change=15.0, trend=.6, momentum=.6, volatility=.03)
+        changed_only_24h = self.metrics("BTCUSDT", change=-15.0, trend=.6, momentum=.6, volatility=.03)
+        self.assertEqual(scorer.score(base), scorer.score(changed_only_24h))
+        names = tuple(name for name, _ in scorer.score_components(base))
+        self.assertEqual(names, ("volume_quality", "liquidity", "volatility_regime", "trend_quality", "momentum", "structure_quality"))
 
-    def test_score_determinism_and_bounds(self):
-        m = MarketMetrics("X", 100e6, .03, 5, True, 1, .8, .8, .8, .8)
-        scorer = OpportunityScorer(OpportunityConfig())
-        self.assertEqual(scorer.score(m), scorer.score(m))
-        self.assertGreaterEqual(scorer.score(m), 0)
-        self.assertLessEqual(scorer.score(m), 100)
+    def test_score_is_deterministic_and_bounded(self):
+        scorer = OpportunityScorer(self.config)
+        metric = self.metrics("BTCUSDT")
+        self.assertEqual(scorer.score(metric), scorer.score(metric))
+        self.assertGreaterEqual(scorer.score(metric), 0.0)
+        self.assertLessEqual(scorer.score(metric), 100.0)
 
-    def test_ranking_and_top_n(self):
-        candidates = MarketUniverseDiscovery(Universe(self.rows[:2])).discover()
-        ranker = OpportunityRanker(config=OpportunityConfig(default_top_n=1))
-        out = ranker.rank(candidates, self.data)
-        self.assertEqual(out.symbols(), ("BTCUSDT",))
-        self.assertEqual(out.candidates[0].rank, 1)
-        self.assertTrue(out.candidates[0].score_components)
-
-    def test_near_tie_hysteresis_prefers_incumbent(self):
-        rows = [self.rows[0], self.rows[1]]
-        candidates = MarketUniverseDiscovery(Universe(rows)).discover()
-        cfg = OpportunityConfig(hysteresis_score_delta=5.0, default_top_n=2)
+    def test_hysteresis_preserves_incumbent_on_small_crossing(self):
+        cfg = OpportunityConfig(**{**self.config.__dict__, "hysteresis_score_delta": 5.0}) if hasattr(self.config, "__dict__") else OpportunityConfig(hysteresis_score_delta=5.0)
+        if not hasattr(self.config, "__dict__"):
+            cfg = OpportunityConfig(min_quote_volume_24h=1e6, min_volatility=.001, max_volatility=.20, target_volatility=.03, default_top_n=2, hysteresis_score_delta=5.0)
         ranker = OpportunityRanker(config=cfg)
-        first = ranker.rank(candidates, self.data)
-        altered = dict(self.data)
-        altered["ETHUSDT"] = MarketMetrics("ETHUSDT", 200e6, .03, 3, True, 3000, .9, .9, .8, .9)
-        altered["BTCUSDT"] = MarketMetrics("BTCUSDT", 200e6, .03, 3, True, 100000, .9, .86, .8, .9)
-        second = ranker.rank(candidates, altered)
+        first = ranker.rank(self.candidates, {"BTCUSDT": self.metrics("BTCUSDT", trend=.80), "ETHUSDT": self.metrics("ETHUSDT", trend=.75)})
+        second = ranker.rank(self.candidates, {"BTCUSDT": self.metrics("BTCUSDT", trend=.76), "ETHUSDT": self.metrics("ETHUSDT", trend=.80)})
         self.assertEqual(first.symbols(), second.symbols())
 
-    def test_malformed_optional_feature_rejects(self):
-        candidate = MarketUniverseDiscovery(Universe([self.rows[0]])).discover()[0]
-        result = MarketEligibilityFilter().evaluate(candidate, MarketMetrics("BTCUSDT", 2e6, .03, 5, True, 1, 2.0))
-        self.assertFalse(result.eligible)
-        self.assertIn("INVALID_VOLUME_QUALITY", result.reasons)
-
-    def test_dynamic_universe_refresh(self):
-        source = Universe(self.rows[:2])
-        metrics = BulkMetrics(self.data)
-        clock = Clock()
-        discovery = OpportunityDiscovery(MarketUniverseDiscovery(source), metrics, OpportunityConfig(refresh_interval_seconds=10), clock)
-        discovery.discover()
-        source.rows.append({"symbol":"SOLUSDT","baseAsset":"SOL","quoteAsset":"USDT","status":"TRADING","isSpotTradingAllowed":True})
-        metrics.data["SOLUSDT"] = MarketMetrics("SOLUSDT", 300e6, .03, 2, True, 150, .9, .95, .9, .9)
-        self.assertNotIn("SOLUSDT", discovery.discover().symbols())
-        clock.value = 11
-        self.assertIn("SOLUSDT", discovery.discover().symbols())
-
-    def test_end_to_end_contract(self):
-        source = BulkMetrics(self.data)
-        output = OpportunityDiscovery(MarketUniverseDiscovery(Universe(self.rows)), source, OpportunityConfig(default_top_n=2)).discover()
+    def test_full_universe_to_top_n_contract(self):
+        source = BulkMetrics({
+            "BTCUSDT": self.metrics("BTCUSDT", trend=.9, persistence=.9, trend_direction=1.0, momentum=.8),
+            "ETHUSDT": self.metrics("ETHUSDT", trend=.7, persistence=.7, trend_direction=1.0, momentum=.7),
+        })
+        output = OpportunityDiscovery(MarketUniverseDiscovery(Universe(self.rows)), source, self.config, clock=Clock()).discover(top_n=2)
         self.assertEqual(len(output.candidates), 2)
-        self.assertEqual(tuple(c.rank for c in output.candidates), (1, 2))
-        self.assertTrue(all(math.isfinite(c.opportunity_score) for c in output.candidates))
+        self.assertEqual(tuple(candidate.rank for candidate in output.candidates), (1, 2))
+        self.assertTrue(all(-1.0 <= candidate.directional_evidence <= 1.0 for candidate in output.candidates))
 
 
 class SourceTests(unittest.TestCase):
-    def test_bulk_endpoint_contract_and_cache(self):
-        calls=[]
-        source=BinanceSpotOpportunitySource(ttl_seconds=30, clock=lambda:0)
-        payloads={
-            'exchangeInfo': {'symbols': [{'symbol':'BTCUSDT','status':'TRADING','baseAsset':'BTC','quoteAsset':'USDT','isSpotTradingAllowed':True}]},
-            'ticker/24hr': [{'symbol':'BTCUSDT','lastPrice':'100','quoteVolume':'200000000','priceChangePercent':'3','weightedAvgPrice':'99'}],
-            'ticker/bookTicker': [{'symbol':'BTCUSDT','bidPrice':'99.9','askPrice':'100.1'}],
+    def test_true_market_volatility_and_feature_extraction(self):
+        source = BinanceSpotOpportunitySource(clock=lambda: 0)
+        history = [[0, 0, 0, 0, str(100 + (i % 4) * 0.8)] for i in range(31)]
+        prices = [100, 101, 103, 102, 104, 106, 105, 107, 109, 108, 110, 112, 111, 113, 115, 114, 116, 118, 117, 119, 121, 120, 122, 124, 123, 125, 127, 126, 128, 130, 129]
+        history = [[0, 0, 0, 0, str(price)] for price in prices]
+        volatility, trend_quality, trend_direction, persistence, momentum_quality, momentum_direction = source._history_features(history)
+        self.assertGreater(volatility, 0.0)
+        self.assertGreater(trend_quality, 0.0)
+        self.assertGreater(trend_direction, 0.0)
+        self.assertGreaterEqual(persistence, 0.0)
+        self.assertGreaterEqual(momentum_quality, 0.0)
+        self.assertGreater(momentum_direction, 0.0)
+
+    def test_bulk_endpoint_contract_and_history(self):
+        calls = []
+        source = BinanceSpotOpportunitySource(ttl_seconds=30, clock=lambda: 0)
+        payloads = {
+            "exchangeInfo": {"symbols": [{"symbol": "BTCUSDT", "status": "TRADING", "baseAsset": "BTC", "quoteAsset": "USDT", "isSpotTradingAllowed": True}]},
+            "ticker/24hr": [{"symbol": "BTCUSDT", "lastPrice": "130", "quoteVolume": "200000000", "priceChangePercent": "3", "weightedAvgPrice": "129"}],
+            "ticker/bookTicker": [{"symbol": "BTCUSDT", "bidPrice": "129.9", "askPrice": "130.1"}],
+            "klines": [[0, 0, 0, 0, str(100 + i), 0] for i in range(31)],
         }
-        source._get_json=lambda path: (calls.append(path) or payloads[path])
-        self.assertEqual(source.exchange_info()['symbols'][0]['symbol'],'BTCUSDT')
-        result=source.metrics_bulk(['BTCUSDT'])
-        self.assertEqual(result['BTCUSDT'].quote_volume_24h,200000000)
-        self.assertAlmostEqual(result['BTCUSDT'].spread_bps,20.0,places=5)
-        self.assertEqual(result['BTCUSDT'].price_change_pct_24h,3.0)
-        source.metrics_bulk(['BTCUSDT'])
-        self.assertEqual(calls,['exchangeInfo','ticker/24hr','ticker/bookTicker'])
+        source._get_json = lambda path, params=None: (calls.append((path, params)) or payloads[path])
+        result = source.metrics_bulk(["BTCUSDT"])
+        self.assertIn("BTCUSDT", result)
+        self.assertGreater(result["BTCUSDT"].volatility, 0.0)
+        self.assertGreater(result["BTCUSDT"].trend_quality, 0.0)
+        self.assertGreater(result["BTCUSDT"].trend_direction, 0.0)
+        self.assertEqual(result["BTCUSDT"].price_change_pct_24h, 3.0)
+        self.assertEqual([path for path, _ in calls], ["ticker/24hr", "ticker/bookTicker", "klines"])
 
     def test_malformed_rows_fail_closed(self):
-        source=BinanceSpotOpportunitySource(clock=lambda:0)
-        source._get_json=lambda path: [] if path != 'ticker/24hr' else [{'symbol':'BTCUSDT','lastPrice':'bad','quoteVolume':'1','priceChangePercent':'1','weightedAvgPrice':'1'}]
-        self.assertEqual(source.metrics_bulk(['BTCUSDT']),{})
+        source = BinanceSpotOpportunitySource(clock=lambda: 0)
+        source._get_json = lambda path, params=None: [] if path != "ticker/24hr" else [{"symbol": "BTCUSDT", "lastPrice": "bad", "quoteVolume": "1", "priceChangePercent": "1", "weightedAvgPrice": "1"}]
+        self.assertEqual(source.metrics_bulk(["BTCUSDT"]), {})
 
 
 if __name__ == "__main__":

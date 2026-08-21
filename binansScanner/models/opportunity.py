@@ -29,6 +29,9 @@ class MarketMetrics:
     structure_quality: Optional[float] = None
     price_change_pct_24h: Optional[float] = None
     weighted_avg_price_24h: Optional[float] = None
+    trend_direction: Optional[float] = None
+    trend_persistence: Optional[float] = None
+    momentum_direction: Optional[float] = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -46,6 +49,7 @@ class OpportunityCandidate:
     metrics: MarketMetrics
     eligibility_reasons: tuple[str, ...]
     score_components: tuple[tuple[str, float], ...] = ()
+    directional_evidence: float = 0.0
 
 
 @dataclass(frozen=True, slots=True)

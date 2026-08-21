@@ -3,12 +3,14 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import math
-import time
 from typing import Any, Callable, Mapping, Protocol, Sequence
 
 from models.opportunity import (
-    EligibilityResult, MarketMetrics, OpportunityCandidate,
-    OpportunityCandidateSet, UniverseCandidate,
+    EligibilityResult,
+    MarketMetrics,
+    OpportunityCandidate,
+    OpportunityCandidateSet,
+    UniverseCandidate,
 )
 
 
@@ -26,12 +28,12 @@ class BulkMetricsSource(Protocol):
 
 @dataclass(frozen=True, slots=True)
 class OpportunityConfig:
-    """Validated, deterministic weights and eligibility thresholds.
+    """Deterministic V3 eligibility and scoring configuration.
 
-    The legacy volume/volatility/liquidity score is preserved as the 60% base
-    component. The remaining 40% is reserved for optional analytical features:
-    trend, momentum, and market structure. Missing optional features contribute
-    a neutral 0.5 rather than inventing a signal.
+    Score components are intentionally orthogonal: volume quality, liquidity,
+    volatility regime, trend quality, momentum, and structure quality. The
+    24h net price change is retained only as source metadata and is never used
+    as a substitute for trend or momentum.
     """
     quote_assets: tuple[str, ...] = ("USDT",)
     excluded_base_assets: tuple[str, ...] = (
@@ -45,11 +47,10 @@ class OpportunityConfig:
     max_spread_bps: float = 50.0
     volume_reference_24h: float = 100_000_000.0
     target_volatility: float = 0.03
-    volume_weight: float = 0.50
-    volatility_weight: float = 0.30
-    liquidity_weight: float = 0.20
-    baseline_score_weight: float = 0.60
-    trend_weight: float = 0.15
+    volume_weight: float = 0.20
+    liquidity_weight: float = 0.15
+    volatility_weight: float = 0.15
+    trend_weight: float = 0.25
     momentum_weight: float = 0.15
     structure_weight: float = 0.10
     default_top_n: int = 10
@@ -71,14 +72,16 @@ class OpportunityConfig:
             raise ValueError("volume_reference_24h must be positive")
         if not self.min_volatility <= self.target_volatility <= self.max_volatility:
             raise ValueError("target_volatility must be within eligibility bounds")
-        base = (self.volume_weight, self.volatility_weight, self.liquidity_weight)
-        analytical = (self.trend_weight, self.momentum_weight, self.structure_weight)
-        if any(w < 0 for w in (*base, self.baseline_score_weight, *analytical)):
-            raise ValueError("opportunity weights must be non-negative")
-        if not math.isclose(sum(base), 1.0, abs_tol=1e-12):
-            raise ValueError("legacy opportunity weights must sum to 1")
-        if not math.isclose(self.baseline_score_weight + sum(analytical), 1.0, abs_tol=1e-12):
-            raise ValueError("V2 opportunity weights must sum to 1")
+        weights = (
+            self.volume_weight,
+            self.liquidity_weight,
+            self.volatility_weight,
+            self.trend_weight,
+            self.momentum_weight,
+            self.structure_weight,
+        )
+        if any(weight < 0 for weight in weights) or not math.isclose(sum(weights), 1.0, abs_tol=1e-12):
+            raise ValueError("opportunity weights must be non-negative and sum to 1")
         if self.default_top_n <= 0:
             raise ValueError("default_top_n must be positive")
         if self.refresh_interval_seconds < 0 or self.cache_ttl_seconds < 0:
@@ -142,13 +145,16 @@ class MarketEligibilityFilter:
                 reasons.append("INVALID_SPREAD")
             elif metrics.spread_bps > self._config.max_spread_bps:
                 reasons.append("WIDE_SPREAD")
-        for label, value in (
-            ("VOLUME_QUALITY", metrics.volume_quality),
-            ("TREND_QUALITY", metrics.trend_quality),
-            ("MOMENTUM_QUALITY", metrics.momentum_quality),
-            ("STRUCTURE_QUALITY", metrics.structure_quality),
+        for label, value, low, high in (
+            ("VOLUME_QUALITY", metrics.volume_quality, 0.0, 1.0),
+            ("TREND_QUALITY", metrics.trend_quality, 0.0, 1.0),
+            ("TREND_PERSISTENCE", metrics.trend_persistence, 0.0, 1.0),
+            ("MOMENTUM_QUALITY", metrics.momentum_quality, 0.0, 1.0),
+            ("STRUCTURE_QUALITY", metrics.structure_quality, 0.0, 1.0),
+            ("TREND_DIRECTION", metrics.trend_direction, -1.0, 1.0),
+            ("MOMENTUM_DIRECTION", metrics.momentum_direction, -1.0, 1.0),
         ):
-            if value is not None and (not math.isfinite(value) or not 0.0 <= value <= 1.0):
+            if value is not None and (not math.isfinite(value) or not low <= value <= high):
                 reasons.append(f"INVALID_{label}")
         return EligibilityResult(candidate.symbol, not reasons, tuple(reasons))
 
@@ -161,13 +167,22 @@ class OpportunityScorer:
     def _neutral(value: float | None) -> float:
         return 0.5 if value is None else max(0.0, min(value, 1.0))
 
+    @staticmethod
+    def _direction(value: float | None) -> float:
+        return 0.0 if value is None else max(-1.0, min(value, 1.0))
+
     def score_components(self, metrics: MarketMetrics) -> tuple[tuple[str, float], ...]:
-        volume = max(metrics.quote_volume_24h, 0.0)
-        derived_volume_quality = min(math.log1p(volume) / math.log1p(self._config.volume_reference_24h), 1.0)
-        volume_component = self._neutral(metrics.volume_quality) if metrics.volume_quality is not None else derived_volume_quality
+        volume_component = (
+            self._neutral(metrics.volume_quality)
+            if metrics.volume_quality is not None
+            else min(math.log1p(max(metrics.quote_volume_24h, 0.0)) / math.log1p(self._config.volume_reference_24h), 1.0)
+        )
         distance = abs(metrics.volatility - self._config.target_volatility)
-        span = max(self._config.target_volatility - self._config.min_volatility,
-                   self._config.max_volatility - self._config.target_volatility, 1e-12)
+        span = max(
+            self._config.target_volatility - self._config.min_volatility,
+            self._config.max_volatility - self._config.target_volatility,
+            1e-12,
+        )
         volatility_component = max(0.0, 1.0 - distance / span)
         if metrics.spread_bps is None:
             liquidity_component = 0.5
@@ -175,39 +190,41 @@ class OpportunityScorer:
             liquidity_component = 0.0
         else:
             liquidity_component = max(0.0, 1.0 - min(metrics.spread_bps / self._config.max_spread_bps, 1.0))
-        baseline = (
-            self._config.volume_weight * volume_component
-            + self._config.volatility_weight * volatility_component
-            + self._config.liquidity_weight * liquidity_component
-        )
-        derived_momentum = self._neutral(metrics.momentum_quality)
-        if metrics.momentum_quality is None and metrics.price_change_pct_24h is not None and math.isfinite(metrics.price_change_pct_24h):
-            derived_momentum = min(abs(metrics.price_change_pct_24h) / 10.0, 1.0)
-        derived_structure = self._neutral(metrics.structure_quality)
-        if metrics.structure_quality is None and metrics.last_price is not None and metrics.weighted_avg_price_24h is not None:
-            if metrics.last_price > 0 and math.isfinite(metrics.weighted_avg_price_24h) and metrics.weighted_avg_price_24h > 0:
-                deviation = abs(metrics.last_price / metrics.weighted_avg_price_24h - 1.0)
-                derived_structure = max(0.0, 1.0 - min(deviation / 0.05, 1.0))
-        derived_trend = self._neutral(metrics.trend_quality)
-        if metrics.trend_quality is None and metrics.price_change_pct_24h is not None and math.isfinite(metrics.price_change_pct_24h):
-            derived_trend = min(abs(metrics.price_change_pct_24h) / 5.0, 1.0)
+
+        trend_base = self._neutral(metrics.trend_quality)
+        trend_persistence = self._neutral(metrics.trend_persistence)
+        trend_component = 0.7 * trend_base + 0.3 * trend_persistence
+        momentum_component = self._neutral(metrics.momentum_quality)
+        structure_component = self._neutral(metrics.structure_quality)
         return (
-            ("legacy_volume", round(volume_component, 8)),
-            ("legacy_volatility", round(volatility_component, 8)),
-            ("legacy_liquidity", round(liquidity_component, 8)),
-            ("baseline", round(baseline, 8)),
-            ("trend", round(derived_trend, 8)),
-            ("momentum", round(derived_momentum, 8)),
-            ("structure", round(derived_structure, 8)),
+            ("volume_quality", round(volume_component, 8)),
+            ("liquidity", round(liquidity_component, 8)),
+            ("volatility_regime", round(volatility_component, 8)),
+            ("trend_quality", round(trend_component, 8)),
+            ("momentum", round(momentum_component, 8)),
+            ("structure_quality", round(structure_component, 8)),
         )
+
+    def directional_evidence(self, metrics: MarketMetrics) -> float:
+        trend_direction = self._direction(metrics.trend_direction)
+        momentum_direction = self._direction(metrics.momentum_direction)
+        trend_strength = self._neutral(metrics.trend_quality)
+        momentum_strength = self._neutral(metrics.momentum_quality)
+        weighted = (
+            0.65 * trend_direction * trend_strength
+            + 0.35 * momentum_direction * momentum_strength
+        )
+        return round(max(-1.0, min(weighted, 1.0)), 8)
 
     def score(self, metrics: MarketMetrics) -> float:
         components = dict(self.score_components(metrics))
         total = (
-            self._config.baseline_score_weight * components["baseline"]
-            + self._config.trend_weight * components["trend"]
+            self._config.volume_weight * components["volume_quality"]
+            + self._config.liquidity_weight * components["liquidity"]
+            + self._config.volatility_weight * components["volatility_regime"]
+            + self._config.trend_weight * components["trend_quality"]
             + self._config.momentum_weight * components["momentum"]
-            + self._config.structure_weight * components["structure"]
+            + self._config.structure_weight * components["structure_quality"]
         )
         return round(100.0 * max(0.0, min(total, 1.0)), 8)
 
@@ -231,30 +248,46 @@ class OpportunityRanker:
             decision = eligibility.evaluate(candidate, metric)
             if not decision.eligible:
                 continue
-            ranked.append(OpportunityCandidate(
-                candidate.symbol, self._scorer.score(metric), 0, metric,
-                decision.reasons, self._scorer.score_components(metric),
-            ))
+            ranked.append(
+                OpportunityCandidate(
+                    candidate.symbol,
+                    self._scorer.score(metric),
+                    0,
+                    metric,
+                    decision.reasons,
+                    self._scorer.score_components(metric),
+                    self._scorer.directional_evidence(metric),
+                )
+            )
         ranked.sort(key=lambda item: (-item.opportunity_score, item.symbol))
         if self._previous_rank and self._config.hysteresis_score_delta > 0:
-            for i in range(len(ranked) - 1):
-                left, right = ranked[i], ranked[i + 1]
+            for index in range(len(ranked) - 1):
+                left, right = ranked[index], ranked[index + 1]
                 if abs(left.opportunity_score - right.opportunity_score) <= self._config.hysteresis_score_delta:
-                    lp, rp = self._previous_rank.get(left.symbol), self._previous_rank.get(right.symbol)
-                    if rp is not None and (lp is None or rp < lp):
-                        ranked[i], ranked[i + 1] = right, left
+                    left_previous = self._previous_rank.get(left.symbol)
+                    right_previous = self._previous_rank.get(right.symbol)
+                    if right_previous is not None and (left_previous is None or right_previous < left_previous):
+                        ranked[index], ranked[index + 1] = right, left
         selected = ranked[:requested_top_n]
-        result = tuple(OpportunityCandidate(
-            item.symbol, item.opportunity_score, index, item.metrics,
-            item.eligibility_reasons, item.score_components,
-        ) for index, item in enumerate(selected, start=1))
+        result = tuple(
+            OpportunityCandidate(
+                item.symbol,
+                item.opportunity_score,
+                index,
+                item.metrics,
+                item.eligibility_reasons,
+                item.score_components,
+                item.directional_evidence,
+            )
+            for index, item in enumerate(selected, start=1)
+        )
         self._previous_rank = {item.symbol: item.rank for item in result}
-        return OpportunityCandidateSet(result, requested_top_n, time.time())
+        return OpportunityCandidateSet(result, requested_top_n, None)
 
 
 class OpportunityDiscovery:
-    """Universe -> bulk feature collection -> eligibility -> score -> rank -> Top-N."""
-    def __init__(self, universe: MarketUniverseDiscovery, metrics_source: MetricsSource, config: OpportunityConfig | None = None, clock: Callable[[], float] = time.monotonic) -> None:
+    """Universe -> bulk features -> eligibility -> score -> rank -> Top-N."""
+    def __init__(self, universe: MarketUniverseDiscovery, metrics_source: MetricsSource, config: OpportunityConfig | None = None, clock: Callable[[], float] = __import__("time").monotonic) -> None:
         self._universe = universe
         self._metrics_source = metrics_source
         self._config = config or OpportunityConfig()
