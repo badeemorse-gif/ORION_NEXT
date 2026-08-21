@@ -5,7 +5,7 @@ D1/D2 remain upstream producers. No live execution or exchange I/O occurs here.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 from typing import Optional
 
@@ -15,20 +15,10 @@ from models.order_position_lifecycle import ExitReason, FillMetadata, OrderLifec
 from models.paper_capital import LedgerSide, PaperLedger
 from models.signal_journal import SignalObservation
 from models.signal_snapshot import MaterialChangePolicy, SignalSnapshot, SignalValidity, material_change_reasons
-from tools.pending_order_revalidation import (
-    PendingOrder,
-    PendingOrderBook,
-    PositionState,
-    RevalidationAction,
-    RevalidationPolicy,
-    build_pending_order,
-    revalidate_pending_order,
-)
+from tools.pending_order_revalidation import PendingOrder, PendingOrderBook, PositionState, RevalidationAction, RevalidationPolicy, build_pending_order, revalidate_pending_order
 
 
 class _PositionStateAdapter(PositionState):
-    """D4 read-only adapter for the D5 PositionState port."""
-
     def __init__(self, positions: PositionBook) -> None:
         self._positions = positions
 
@@ -50,16 +40,7 @@ class PaperRealtimeLifecycle:
     def _observation(snapshot: SignalSnapshot, *, timeframe: str, market_regime: str) -> SignalObservation:
         if snapshot.entry_plan.get("entry_price") is None:
             raise ValueError("SignalSnapshot entry_plan must contain entry_price")
-        return SignalObservation(
-            observation_id=snapshot.signal_id,
-            timestamp=snapshot.generated_at,
-            symbol=snapshot.identity.symbol,
-            timeframe=timeframe,
-            raw_score=float(snapshot.quality if snapshot.quality is not None else 0.0),
-            confidence=snapshot.confidence,
-            decision=snapshot.decision,
-            market_regime=market_regime,
-        )
+        return SignalObservation(observation_id=snapshot.signal_id, timestamp=snapshot.generated_at, symbol=snapshot.identity.symbol, timeframe=timeframe, raw_score=float(snapshot.quality if snapshot.quality is not None else 0.0), confidence=snapshot.confidence, decision=snapshot.decision, market_regime=market_regime)
 
     @staticmethod
     def _execution_plan(snapshot: SignalSnapshot, *, now: datetime) -> ExecutionPlan:
@@ -67,21 +48,11 @@ class PaperRealtimeLifecycle:
         quantity = float(snapshot.entry_plan.get("quantity", 1.0))
         direction = snapshot.direction.strip().upper()
         side = ExecutionSide.BUY if direction == "BUY" else ExecutionSide.SELL if direction == "SELL" else ExecutionSide.NONE
-        return ExecutionPlan(
-            symbol=snapshot.identity.symbol,
-            side=side,
-            price=entry_price,
-            quantity=quantity,
-            confidence=snapshot.confidence,
-            decision=snapshot.decision,
-            created_at=now,
-        )
+        return ExecutionPlan(symbol=snapshot.identity.symbol, side=side, price=entry_price, quantity=quantity, confidence=snapshot.confidence, decision=snapshot.decision, created_at=now)
 
-    def submit_signal(self, snapshot: SignalSnapshot, *, now: datetime, timeframe: str = "1m", market_regime: str = "PAPER", intent_id: Optional[str] = None) -> PendingOrder:
+    def submit_signal(self, snapshot: SignalSnapshot, *, now: datetime, timeframe: str = "1m", market_regime: str = "PAPER", intent_id: Optional[str] = None, order_id: Optional[str] = None) -> PendingOrder:
         active_position = self.positions.active_for_symbol(snapshot.identity.symbol)
         direction = snapshot.direction.strip().upper()
-        # D6 is EXIT-only for SELL: a SELL fill must reduce an existing long.
-        # BUY remains blocked while a position is open to preserve single-position safety.
         if active_position is not None and direction != "SELL":
             raise ValueError(f"active position already exists for {snapshot.identity.symbol}")
         if direction == "SELL" and active_position is None:
@@ -89,34 +60,22 @@ class PaperRealtimeLifecycle:
         observation = self._observation(snapshot, timeframe=timeframe, market_regime=market_regime)
         plan = self._execution_plan(snapshot, now=now)
         pending = build_pending_order(observation, plan, intent_id=intent_id or snapshot.identity.identity_key, now=now, policy=self.revalidation_policy, signal_version=snapshot.version)
+        if order_id is not None:
+            pending = replace(pending, order_id=order_id)
         self.pending.add(pending)
         self.orders.create(order_id=pending.order_id, symbol=pending.symbol, side=pending.side, quantity=pending.quantity, price=pending.entry_price, created_at=now)
         self.ledger = self.ledger.record_order(now, pending.symbol, LedgerSide(pending.side.value), pending.quantity, pending.entry_price)
         self._last_signal[pending.intent_id] = snapshot
         return pending
 
-    def revalidate(self, *, intent_id: str, snapshot: SignalSnapshot, market_price: float, now: datetime, timeframe: str = "1m", market_regime: str = "PAPER") -> RevalidationAction:
+    def revalidate(self, *, intent_id: str, snapshot: SignalSnapshot, market_price: float, now: datetime, timeframe: str = "1m", market_regime: str = "PAPER", replacement_order_id: Optional[str] = None) -> RevalidationAction:
         current = self.pending.active_for_intent(intent_id)
         if current is None:
             return RevalidationAction.NO_TRADE
         previous = self._last_signal.get(intent_id)
         material = previous is not None and bool(material_change_reasons(previous, snapshot, policy=MaterialChangePolicy(entry_price_change_pct=self.revalidation_policy.minimum_entry_change_pct / 100.0)))
         validity = SignalValidity.EXPIRED.value if snapshot.is_expired(now) else SignalValidity.ACTIVE.value
-        result = revalidate_pending_order(
-            current,
-            self._observation(snapshot, timeframe=timeframe, market_regime=market_regime),
-            self._execution_plan(snapshot, now=now),
-            market_price=market_price,
-            now=now,
-            policy=self.revalidation_policy,
-            signal_validity=validity,
-            material_signal_change=material,
-            signal_version=snapshot.version,
-            # D6 defines SELL as EXIT-only. A pending SELL is valid only
-            # against an already-open long and must not be rejected merely
-            # because PositionState reports that position.
-            position_state=None if current.side is ExecutionSide.SELL else _PositionStateAdapter(self.positions),
-        )
+        result = revalidate_pending_order(current, self._observation(snapshot, timeframe=timeframe, market_regime=market_regime), self._execution_plan(snapshot, now=now), market_price=market_price, now=now, policy=self.revalidation_policy, signal_validity=validity, material_signal_change=material, signal_version=snapshot.version, position_state=None if current.side is ExecutionSide.SELL else _PositionStateAdapter(self.positions))
         if result.action is RevalidationAction.KEEP:
             self._last_signal[intent_id] = snapshot
             return result.action
@@ -129,6 +88,8 @@ class PaperRealtimeLifecycle:
             replacement = result.replacement
             if replacement is None:
                 raise RuntimeError("D5 returned REPLACE without replacement order")
+            if replacement_order_id is not None:
+                replacement = replace(replacement, order_id=replacement_order_id)
             self.pending.replace(current.order_id, replacement)
             self.orders.replace(current.order_id, replacement_order_id=replacement.order_id, occurred_at=now)
             self.orders.create(order_id=replacement.order_id, symbol=replacement.symbol, side=replacement.side, quantity=replacement.quantity, price=replacement.entry_price, created_at=now)
@@ -137,14 +98,12 @@ class PaperRealtimeLifecycle:
         return result.action
 
     def _current_active_order(self, order_id: str) -> Optional[PendingOrder]:
-        """Resolve active identity from D5 pending state before consulting D4 fill state."""
         for candidate in self.pending.pending():
             if candidate.order_id == order_id:
                 return candidate
         return None
 
     def _d4_fill_eligible(self, pending_order: PendingOrder, market_price: float, event_timestamp: datetime) -> bool:
-        """D4 owns fill authority; D5 supplies the current intent and limit semantics."""
         order = self.orders.get(pending_order.order_id)
         if order.state is not OrderState.PENDING:
             return False
@@ -165,7 +124,6 @@ class PaperRealtimeLifecycle:
         return False
 
     def _revalidate_before_fill(self, order: PendingOrder, market_price: float, event_timestamp: datetime) -> RevalidationAction:
-        """D5 must approve the current intent before D4 is allowed to fill it."""
         snapshot = self._last_signal.get(order.intent_id)
         if snapshot is None:
             return RevalidationAction.NO_TRADE
