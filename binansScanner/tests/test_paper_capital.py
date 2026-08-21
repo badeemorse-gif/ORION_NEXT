@@ -54,7 +54,7 @@ class TestPaperCapitalContracts(unittest.TestCase):
         self.assertAlmostEqual(model.amount(LedgerSide.BUY, 100.0, 2.0), 2.0)
 
     def test_buy_fill_creates_position_and_accounts_fee_and_slippage(self):
-        ledger = PaperLedger(FeeModel(rate=0.01), SlippageModel(rate=0.01))
+        ledger = PaperLedger(fee_model=FeeModel(rate=0.01), slippage_model=SlippageModel(rate=0.01))
         ledger = ledger.record_order(self.t0, "BTCUSDT", LedgerSide.BUY, 1.0, 100.0)
         ledger = ledger.record_fill(self.t0 + timedelta(seconds=1), "BTCUSDT", LedgerSide.BUY, 1.0, 100.0)
         ledger = ledger.mark(self.t0 + timedelta(minutes=1), "BTCUSDT", 105.0)
@@ -71,7 +71,7 @@ class TestPaperCapitalContracts(unittest.TestCase):
         self.assertIn(LedgerEventType.SLIPPAGE, event_types)
 
     def test_sell_fill_realizes_pnl_and_closes_position(self):
-        ledger = PaperLedger(FeeModel(rate=0.01), SlippageModel(rate=0.0))
+        ledger = PaperLedger(fee_model=FeeModel(rate=0.01), slippage_model=SlippageModel(rate=0.0))
         ledger = ledger.record_fill(self.t0, "BTCUSDT", LedgerSide.BUY, 1.0, 100.0)
         ledger = ledger.record_fill(self.t0 + timedelta(hours=1), "BTCUSDT", LedgerSide.SELL, 1.0, 110.0)
         state = ledger.replay()
@@ -93,7 +93,7 @@ class TestPaperCapitalContracts(unittest.TestCase):
         self.assertTrue({LedgerEventType.ORDER, LedgerEventType.FILL, LedgerEventType.POSITION, LedgerEventType.EXIT, LedgerEventType.SNAPSHOT}.issubset(event_types))
 
     def test_accounting_identity_and_reproducibility_hold(self):
-        ledger = PaperLedger(FeeModel(rate=0.001), SlippageModel(rate=0.005))
+        ledger = PaperLedger(fee_model=FeeModel(rate=0.001), slippage_model=SlippageModel(rate=0.005))
         ledger = ledger.record_fill(self.t0, "BTCUSDT", LedgerSide.BUY, 1.0, 100.0)
         ledger = ledger.mark(self.t0 + timedelta(minutes=5), "BTCUSDT", 102.0)
         state = ledger.replay()
