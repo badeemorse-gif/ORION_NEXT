@@ -11,7 +11,7 @@ from typing import Optional
 
 from models.execution import ExecutionPlan, ExecutionSide
 from models.market_event import MarketEvent
-from models.order_position_lifecycle import ExitReason, FillMetadata, OrderLifecycle, PositionBook
+from models.order_position_lifecycle import ExitReason, FillMetadata, OrderLifecycle, OrderState, PositionBook
 from models.paper_capital import LedgerSide, PaperLedger
 from models.signal_journal import SignalObservation
 from models.signal_snapshot import MaterialChangePolicy, SignalSnapshot, SignalValidity, material_change_reasons
@@ -77,70 +77,26 @@ class PaperRealtimeLifecycle:
             created_at=now,
         )
 
-    def submit_signal(
-        self,
-        snapshot: SignalSnapshot,
-        *,
-        now: datetime,
-        timeframe: str = "1m",
-        market_regime: str = "PAPER",
-        intent_id: Optional[str] = None,
-    ) -> PendingOrder:
+    def submit_signal(self, snapshot: SignalSnapshot, *, now: datetime, timeframe: str = "1m", market_regime: str = "PAPER", intent_id: Optional[str] = None) -> PendingOrder:
         if self.positions.active_for_symbol(snapshot.identity.symbol) is not None:
             raise ValueError(f"active position already exists for {snapshot.identity.symbol}")
         observation = self._observation(snapshot, timeframe=timeframe, market_regime=market_regime)
         plan = self._execution_plan(snapshot, now=now)
-        pending = build_pending_order(
-            observation,
-            plan,
-            intent_id=intent_id or snapshot.identity.identity_key,
-            now=now,
-            policy=self.revalidation_policy,
-            signal_version=snapshot.version,
-        )
+        pending = build_pending_order(observation, plan, intent_id=intent_id or snapshot.identity.identity_key, now=now, policy=self.revalidation_policy, signal_version=snapshot.version)
         self.pending.add(pending)
-        self.orders.create(
-            order_id=pending.order_id,
-            symbol=pending.symbol,
-            side=pending.side,
-            quantity=pending.quantity,
-            price=pending.entry_price,
-            created_at=now,
-        )
+        self.orders.create(order_id=pending.order_id, symbol=pending.symbol, side=pending.side, quantity=pending.quantity, price=pending.entry_price, created_at=now)
         self.ledger = self.ledger.record_order(now, pending.symbol, LedgerSide(pending.side.value), pending.quantity, pending.entry_price)
         self._last_signal[pending.intent_id] = snapshot
         return pending
 
-    def revalidate(
-        self,
-        *,
-        intent_id: str,
-        snapshot: SignalSnapshot,
-        market_price: float,
-        now: datetime,
-        timeframe: str = "1m",
-        market_regime: str = "PAPER",
-    ) -> RevalidationAction:
+    def revalidate(self, *, intent_id: str, snapshot: SignalSnapshot, market_price: float, now: datetime, timeframe: str = "1m", market_regime: str = "PAPER") -> RevalidationAction:
         current = self.pending.active_for_intent(intent_id)
         if current is None:
             return RevalidationAction.NO_TRADE
         previous = self._last_signal.get(intent_id)
-        material = previous is not None and bool(
-            material_change_reasons(previous, snapshot, policy=MaterialChangePolicy(entry_price_change_pct=self.revalidation_policy.minimum_entry_change_pct / 100.0))
-        )
+        material = previous is not None and bool(material_change_reasons(previous, snapshot, policy=MaterialChangePolicy(entry_price_change_pct=self.revalidation_policy.minimum_entry_change_pct / 100.0)))
         validity = SignalValidity.EXPIRED.value if snapshot.is_expired(now) else SignalValidity.ACTIVE.value
-        result = revalidate_pending_order(
-            current,
-            self._observation(snapshot, timeframe=timeframe, market_regime=market_regime),
-            self._execution_plan(snapshot, now=now),
-            market_price=market_price,
-            now=now,
-            policy=self.revalidation_policy,
-            signal_validity=validity,
-            material_signal_change=material,
-            signal_version=snapshot.version,
-            position_state=_PositionStateAdapter(self.positions),
-        )
+        result = revalidate_pending_order(current, self._observation(snapshot, timeframe=timeframe, market_regime=market_regime), self._execution_plan(snapshot, now=now), market_price=market_price, now=now, policy=self.revalidation_policy, signal_validity=validity, material_signal_change=material, signal_version=snapshot.version, position_state=_PositionStateAdapter(self.positions))
         if result.action is RevalidationAction.KEEP:
             self._last_signal[intent_id] = snapshot
             return result.action
@@ -171,17 +127,15 @@ class PaperRealtimeLifecycle:
         for order in self.pending.pending():
             if order.symbol != event.symbol:
                 continue
+            # D4 is the authoritative lifecycle gate: a replaced/cancelled order
+            # cannot fill even if a stale D5 book entry is still enumerable.
+            if self.orders.get(order.order_id).state is not OrderState.PENDING:
+                continue
             try:
                 matched = self.pending.try_fill(order.order_id, float(price), event.event_timestamp)
             except (RuntimeError, KeyError, ValueError):
                 continue
-            fill = FillMetadata(
-                fill_id=f"FILL-{matched.order_id}",
-                quantity=matched.quantity,
-                price=matched.entry_price,
-                occurred_at=event.event_timestamp,
-                source="PAPER",
-            )
+            fill = FillMetadata(fill_id=f"FILL-{matched.order_id}", quantity=matched.quantity, price=matched.entry_price, occurred_at=event.event_timestamp, source="PAPER")
             self.orders.fill(matched.order_id, fill)
             self.positions.create_from_fill(fill=fill, symbol=matched.symbol, side=matched.side, source_order_id=matched.order_id, position_id=f"POS-{matched.order_id}")
             self.ledger = self.ledger.record_fill(event.event_timestamp, matched.symbol, LedgerSide(matched.side.value), matched.quantity, matched.entry_price)
