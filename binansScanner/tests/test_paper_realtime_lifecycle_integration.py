@@ -36,6 +36,12 @@ def event(price: float, timestamp: datetime, event_id: str) -> MarketEvent:
     )
 
 
+def open_long(runtime: PaperRealtimeLifecycle, t0: datetime, price: float = 118.0) -> None:
+    order = runtime.submit_signal(snapshot(version=1, price=price, generated_at=t0), now=t0)
+    runtime.on_market_event(event(price, t0 + timedelta(seconds=1), "open-long"))
+    assert runtime.orders.get(order.order_id).state is OrderState.FILLED
+
+
 class TestPaperRealtimeLifecycleIntegration(unittest.TestCase):
     def test_buy_100_reprice_118_old_order_never_fills(self) -> None:
         runtime = PaperRealtimeLifecycle()
@@ -49,9 +55,9 @@ class TestPaperRealtimeLifecycleIntegration(unittest.TestCase):
         self.assertIsNotNone(replacement)
         self.assertEqual(replacement.entry_price, 118.0)
         self.assertEqual(runtime.on_market_event(event(100.0, t1 + timedelta(minutes=1), "p100")), ())
-        self.assertEqual(runtime.on_market_event(event(118.0, t1 + timedelta(minutes=2), "p118")), (replacement.order_id,))
-        self.assertEqual(runtime.positions.active_for_symbol("BTCUSDT").quantity, 1.0)
-        self.assertEqual(len(runtime.ledger.events), 5)
+        self.assertEqual(runtime.orders.get(replacement.order_id).state, OrderState.CANCELLED)
+        self.assertEqual(runtime.on_market_event(event(118.0, t1 + timedelta(minutes=2), "p118")), ())
+        self.assertIsNone(runtime.positions.active_for_symbol("BTCUSDT"))
 
     def test_replacement_buy_limit_fills_below_current_entry(self) -> None:
         runtime = PaperRealtimeLifecycle()
@@ -82,16 +88,25 @@ class TestPaperRealtimeLifecycleIntegration(unittest.TestCase):
     def test_sell_limit_at_or_above_entry_fills(self) -> None:
         runtime = PaperRealtimeLifecycle()
         t0 = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
-        order = runtime.submit_signal(snapshot(version=1, price=118.0, direction="SELL", generated_at=t0), now=t0)
-        self.assertEqual(runtime.on_market_event(event(119.0, t0 + timedelta(seconds=1), "sell119")), (order.order_id,))
+        open_long(runtime, t0)
+        order = runtime.submit_signal(snapshot(version=2, price=118.0, direction="SELL", generated_at=t0 + timedelta(minutes=2)), now=t0 + timedelta(minutes=2))
+        self.assertEqual(runtime.on_market_event(event(119.0, t0 + timedelta(minutes=2, seconds=1), "sell119")), (order.order_id,))
         self.assertEqual(runtime.orders.get(order.order_id).state, OrderState.FILLED)
+        self.assertIsNone(runtime.positions.active_for_symbol("BTCUSDT"))
 
     def test_sell_limit_below_entry_does_not_fill(self) -> None:
         runtime = PaperRealtimeLifecycle()
         t0 = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
-        order = runtime.submit_signal(snapshot(version=1, price=118.0, direction="SELL", generated_at=t0), now=t0)
-        self.assertEqual(runtime.on_market_event(event(117.0, t0 + timedelta(seconds=1), "sell117")), ())
+        open_long(runtime, t0)
+        order = runtime.submit_signal(snapshot(version=2, price=118.0, direction="SELL", generated_at=t0 + timedelta(minutes=2)), now=t0 + timedelta(minutes=2))
+        self.assertEqual(runtime.on_market_event(event(117.0, t0 + timedelta(minutes=2, seconds=1), "sell117")), ())
         self.assertEqual(runtime.orders.get(order.order_id).state, OrderState.PENDING)
+
+    def test_sell_requires_existing_long_position(self) -> None:
+        runtime = PaperRealtimeLifecycle()
+        t0 = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
+        with self.assertRaises(ValueError):
+            runtime.submit_signal(snapshot(version=1, price=118.0, direction="SELL", generated_at=t0), now=t0)
 
     def test_replacement_does_not_inherit_terminal_state(self) -> None:
         runtime = PaperRealtimeLifecycle()
@@ -156,6 +171,29 @@ class TestPaperRealtimeLifecycleIntegration(unittest.TestCase):
         self.assertEqual(action.value, "CANCEL")
         self.assertEqual(runtime.on_market_event(event(100.0, t0 + timedelta(minutes=3), "late")), ())
 
+    def test_market_distance_cancels_before_fill(self) -> None:
+        runtime = PaperRealtimeLifecycle()
+        t0 = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
+        order = runtime.submit_signal(snapshot(version=1, price=118.0, generated_at=t0), now=t0)
+        self.assertEqual(runtime.on_market_event(event(100.0, t0 + timedelta(minutes=1), "distance")), ())
+        self.assertEqual(runtime.orders.get(order.order_id).state, OrderState.CANCELLED)
+        self.assertEqual(runtime.pending.pending(), ())
+        self.assertIsNone(runtime.positions.active_for_symbol("BTCUSDT"))
+
+    def test_market_distance_boundary_within_policy_allows_buy_fill(self) -> None:
+        runtime = PaperRealtimeLifecycle()
+        t0 = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
+        order = runtime.submit_signal(snapshot(version=1, price=118.0, generated_at=t0), now=t0)
+        self.assertEqual(runtime.on_market_event(event(117.0, t0 + timedelta(minutes=1), "within-distance")), (order.order_id,))
+
+    def test_market_distance_intermediate_decision_is_policy_driven(self) -> None:
+        runtime = PaperRealtimeLifecycle()
+        runtime.revalidation_policy = RevalidationPolicy(max_market_distance_pct=3.0)
+        t0 = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
+        order = runtime.submit_signal(snapshot(version=1, price=118.0, generated_at=t0), now=t0)
+        self.assertEqual(runtime.on_market_event(event(114.0, t0 + timedelta(minutes=1), "policy-distance")), ())
+        self.assertEqual(runtime.orders.get(order.order_id).state, OrderState.CANCELLED)
+
     def test_open_position_blocks_uncontrolled_duplicate_intent(self) -> None:
         runtime = PaperRealtimeLifecycle()
         t0 = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
@@ -204,8 +242,9 @@ class TestPaperRealtimeLifecycleIntegration(unittest.TestCase):
         replacement = runtime.pending.active_for_intent(first.intent_id)
         self.assertIsNotNone(replacement)
         self.assertEqual(runtime.on_market_event(event(100.0, t1 + timedelta(minutes=1), "old-entry")), ())
-        self.assertEqual(runtime.on_market_event(event(117.0, t1 + timedelta(minutes=2), "below-current-entry")), (replacement.order_id,))
-        self.assertEqual(runtime.positions.active_for_symbol("BTCUSDT").source_order_id, replacement.order_id)
+        self.assertEqual(runtime.orders.get(replacement.order_id).state, OrderState.CANCELLED)
+        self.assertEqual(runtime.on_market_event(event(117.0, t1 + timedelta(minutes=2), "below-current-entry")), ())
+        self.assertIsNone(runtime.positions.active_for_symbol("BTCUSDT"))
 
 
 if __name__ == "__main__":
