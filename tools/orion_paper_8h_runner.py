@@ -31,7 +31,7 @@ from enums import Timeframe
 from integration.paper_realtime_lifecycle import PaperRealtimeLifecycle
 from integration.paper_runtime_supervisor import PaperRuntimeSupervisor
 from models.market_event import MarketEvent, MarketEventType
-from models.opportunity import MarketMetrics
+from models.opportunity import MarketMetrics, OpportunityCandidate
 from models.paper_capital import PaperLedger
 from models.signal_snapshot import MaterialChangePolicy, SignalIdentity, SignalSnapshot, build_next_snapshot
 from providers.market_stream import BinanceWebSocketMarketStream, MarketStreamRunner
@@ -39,6 +39,17 @@ from services.opportunity_discovery import MarketUniverseDiscovery, OpportunityC
 
 UTC = timezone.utc
 BINANCE_PUBLIC_API = "https://api.binance.com"
+
+
+def canonical_decision(candidate: OpportunityCandidate) -> Mapping[str, Any]:
+    """Run the existing Decision Engine from actual D1 output.
+
+    D1's OpportunityCandidate is the canonical decision input available at this
+    integration boundary. The adapter deliberately passes only that actual
+    score; Decision Engine defaults are its own contract, not runner-created
+    health/confidence/module values.
+    """
+    return evaluate_decision({"score": float(candidate.opportunity_score)}, {})
 
 
 @dataclass(frozen=True, slots=True)
@@ -221,15 +232,24 @@ class Paper8HRunner:
             self.log.write("signal_cycle_failure", error=f"{type(exc).__name__}: {exc}")
             return
         for candidate in opportunities.candidates:
-            decision = evaluate_decision({"score": candidate.opportunity_score, "confidence": f"{candidate.opportunity_score:.2f}%", "modules": []}, {"health_score": 100, "trade_mode": "STANDARD"})
+            decision = canonical_decision(candidate)
             entry_price = self.last_prices.get(candidate.symbol)
             if entry_price is None or entry_price <= 0.0:
                 continue
+            active_position = self.supervisor.runtime.positions.active_for_symbol(candidate.symbol)
+            previous = self.previous_signals.get(candidate.symbol)
+            if active_position is not None and (decision["decision"] != "BUY" or (previous is not None and previous.is_expired(event.event_timestamp))):
+                exit_order_id = self.supervisor.runtime.exit_position(symbol=candidate.symbol, price=entry_price, now=event.event_timestamp)
+                state = self._account_state()
+                self.log.write("signal_event", symbol=candidate.symbol, direction="SELL", decision=decision["decision"], exit_trigger="DECISION_NOT_BUY" if decision["decision"] != "BUY" else "SIGNAL_EXPIRED", entry_price=entry_price, realized_pnl=state.realized_pnl)
+                self.log.write("order_lifecycle", action="EXIT_SELL", order_id=exit_order_id, symbol=candidate.symbol, price=entry_price, quantity=active_position.quantity)
+                self.previous_signals.pop(candidate.symbol, None)
+                continue
             snapshot = build_next_snapshot(
-                previous=self.previous_signals.get(candidate.symbol),
+                previous=previous,
                 identity=SignalIdentity(candidate.symbol, "D1_D3_PAPER", "ENTRY"),
                 direction="BUY",
-                decision="FAVORABLE" if decision["decision"] == "BUY" else "WAIT",
+                decision=decision["decision"],
                 confidence=float(candidate.opportunity_score),
                 entry_plan={"entry_price": entry_price, "quantity": self._quantity_for(entry_price)},
                 generated_at=event.event_timestamp,
