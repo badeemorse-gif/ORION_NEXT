@@ -41,8 +41,8 @@ class D1V3Tests(unittest.TestCase):
         self.candidates = MarketUniverseDiscovery(Universe(self.rows)).discover()
 
     @staticmethod
-    def metrics(symbol, *, volume=100e6, volatility=.03, spread=5, trend=.5, persistence=.5, trend_direction=0.0, momentum=.5, momentum_direction=0.0, structure=.8, change=0.0):
-        return MarketMetrics(symbol, volume, volatility, spread, True, 100.0, .8, trend, momentum, structure, change, 100.0, trend_direction, persistence, momentum_direction)
+    def metrics(symbol, *, volume=100e6, volatility=.03, spread=5, volume_quality=.8, trend=.5, persistence=.5, trend_direction=0.0, momentum=.5, momentum_direction=0.0, structure=.8, change=0.0):
+        return MarketMetrics(symbol, volume, volatility, spread, True, 100.0, volume_quality, trend, momentum, structure, change, 100.0, trend_direction, persistence, momentum_direction)
 
     def test_true_volatility_is_distinct_from_24h_change(self):
         scorer = OpportunityScorer(self.config)
@@ -63,7 +63,7 @@ class D1V3Tests(unittest.TestCase):
         scorer = OpportunityScorer(self.config)
         low = self.metrics("BTCUSDT", momentum=.2, momentum_direction=1.0, change=8.0, trend=.7)
         high = self.metrics("BTCUSDT", momentum=.9, momentum_direction=1.0, change=8.0, trend=.7)
-        self.assertGreater(scorer.score(high) , scorer.score(low))
+        self.assertGreater(scorer.score(high), scorer.score(low))
         same_change = self.metrics("BTCUSDT", momentum=.9, momentum_direction=1.0, change=-8.0, trend=.7)
         self.assertEqual(scorer.score(high), scorer.score(same_change))
 
@@ -82,18 +82,17 @@ class D1V3Tests(unittest.TestCase):
         self.assertLess(scorer.directional_evidence(bearish), 0.0)
 
     def test_high_volatility_without_trend_is_not_top_opportunity(self):
-        universe = self.candidates
         metrics = {
-            "BTCUSDT": self.metrics("BTCUSDT", volatility=.19, trend=.1, persistence=.1, momentum=.1, structure=.3, volume=.9),
-            "ETHUSDT": self.metrics("ETHUSDT", volatility=.03, trend=.9, persistence=.9, momentum=.8, structure=.9, volume=.8),
+            "BTCUSDT": self.metrics("BTCUSDT", volume=100e6, volatility=.19, trend=.1, persistence=.1, momentum=.1, structure=.3, volume_quality=.9),
+            "ETHUSDT": self.metrics("ETHUSDT", volume=5e6, volatility=.03, trend=.9, persistence=.9, momentum=.8, structure=.9, volume_quality=.8),
         }
-        result = OpportunityRanker(config=self.config).rank(universe, metrics)
+        result = OpportunityRanker(config=self.config).rank(self.candidates, metrics)
         self.assertEqual(result.symbols()[0], "ETHUSDT")
 
     def test_high_volume_alone_does_not_guarantee_top_rank(self):
         metrics = {
-            "BTCUSDT": self.metrics("BTCUSDT", volume=1e9, volatility=.08, trend=.2, persistence=.2, momentum=.1, structure=.2, spread=40),
-            "ETHUSDT": self.metrics("ETHUSDT", volume=5e6, volatility=.03, trend=.9, persistence=.9, momentum=.8, structure=.9, spread=3),
+            "BTCUSDT": self.metrics("BTCUSDT", volume=1e9, volatility=.08, trend=.2, persistence=.2, momentum=.1, structure=.2, volume_quality=1.0, spread=40),
+            "ETHUSDT": self.metrics("ETHUSDT", volume=5e6, volatility=.03, trend=.9, persistence=.9, momentum=.8, structure=.9, volume_quality=.2, spread=3),
         }
         result = OpportunityRanker(config=self.config).rank(self.candidates, metrics)
         self.assertEqual(result.symbols()[0], "ETHUSDT")
@@ -128,9 +127,7 @@ class D1V3Tests(unittest.TestCase):
         self.assertLessEqual(scorer.score(metric), 100.0)
 
     def test_hysteresis_preserves_incumbent_on_small_crossing(self):
-        cfg = OpportunityConfig(**{**self.config.__dict__, "hysteresis_score_delta": 5.0}) if hasattr(self.config, "__dict__") else OpportunityConfig(hysteresis_score_delta=5.0)
-        if not hasattr(self.config, "__dict__"):
-            cfg = OpportunityConfig(min_quote_volume_24h=1e6, min_volatility=.001, max_volatility=.20, target_volatility=.03, default_top_n=2, hysteresis_score_delta=5.0)
+        cfg = OpportunityConfig(min_quote_volume_24h=1e6, min_volatility=.001, max_volatility=.20, target_volatility=.03, default_top_n=2, hysteresis_score_delta=5.0)
         ranker = OpportunityRanker(config=cfg)
         first = ranker.rank(self.candidates, {"BTCUSDT": self.metrics("BTCUSDT", trend=.80), "ETHUSDT": self.metrics("ETHUSDT", trend=.75)})
         second = ranker.rank(self.candidates, {"BTCUSDT": self.metrics("BTCUSDT", trend=.76), "ETHUSDT": self.metrics("ETHUSDT", trend=.80)})
@@ -150,7 +147,6 @@ class D1V3Tests(unittest.TestCase):
 class SourceTests(unittest.TestCase):
     def test_true_market_volatility_and_feature_extraction(self):
         source = BinanceSpotOpportunitySource(clock=lambda: 0)
-        history = [[0, 0, 0, 0, str(100 + (i % 4) * 0.8)] for i in range(31)]
         prices = [100, 101, 103, 102, 104, 106, 105, 107, 109, 108, 110, 112, 111, 113, 115, 114, 116, 118, 117, 119, 121, 120, 122, 124, 123, 125, 127, 126, 128, 130, 129]
         history = [[0, 0, 0, 0, str(price)] for price in prices]
         volatility, trend_quality, trend_direction, persistence, momentum_quality, momentum_direction = source._history_features(history)
