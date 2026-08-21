@@ -116,6 +116,16 @@ class PaperRealtimeLifecycle:
         self._last_signal[intent_id] = snapshot
         return result.action
 
+    def _d4_fill_eligible(self, order_id: str) -> bool:
+        """Use D4 lifecycle state/history as the sole fill authority."""
+        order = self.orders.get(order_id)
+        if order.state is not OrderState.PENDING:
+            return False
+        history = self.orders.history(order_id)
+        if not history:
+            return False
+        return history[-1].event_type == "ORDER_CREATED"
+
     def on_market_event(self, event: MarketEvent) -> tuple[str, ...]:
         if event.event_id in self._seen_market_events:
             return ()
@@ -127,9 +137,7 @@ class PaperRealtimeLifecycle:
         for order in self.pending.pending():
             if order.symbol != event.symbol:
                 continue
-            # D4 is the authoritative lifecycle gate: a replaced/cancelled order
-            # cannot fill even if a stale D5 book entry is still enumerable.
-            if self.orders.get(order.order_id).state is not OrderState.PENDING:
+            if not self._d4_fill_eligible(order.order_id):
                 continue
             try:
                 matched = self.pending.try_fill(order.order_id, float(price), event.event_timestamp)
