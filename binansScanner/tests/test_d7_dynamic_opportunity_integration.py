@@ -4,13 +4,15 @@ import pathlib
 import sys
 import unittest
 
-_BINANS_SCANNER = pathlib.Path(__file__).resolve().parents[1]
-if str(_BINANS_SCANNER) not in sys.path:
-    sys.path.insert(0, str(_BINANS_SCANNER))
+_REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
+_BINANS_SCANNER = _REPO_ROOT / "binansScanner"
+for path in (_REPO_ROOT, _BINANS_SCANNER):
+    if str(path) not in sys.path:
+        sys.path.insert(0, str(path))
 
 from models.opportunity import MarketMetrics
 from services.opportunity_discovery import MarketUniverseDiscovery, OpportunityConfig, OpportunityDiscovery
-from orion_paper_8h_runner import FixedUniverseSource
+from tools.orion_paper_8h_runner import FixedUniverseSource
 
 
 class FakeBinanceSource:
