@@ -1,24 +1,11 @@
-"""
-===============================================================================
-Badee Binance Scanner
-Architecture : ORION
-Module       : application.application_runtime
-Version      : 1.1.0
-Status       : ORION Production V1.0
-===============================================================================
-
-Application Runtime Coordinator responsible for managing the application
-lifecycle through the canonical DependencyContainer and Pipeline boundaries.
-No service or execution component is constructed outside the composition root.
-===============================================================================
-"""
-
+"""Canonical application runtime facade, including paper pending-order lifecycle."""
 from __future__ import annotations
 
 from typing import Iterable, Optional
 
 from core.dependency_container import DependencyContainer
 from core.pipeline import Pipeline, PipelineItemResult, PipelineSummary
+from services.pending_order_runtime import PaperPendingOrderRuntime
 
 
 class ApplicationRuntime:
@@ -31,56 +18,37 @@ class ApplicationRuntime:
         self._pipeline: Optional[Pipeline] = None
 
     def initialize(self) -> None:
-        """Resolve the canonical Pipeline exactly once from the container."""
         if self._pipeline is None:
             self._pipeline = self._container.build_pipeline()
 
     def pipeline(self) -> Pipeline:
-        """Return the initialized canonical pipeline."""
         if self._pipeline is None:
             self.initialize()
         assert self._pipeline is not None
         return self._pipeline
 
-    def run_symbols(
-        self,
-        symbols: Iterable[str],
-        timeframes: list[str],
-        quantity: Optional[float] = None,
-    ) -> tuple[PipelineSummary, list[PipelineItemResult]]:
-        """Execute a symbol batch through the canonical application pipeline."""
+    def pending_order_runtime(self) -> PaperPendingOrderRuntime:
+        """Return the container-owned D5 pending-order runtime used by the Paper Bot path."""
+        return self._container.build_pending_order_runtime()
+
+    def run_symbols(self, symbols: Iterable[str], timeframes: list[str], quantity: Optional[float] = None) -> tuple[PipelineSummary, list[PipelineItemResult]]:
         return self.pipeline().run_symbols(symbols, timeframes, quantity)
 
-    def run_symbol(
-        self,
-        symbol: str,
-        timeframes: list[str],
-        quantity: Optional[float] = None,
-    ) -> PipelineItemResult:
-        """Execute one symbol through the canonical application pipeline."""
+    def run_symbol(self, symbol: str, timeframes: list[str], quantity: Optional[float] = None) -> PipelineItemResult:
         return self.pipeline().run_symbol(symbol, timeframes, quantity)
 
     def summary(self) -> Optional[PipelineSummary]:
-        """Return the latest pipeline summary without rebuilding the application."""
         return self.pipeline().statistics()
 
     def reset(self) -> None:
-        """Clear application execution state while retaining container wiring."""
         self.pipeline().reset()
+        self._container.build_pending_order_runtime().reset()
 
     def run(self) -> None:
-        """Compatibility lifecycle entrypoint; initialize without inventing inputs."""
         self.initialize()
 
     def shutdown(self) -> None:
-        """Release runtime-owned references; container ownership remains external."""
         self._pipeline = None
 
     def container(self) -> DependencyContainer:
-        """Return the composition-root container managed by this runtime."""
         return self._container
-
-
-# =============================================================================
-# End Of File
-# =============================================================================
