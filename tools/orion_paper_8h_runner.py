@@ -259,7 +259,7 @@ class Paper8HRunner:
         return self.supervisor.runtime.ledger.replay()
 
     def _marked_equity(self, state: Any) -> float:
-        return state.wallet.cash + sum(position.quantity * self.last_prices[symbol] for position in state.positions if symbol in self.last_prices)
+        return state.wallet.cash + sum(position.quantity * self.last_prices[position.symbol] for position in state.positions if position.symbol in self.last_prices)
 
     def _finalize(self, stream_runner: MarketStreamRunner) -> dict[str, Any]:
         state = self._account_state()
