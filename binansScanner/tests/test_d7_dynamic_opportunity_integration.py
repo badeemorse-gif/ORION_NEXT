@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
 import pathlib
 import sys
 import unittest
@@ -11,9 +10,7 @@ if str(_BINANS_SCANNER) not in sys.path:
 
 from models.opportunity import MarketMetrics
 from services.opportunity_discovery import MarketUniverseDiscovery, OpportunityConfig, OpportunityDiscovery
-from tools.orion_paper_8h_runner import FixedUniverseSource
-
-UTC = timezone.utc
+from orion_paper_8h_runner import FixedUniverseSource
 
 
 class FakeBinanceSource:
