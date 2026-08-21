@@ -204,7 +204,7 @@ class TestPendingOrderContract(unittest.TestCase):
             now=BASE + timedelta(minutes=1),
             policy=RevalidationPolicy(max_cumulative_entry_drift_pct=10.0),
         )
-        self.assertEqual((r.action, r.reason), (RevalidationAction.CUMULATIVE_DRIFT_LIMIT and RevalidationAction.NO_TRADE))
+        self.assertEqual(r.action, RevalidationAction.NO_TRADE)
         self.assertEqual(r.reason, CancelReason.CUMULATIVE_DRIFT_LIMIT)
 
     def test_duplicate_intent_rejected(self):
