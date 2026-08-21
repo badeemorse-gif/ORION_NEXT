@@ -53,6 +53,32 @@ class TestPaperRealtimeLifecycleIntegration(unittest.TestCase):
         self.assertEqual(runtime.positions.active_for_symbol("BTCUSDT").quantity, 1.0)
         self.assertEqual(len(runtime.ledger.events), 5)
 
+    def test_replacement_has_single_active_intent_and_old_is_terminal(self) -> None:
+        runtime = PaperRealtimeLifecycle()
+        t0 = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
+        first = runtime.submit_signal(snapshot(version=1, price=100.0, generated_at=t0), now=t0)
+        t1 = t0 + timedelta(minutes=1)
+        runtime.revalidate(intent_id=first.intent_id, snapshot=snapshot(version=2, price=118.0, generated_at=t1), market_price=120.0, now=t1)
+        replacement = runtime.pending.active_for_intent(first.intent_id)
+        self.assertIsNotNone(replacement)
+        active = runtime.pending.pending()
+        self.assertEqual(len(active), 1)
+        self.assertEqual(active[0].order_id, replacement.order_id)
+        self.assertEqual(runtime.orders.get(first.order_id).state, OrderState.REPLACED)
+        self.assertEqual(runtime.orders.history(first.order_id)[-1].event_type, "ORDER_REPLACED")
+
+    def test_cancelled_order_cannot_fill_position_or_ledger(self) -> None:
+        runtime = PaperRealtimeLifecycle()
+        t0 = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
+        first = runtime.submit_signal(snapshot(version=1, price=100.0, generated_at=t0), now=t0)
+        action = runtime.revalidate(intent_id=first.intent_id, snapshot=snapshot(version=2, price=100.0, decision="WAIT", generated_at=t0 + timedelta(minutes=1)), market_price=105.0, now=t0 + timedelta(minutes=1))
+        self.assertEqual(action.value, "CANCEL")
+        before = len(runtime.ledger.events)
+        self.assertEqual(runtime.on_market_event(event(100.0, t0 + timedelta(minutes=2), "late-cancelled")), ())
+        self.assertEqual(runtime.orders.get(first.order_id).state, OrderState.CANCELLED)
+        self.assertEqual(len(runtime.ledger.events), before)
+        self.assertIsNone(runtime.positions.active_for_symbol("BTCUSDT"))
+
     def test_wait_cancels_pending(self) -> None:
         runtime = PaperRealtimeLifecycle()
         t0 = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
