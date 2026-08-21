@@ -27,6 +27,8 @@ if str(_BINANS_SCANNER) not in sys.path:
     sys.path.insert(0, str(_BINANS_SCANNER))
 
 from decision_engine import evaluate_decision
+from engines.indicator_engine import IndicatorEngine
+from engines.profile_engine import ProfileEngine
 from enums import Timeframe
 from integration.paper_realtime_lifecycle import PaperRealtimeLifecycle
 from integration.paper_runtime_supervisor import PaperRuntimeSupervisor
@@ -34,6 +36,7 @@ from models.market_event import MarketEvent, MarketEventType
 from models.opportunity import MarketMetrics, OpportunityCandidate
 from models.paper_capital import PaperLedger
 from models.signal_snapshot import MaterialChangePolicy, SignalIdentity, SignalSnapshot, build_next_snapshot
+from providers.binance_mapper import BinanceMapper
 from providers.market_stream import BinanceWebSocketMarketStream, MarketStreamRunner
 from services.opportunity_discovery import MarketUniverseDiscovery, OpportunityConfig, OpportunityDiscovery
 
@@ -41,15 +44,76 @@ UTC = timezone.utc
 BINANCE_PUBLIC_API = "https://api.binance.com"
 
 
-def canonical_decision(candidate: OpportunityCandidate) -> Mapping[str, Any]:
-    """Run the existing Decision Engine from actual D1 output.
+class CanonicalDecisionContextProvider:
+    """Build the actual upstream profile context used at the decision boundary.
 
-    D1's OpportunityCandidate is the canonical decision input available at this
-    integration boundary. The adapter deliberately passes only that actual
-    score; Decision Engine defaults are its own contract, not runner-created
-    health/confidence/module values.
+    Market data is mapped through BinanceMapper, enriched by the canonical
+    IndicatorEngine, and profiled by the canonical ProfileEngine. No health,
+    trade-mode, confidence, or module values are invented by the runner.
     """
-    return evaluate_decision({"score": float(candidate.opportunity_score)}, {})
+
+    _PROFILE_TIMEFRAMES = (("1h", Timeframe.H1), ("4h", Timeframe.H4), ("1d", Timeframe.D1))
+
+    def __init__(self, api_base: str = BINANCE_PUBLIC_API) -> None:
+        self._api_base = api_base.rstrip("/")
+        self._mapper = BinanceMapper()
+        self._indicator_engine = IndicatorEngine()
+        self._profile_engine = ProfileEngine()
+        self._cache: dict[str, tuple[float, Mapping[str, Any]]] = {}
+
+    def _get_json(self, path: str, params: Mapping[str, str]) -> Any:
+        request = Request(
+            f"{self._api_base}{path}?{urlencode(params)}",
+            headers={"User-Agent": "ORION-paper-runner/1.0"},
+            method="GET",
+        )
+        with urlopen(request, timeout=10) as response:
+            return json.loads(response.read().decode("utf-8"))
+
+    def build(self, symbol: str) -> Mapping[str, Any]:
+        symbol = symbol.upper()
+        cached = self._cache.get(symbol)
+        now = time.monotonic()
+        if cached is not None and now - cached[0] < 30.0:
+            return cached[1]
+
+        timeframe_data = {}
+        for interval, timeframe in self._PROFILE_TIMEFRAMES:
+            payload = self._get_json(
+                "/api/v3/klines",
+                {"symbol": symbol, "interval": interval, "limit": "250"},
+            )
+            if not isinstance(payload, list) or not payload:
+                raise RuntimeError(f"No canonical profile data for {symbol} {interval}")
+            timeframe_data[timeframe] = self._mapper.convert_klines_to_dataframe(payload)
+
+        dataset = self._mapper.create_market_dataset(
+            symbol=symbol,
+            timeframe_data=timeframe_data,
+            source="BINANCE_PUBLIC_PROFILE",
+        )
+        dataset = self._indicator_engine.calculate_dataset(dataset)
+        profile = self._profile_engine.build_profile(dataset)
+
+        # evaluate_decision() is a legacy dict-boundary contract. These values
+        # are translated only from the canonical ProfileResult; no fixed
+        # "healthy" or "standard" profile is created here.
+        context: Mapping[str, Any] = {
+            "health_score": float(profile.statistics.health_score),
+            "trade_mode": "FULL_ANALYSIS" if profile.is_tradeable else "NEW_LISTING",
+        }
+        self._cache[symbol] = (now, context)
+        return context
+
+
+def canonical_decision(
+    candidate: OpportunityCandidate,
+    context: Optional[Mapping[str, Any]] = None,
+) -> Mapping[str, Any]:
+    """Evaluate actual D1 score against canonical upstream decision context."""
+    if context is None:
+        raise ValueError("canonical decision context is required")
+    return evaluate_decision({"score": float(candidate.opportunity_score)}, dict(context))
 
 
 @dataclass(frozen=True, slots=True)
@@ -154,6 +218,7 @@ class Paper8HRunner:
     supervisor: PaperRuntimeSupervisor
     opportunity: OpportunityDiscovery
     log: JsonlRunLog
+    decision_context: Any = field(default_factory=CanonicalDecisionContextProvider)
     previous_signals: dict[str, SignalSnapshot] = field(default_factory=dict)
     last_prices: dict[str, float] = field(default_factory=dict)
     started_at: Optional[datetime] = None
@@ -170,7 +235,7 @@ class Paper8HRunner:
         opportunity_config = OpportunityConfig(default_top_n=config.top_n)
         opportunity = OpportunityDiscovery(MarketUniverseDiscovery(public_source, opportunity_config), public_source, opportunity_config)
         stream = BinanceWebSocketMarketStream(config.symbols, [Timeframe.M1])
-        return cls(config, stream, supervisor, opportunity, JsonlRunLog(config.output_dir / "events.jsonl"), peak_equity=config.starting_capital)
+        return cls(config, stream, supervisor, opportunity, JsonlRunLog(config.output_dir / "events.jsonl"), CanonicalDecisionContextProvider(), peak_equity=config.starting_capital)
 
     async def run(self) -> dict[str, Any]:
         self.started_at = datetime.now(UTC)
@@ -232,7 +297,12 @@ class Paper8HRunner:
             self.log.write("signal_cycle_failure", error=f"{type(exc).__name__}: {exc}")
             return
         for candidate in opportunities.candidates:
-            decision = canonical_decision(candidate)
+            try:
+                context = await asyncio.to_thread(self.decision_context.build, candidate.symbol)
+                decision = canonical_decision(candidate, context)
+            except Exception as exc:
+                self.log.write("decision_context_failure", symbol=candidate.symbol, error=f"{type(exc).__name__}: {exc}")
+                continue
             entry_price = self.last_prices.get(candidate.symbol)
             if entry_price is None or entry_price <= 0.0:
                 continue
