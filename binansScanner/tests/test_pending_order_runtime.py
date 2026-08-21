@@ -8,10 +8,9 @@ import unittest
 from application.application_runtime import ApplicationRuntime
 from core.dependency_container import DependencyContainer
 from models.execution import ExecutionPlan, ExecutionSide
-from models.order_position_lifecycle import OrderState, PositionState
+from models.order_position_lifecycle import FillMetadata, InvalidTransitionError, OrderState, PositionState
 from models.signal_snapshot import MaterialChangePolicy, MaterialChangeReason, SignalIdentity, SignalSnapshot, SignalValidity, material_change_reasons
 from services.pending_order_runtime import CancelReason, PaperPendingOrderRuntime, RepricingPolicy, RuntimeAction
-
 
 ROOT = Path(__file__).resolve().parents[1]
 BASE = datetime(2026, 8, 21, 10, 0, tzinfo=timezone.utc)
@@ -116,8 +115,6 @@ class TestPendingOrderRuntime(unittest.TestCase):
         self.assertEqual(len(self.runtime.pending_orders()), 1)
 
     def test_repricing_limit_stops_price_chasing(self):
-        limited = PaperPendingOrderRuntime(self.runtime._order_lifecycle, self.runtime._position_book, RepricingPolicy(max_repricing_count=0))
-        # Separate runtime state with the same D4 dependencies is intentionally not reused.
         from models.order_position_lifecycle import OrderLifecycle, PositionBook
         limited = PaperPendingOrderRuntime(OrderLifecycle(), PositionBook(), RepricingPolicy(max_repricing_count=0))
         limited.submit(self.old_signal, plan(ExecutionSide.BUY, 100.0), intent_id=self.intent, at=BASE)
@@ -126,8 +123,8 @@ class TestPendingOrderRuntime(unittest.TestCase):
         self.assertEqual(limited.pending_orders(), ())
 
     def test_cumulative_drift_limit_stops_price_chasing(self):
-        limited = PaperPendingOrderRuntime(self.runtime._order_lifecycle, self.runtime._position_book, RepricingPolicy(max_cumulative_entry_drift_pct=5.0))
-        limited.reset()
+        from models.order_position_lifecycle import OrderLifecycle, PositionBook
+        limited = PaperPendingOrderRuntime(OrderLifecycle(), PositionBook(), RepricingPolicy(max_cumulative_entry_drift_pct=5.0))
         limited.submit(self.old_signal, plan(ExecutionSide.BUY, 100.0), intent_id=self.intent, at=BASE)
         result = limited.revalidate(snapshot(2, entry=108.0), plan(ExecutionSide.BUY, 108.0), market_price=110.0, previous_signal=self.old_signal, intent_id=self.intent, at=BASE + timedelta(minutes=1))
         self.assertEqual((result.action, result.reason), (RuntimeAction.NO_TRADE, CancelReason.CUMULATIVE_DRIFT_LIMIT))
@@ -152,9 +149,11 @@ class TestPendingOrderE2E(unittest.TestCase):
         self.assertEqual(runtime.d4_order(new_id).state, OrderState.PENDING)
         self.assertEqual([order.entry_price for order in runtime.pending_orders()], [118.0])
 
-        self.assertEqual(runtime.on_market_price("BTCUSDT", 100.0, at=BASE + timedelta(minutes=3)), ())
+        # A later market touch at 100 must not resurrect/fill the cancelled D4 order.
+        with self.assertRaises(InvalidTransitionError):
+            runtime._order_lifecycle.fill(old_id, FillMetadata("OLD-TOUCH", 1.0, 100.0, BASE + timedelta(minutes=3)))
         self.assertEqual(runtime.d4_order(old_id).state, OrderState.CANCELLED)
-        self.assertEqual(runtime.pending_orders()[0].entry_price, 118.0)
+        self.assertEqual([order.entry_price for order in runtime.pending_orders()], [118.0])
 
         filled = runtime.on_market_price("BTCUSDT", 118.0, at=BASE + timedelta(minutes=4))
         self.assertEqual(filled[0].action, RuntimeAction.FILLED)
