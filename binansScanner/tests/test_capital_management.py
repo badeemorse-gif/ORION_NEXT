@@ -22,6 +22,23 @@ class TestCapitalManagement(unittest.TestCase):
     def candidate(self, symbol, rank=1, score=100.0, eligible=True, intent="ENTRY"):
         return AllocationCandidate(symbol, rank, score, eligible, intent)
 
+    def test_default_policy_allows_multiple_concurrent_allocations(self):
+        manager = CapitalManager(
+            AllocationConfig(starting_capital=50, mode=CapitalMode.FIXED_ALLOCATION, fixed_allocation=10.0)
+        )
+        results = manager.allocate_ranked([
+            (self.candidate("BTCUSDT", 1, 90), 5.0),
+            (self.candidate("ETHUSDT", 2, 80), 5.0),
+            (self.candidate("SOLUSDT", 3, 70), 5.0),
+        ])
+        self.assertTrue(all(result.accepted for result in results))
+        self.assertEqual(manager.reserved_capital, 30.0)
+        self.assertEqual(manager.available_capital, 20.0)
+
+    def test_default_policy_has_no_artificial_single_position_cap(self):
+        config = AllocationConfig(starting_capital=50, fixed_allocation=10.0)
+        self.assertIsNone(config.max_concurrent_positions)
+
     def test_fixed_allocation_50_does_not_compound(self):
         manager = CapitalManager(AllocationConfig(starting_capital=50, mode=CapitalMode.FIXED_ALLOCATION, allocation_rate=0.10, max_concurrent_positions=3))
         first = manager.calculate(self.candidate("BTCUSDT"), 0.0)
@@ -67,7 +84,7 @@ class TestCapitalManagement(unittest.TestCase):
         result = manager.calculate(self.candidate("BTCUSDT"), 5.0)
         self.assertEqual(result.final_order_notional, 8.0)
 
-    def test_multiple_concurrent_allocations_are_allowed_within_capital(self):
+    def test_multiple_concurrent_allocations_are_allowed_within_configured_limit(self):
         manager = CapitalManager(AllocationConfig(starting_capital=50, mode=CapitalMode.FIXED_ALLOCATION, fixed_allocation=10.0, max_concurrent_positions=3))
         results = manager.allocate_ranked([
             (self.candidate("BTCUSDT", 1, 90), 5.0),
@@ -87,7 +104,20 @@ class TestCapitalManagement(unittest.TestCase):
         third = manager.calculate(self.candidate("SOLUSDT"), 0.0)
         self.assertEqual(third.rejection_reason, AllocationRejection.INSUFFICIENT_CAPITAL)
 
-    def test_max_concurrent_positions_rejects_at_limit(self):
+    def test_reserved_capital_never_exceeds_available_capital(self):
+        manager = CapitalManager(AllocationConfig(starting_capital=50, fixed_allocation=15.0))
+        results = manager.allocate_ranked([
+            (self.candidate("BTCUSDT", 1), 5.0),
+            (self.candidate("ETHUSDT", 2), 5.0),
+            (self.candidate("SOLUSDT", 3), 5.0),
+            (self.candidate("ADAUSDT", 4), 5.0),
+        ])
+        accepted = [result for result in results if result.accepted]
+        self.assertEqual(len(accepted), 3)
+        self.assertLessEqual(manager.reserved_capital, 50.0)
+        self.assertGreaterEqual(manager.available_capital, 0.0)
+
+    def test_max_concurrent_positions_rejects_at_configured_limit(self):
         manager = CapitalManager(AllocationConfig(starting_capital=50, mode=CapitalMode.FIXED_ALLOCATION, fixed_allocation=5.0, max_concurrent_positions=2))
         first = manager.calculate(self.candidate("BTCUSDT"), 0.0)
         second = manager.calculate(self.candidate("ETHUSDT"), 0.0)
@@ -102,6 +132,13 @@ class TestCapitalManagement(unittest.TestCase):
         second = manager.calculate(self.candidate("BTCUSDT"), 0.0)
         self.assertTrue(first.accepted)
         self.assertEqual(second.rejection_reason, AllocationRejection.DUPLICATE_ALLOCATION)
+
+    def test_existing_position_is_not_closed_to_make_room(self):
+        manager = CapitalManager(AllocationConfig(starting_capital=50, fixed_allocation=5.0, max_concurrent_positions=1))
+        manager.set_active_positions(["BTCUSDT"])
+        result = manager.calculate(self.candidate("ETHUSDT"), 0.0)
+        self.assertEqual(result.rejection_reason, AllocationRejection.MAX_CONCURRENT_POSITIONS)
+        self.assertIn("BTCUSDT", manager._positions)
 
     def test_ineligible_opportunity_is_rejected(self):
         manager = CapitalManager(AllocationConfig(starting_capital=50, mode=CapitalMode.FIXED_ALLOCATION, fixed_allocation=5.0))
