@@ -38,6 +38,7 @@ class PaperRuntimeSupervisor:
     _last_event: Optional[MarketEvent] = field(default=None, init=False, repr=False)
     _duplicate_events: int = field(default=0, init=False, repr=False)
     _failed: bool = field(default=False, init=False, repr=False)
+    _equity_high_water: Optional[float] = field(default=None, init=False, repr=False)
 
     @property
     def active_orders(self) -> tuple[PendingOrder, ...]:
@@ -45,25 +46,35 @@ class PaperRuntimeSupervisor:
 
     @property
     def terminal_orders(self) -> tuple[str, ...]:
+        ids = {event.aggregate_id for event in self.runtime.orders.events if event.aggregate_type == "ORDER"}
         return tuple(
             order_id
-            for order_id in self.runtime.orders.order_ids()
+            for order_id in sorted(ids)
             if self.runtime.orders.get(order_id).state is not OrderState.PENDING
         )
 
     @property
     def active_positions(self) -> tuple:
-        return tuple(self.runtime.positions.active())
+        symbols = {event.payload.get("symbol") for event in self.runtime.positions.events if event.payload.get("symbol")}
+        positions = []
+        for symbol in sorted(symbols):
+            position = self.runtime.positions.active_for_symbol(str(symbol))
+            if position is not None:
+                positions.append(position)
+        return tuple(positions)
 
     @property
     def account_equity(self) -> float:
-        return float(self.runtime.replay_account().wallet.cash)
+        equity = float(self.runtime.replay_account().wallet.cash)
+        if self._equity_high_water is None or equity > self._equity_high_water:
+            self._equity_high_water = equity
+        return equity
 
     @property
     def current_drawdown(self) -> float:
-        # The paper ledger is authoritative for accounting. A runtime without
-        # an equity high-water mark has zero realized drawdown by definition.
-        return 0.0
+        equity = self.account_equity
+        high_water = self._equity_high_water if self._equity_high_water is not None else equity
+        return max(0.0, high_water - equity)
 
     @property
     def last_processed_market_event(self) -> Optional[MarketEvent]:
@@ -111,6 +122,7 @@ class PaperRuntimeSupervisor:
         self._processed_event_ids.add(event.event_id)
         self._last_event = event
         self._operations.append(("market", event))
+        self.account_equity
         return result
 
     def consume(self, events: Iterable[MarketEvent]) -> int:
@@ -138,9 +150,11 @@ class PaperRuntimeSupervisor:
 
     def replay_state(self) -> tuple:
         """Return deterministic account/lifecycle state suitable for comparison."""
+        order_ids = sorted({event.aggregate_id for event in self.runtime.orders.events if event.aggregate_type == "ORDER"})
+        position_ids = sorted({event.aggregate_id for event in self.runtime.positions.events if event.aggregate_type == "POSITION"})
         return (
-            tuple((o.order_id, o.state.value, o.price, o.quantity) for o in self.runtime.orders.all()),
-            tuple((p.position_id, p.symbol, p.side.value, p.quantity) for p in self.runtime.positions.all()),
+            tuple((order_id, self.runtime.orders.get(order_id).state.value, self.runtime.orders.get(order_id).price, self.runtime.orders.get(order_id).quantity) for order_id in order_ids),
+            tuple((position_id, next(event.payload.get("symbol") for event in self.runtime.positions.events if event.aggregate_id == position_id), next(event.payload.get("side") for event in self.runtime.positions.events if event.aggregate_id == position_id), next(event.payload.get("quantity") for event in self.runtime.positions.events if event.aggregate_id == position_id)) for position_id in position_ids),
             self.runtime.replay_account(),
         )
 
