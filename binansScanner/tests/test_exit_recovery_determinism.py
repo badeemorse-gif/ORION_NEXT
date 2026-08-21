@@ -73,8 +73,8 @@ class TestExitRecoveryDeterminism(unittest.TestCase):
     def test_exit_recovery_preserves_account_and_realized_pnl(self) -> None:
         supervisor, t0, _, _ = self._open_long()
         supervisor.exit_position(symbol="BTCUSDT", price=110.0, now=t0 + timedelta(seconds=2), reason=ExitReason.TAKE_PROFIT)
-        original_account = supervisor.replay_account()
-        recovered_account = supervisor.recover().replay_account()
+        original_account = supervisor.runtime.replay_account()
+        recovered_account = supervisor.recover().runtime.replay_account()
         self.assertEqual(recovered_account, original_account)
         self.assertEqual(recovered_account.realized_pnl, original_account.realized_pnl)
 
@@ -112,7 +112,7 @@ class TestExitRecoveryDeterminism(unittest.TestCase):
         self.assertEqual(data["price"], 110.0)
         self.assertEqual(data["reason"], ExitReason.TAKE_PROFIT)
         self.assertEqual(len(data["order_events"]), 2)
-        self.assertEqual(len(data["position_events"]), 1)
+        self.assertEqual(len(data["position_events"]), 2)
         self.assertGreaterEqual(len(data["ledger_events"]), 1)
 
 

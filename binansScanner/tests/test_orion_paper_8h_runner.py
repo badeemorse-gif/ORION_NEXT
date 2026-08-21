@@ -168,7 +168,7 @@ class TestPaper8HRunnerE2E(unittest.IsolatedAsyncioTestCase):
         await self.runner._on_market_event(trade_event(99.0, "entry-fill", t0.replace(second=10)))
         self.assertEqual(len(self.runner.supervisor.active_positions), 1)
         before = self.runner.supervisor.runtime.ledger.replay().realized_pnl
-        exit_order = self.runner.supervisor.runtime.exit_position(symbol="BTCUSDT", price=105.0, now=t0.replace(second=20))
+        exit_order = self.runner.supervisor.exit_position(symbol="BTCUSDT", price=105.0, now=t0.replace(second=20))
         self.assertTrue(exit_order.startswith("EXIT-POS-"))
         after = self.runner.supervisor.runtime.ledger.replay()
         self.assertEqual(len(self.runner.supervisor.active_positions), 0)
