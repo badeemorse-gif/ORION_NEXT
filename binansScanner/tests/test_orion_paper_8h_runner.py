@@ -6,9 +6,6 @@ import sys
 import tempfile
 import unittest
 
-# Canonical D5 tooling lives at repository-root/tools. The verification suite
-# executes from binansScanner, so expose the repository root explicitly for
-# this runner contract test without changing production import semantics.
 REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
@@ -18,7 +15,7 @@ from integration.paper_runtime_supervisor import PaperRuntimeSupervisor
 from models.market_event import MarketEvent, MarketEventType
 from models.opportunity import MarketMetrics, OpportunityCandidate, OpportunityCandidateSet
 from models.paper_capital import PaperLedger
-from tools.orion_paper_8h_runner import JsonlRunLog, Paper8HConfig, Paper8HRunner
+from tools.orion_paper_8h_runner import JsonlRunLog, Paper8HConfig, Paper8HRunner, canonical_decision
 
 UTC = timezone.utc
 
@@ -44,11 +41,14 @@ def candle_event(price: float, event_id: str, timestamp: datetime) -> MarketEven
 
 
 class FakeOpportunity:
+    def __init__(self, score: float = 90.0):
+        self.score = score
+
     def discover(self, top_n=None):
         metrics = MarketMetrics("BTCUSDT", 200_000_000.0, 0.03, None, True)
         candidate = OpportunityCandidate(
             symbol="BTCUSDT",
-            opportunity_score=90.0,
+            opportunity_score=self.score,
             rank=1,
             metrics=metrics,
             eligibility_reasons=(),
@@ -73,6 +73,28 @@ class TestPaper8HConfig(unittest.TestCase):
             Paper8HConfig(max_notional_pct=100.1)
 
 
+class TestCanonicalDecisionAdapter(unittest.TestCase):
+    def _candidate(self, score: float) -> OpportunityCandidate:
+        return OpportunityCandidate(
+            symbol="BTCUSDT",
+            opportunity_score=score,
+            rank=1,
+            metrics=MarketMetrics("BTCUSDT", 200_000_000.0, 0.03, None, True),
+            eligibility_reasons=(),
+        )
+
+    def test_actual_d1_score_changes_decision(self):
+        below_entry = canonical_decision(self._candidate(84.0))
+        at_entry = canonical_decision(self._candidate(85.0))
+        self.assertNotEqual(below_entry["decision"], at_entry["decision"])
+        self.assertEqual(at_entry["decision"], "BUY")
+
+    def test_adapter_does_not_construct_synthetic_context(self):
+        decision = canonical_decision(self._candidate(85.0))
+        self.assertEqual(decision["decision"], "BUY")
+        self.assertEqual(decision["decision_score"], 85.0)
+
+
 class TestPaper8HRunnerE2E(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         self.tempdir = tempfile.TemporaryDirectory()
@@ -92,7 +114,7 @@ class TestPaper8HRunnerE2E(unittest.IsolatedAsyncioTestCase):
         self.runner.log.close()
         self.tempdir.cleanup()
 
-    async def test_actual_decision_path_produces_buy_signal_not_hardcoded_wait(self):
+    async def test_actual_decision_path_produces_buy_signal(self):
         t0 = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
         self.runner.last_prices["BTCUSDT"] = 100.0
         await self.runner._on_market_event(candle_event(100.0, "candle-1", t0))
@@ -115,6 +137,21 @@ class TestPaper8HRunnerE2E(unittest.IsolatedAsyncioTestCase):
         recovered_twice = recovered.recover()
         self.assertEqual(original, recovered.replay_state())
         self.assertEqual(recovered.replay_state(), recovered_twice.replay_state())
+
+    async def test_buy_fill_sell_exit_realized_pnl_and_replay(self):
+        t0 = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
+        await self.runner._on_market_event(candle_event(100.0, "entry", t0))
+        await self.runner._on_market_event(trade_event(99.0, "entry-fill", t0.replace(second=10)))
+        self.assertEqual(len(self.runner.supervisor.active_positions), 1)
+        before = self.runner.supervisor.runtime.ledger.replay().realized_pnl
+        exit_order = self.runner.supervisor.runtime.exit_position(symbol="BTCUSDT", price=105.0, now=t0.replace(second=20))
+        self.assertTrue(exit_order.startswith("EXIT-POS-"))
+        after = self.runner.supervisor.runtime.ledger.replay()
+        self.assertEqual(len(self.runner.supervisor.active_positions), 0)
+        self.assertNotEqual(after.realized_pnl, before)
+        original = self.runner.supervisor.replay_state()
+        recovered = self.runner.supervisor.recover()
+        self.assertEqual(original, recovered.replay_state())
 
     async def test_duplicate_market_event_is_suppressed_by_supervisor(self):
         t0 = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
