@@ -28,7 +28,13 @@ class BulkMetricsSource(Protocol):
 
 @dataclass(frozen=True, slots=True)
 class OpportunityConfig:
-    """Deterministic V3 eligibility and scoring configuration."""
+    """Deterministic V3 eligibility and scoring configuration.
+
+    Score components are intentionally orthogonal: volume quality, liquidity,
+    volatility regime, trend quality, momentum, and structure quality. The
+    24h net price change is retained only as source metadata and is never used
+    as a substitute for trend or momentum.
+    """
     quote_assets: tuple[str, ...] = ("USDT",)
     excluded_base_assets: tuple[str, ...] = (
         "USDT", "USDC", "BUSD", "DAI", "TUSD", "FDUSD", "USDP",
@@ -67,8 +73,12 @@ class OpportunityConfig:
         if not self.min_volatility <= self.target_volatility <= self.max_volatility:
             raise ValueError("target_volatility must be within eligibility bounds")
         weights = (
-            self.volume_weight, self.liquidity_weight, self.volatility_weight,
-            self.trend_weight, self.momentum_weight, self.structure_weight,
+            self.volume_weight,
+            self.liquidity_weight,
+            self.volatility_weight,
+            self.trend_weight,
+            self.momentum_weight,
+            self.structure_weight,
         )
         if any(weight < 0 for weight in weights) or not math.isclose(sum(weights), 1.0, abs_tol=1e-12):
             raise ValueError("opportunity weights must be non-negative and sum to 1")
@@ -168,7 +178,11 @@ class OpportunityScorer:
             else min(math.log1p(max(metrics.quote_volume_24h, 0.0)) / math.log1p(self._config.volume_reference_24h), 1.0)
         )
         distance = abs(metrics.volatility - self._config.target_volatility)
-        span = max(self._config.target_volatility - self._config.min_volatility, self._config.max_volatility - self._config.target_volatility, 1e-12)
+        span = max(
+            self._config.target_volatility - self._config.min_volatility,
+            self._config.max_volatility - self._config.target_volatility,
+            1e-12,
+        )
         volatility_component = max(0.0, 1.0 - distance / span)
         if metrics.spread_bps is None:
             liquidity_component = 0.5
@@ -176,16 +190,19 @@ class OpportunityScorer:
             liquidity_component = 0.0
         else:
             liquidity_component = max(0.0, 1.0 - min(metrics.spread_bps / self._config.max_spread_bps, 1.0))
+
         trend_base = self._neutral(metrics.trend_quality)
         trend_persistence = self._neutral(metrics.trend_persistence)
         trend_component = 0.7 * trend_base + 0.3 * trend_persistence
+        momentum_component = self._neutral(metrics.momentum_quality)
+        structure_component = self._neutral(metrics.structure_quality)
         return (
             ("volume_quality", round(volume_component, 8)),
             ("liquidity", round(liquidity_component, 8)),
             ("volatility_regime", round(volatility_component, 8)),
             ("trend_quality", round(trend_component, 8)),
-            ("momentum", round(self._neutral(metrics.momentum_quality), 8)),
-            ("structure_quality", round(self._neutral(metrics.structure_quality), 8)),
+            ("momentum", round(momentum_component, 8)),
+            ("structure_quality", round(structure_component, 8)),
         )
 
     def directional_evidence(self, metrics: MarketMetrics) -> float:
@@ -193,7 +210,11 @@ class OpportunityScorer:
         momentum_direction = self._direction(metrics.momentum_direction)
         trend_strength = self._neutral(metrics.trend_quality)
         momentum_strength = self._neutral(metrics.momentum_quality)
-        return round(max(-1.0, min(0.65 * trend_direction * trend_strength + 0.35 * momentum_direction * momentum_strength, 1.0)), 8)
+        weighted = (
+            0.65 * trend_direction * trend_strength
+            + 0.35 * momentum_direction * momentum_strength
+        )
+        return round(max(-1.0, min(weighted, 1.0)), 8)
 
     def score(self, metrics: MarketMetrics) -> float:
         components = dict(self.score_components(metrics))
@@ -227,7 +248,17 @@ class OpportunityRanker:
             decision = eligibility.evaluate(candidate, metric)
             if not decision.eligible:
                 continue
-            ranked.append(OpportunityCandidate(candidate.symbol, self._scorer.score(metric), 0, metric, decision.reasons, self._scorer.score_components(metric), self._scorer.directional_evidence(metric)))
+            ranked.append(
+                OpportunityCandidate(
+                    candidate.symbol,
+                    self._scorer.score(metric),
+                    0,
+                    metric,
+                    decision.reasons,
+                    self._scorer.score_components(metric),
+                    self._scorer.directional_evidence(metric),
+                )
+            )
         ranked.sort(key=lambda item: (-item.opportunity_score, item.symbol))
         if self._previous_rank and self._config.hysteresis_score_delta > 0:
             for index in range(len(ranked) - 1):
@@ -238,7 +269,18 @@ class OpportunityRanker:
                     if right_previous is not None and (left_previous is None or right_previous < left_previous):
                         ranked[index], ranked[index + 1] = right, left
         selected = ranked[:requested_top_n]
-        result = tuple(OpportunityCandidate(item.symbol, item.opportunity_score, index, item.metrics, item.eligibility_reasons, item.score_components, item.directional_evidence) for index, item in enumerate(selected, start=1))
+        result = tuple(
+            OpportunityCandidate(
+                item.symbol,
+                item.opportunity_score,
+                index,
+                item.metrics,
+                item.eligibility_reasons,
+                item.score_components,
+                item.directional_evidence,
+            )
+            for index, item in enumerate(selected, start=1)
+        )
         self._previous_rank = {item.symbol: item.rank for item in result}
         return OpportunityCandidateSet(result, requested_top_n, None)
 
