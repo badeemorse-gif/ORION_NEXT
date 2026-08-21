@@ -7,6 +7,7 @@ from integration.paper_realtime_lifecycle import PaperRealtimeLifecycle
 from models.market_event import MarketEvent, MarketEventType
 from models.order_position_lifecycle import ExitReason, OrderState
 from models.signal_snapshot import SignalIdentity, SignalSnapshot
+from tools.pending_order_revalidation import RevalidationPolicy
 
 UTC = timezone.utc
 
