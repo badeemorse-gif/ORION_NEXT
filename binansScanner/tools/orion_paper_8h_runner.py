@@ -1,15 +1,10 @@
-"""Official ORION paper-runtime runner.
+"""Official ORION paper runtime runner.
 
-Runs public Binance market data through the delivered D1 opportunity path,
-canonical decision path, D3 SignalSnapshot contract, and D5/D4/D6 paper
-runtime. This module never places exchange orders and never accepts credentials.
+Public Binance market data -> D1 opportunity discovery -> canonical decision
+engine -> D3 SignalSnapshot -> PaperRuntimeSupervisor -> D5/D4/D6.
 
-Run from binansScanner, for example:
-    python -m tools.orion_paper_8h_runner --duration-hours 8 --symbols BTCUSDT
-
-The command creates persistent JSONL event logs and a final JSON accounting /
-recovery report. The live run is intentionally not started by importing this
-module; execution only occurs through the CLI entry point.
+Paper-only: this module has no credentials, no exchange-order API, and no live
+execution path. Importing it never starts a run.
 """
 from __future__ import annotations
 
@@ -20,25 +15,21 @@ from datetime import datetime, timedelta, timezone
 import json
 from pathlib import Path
 import sys
-from typing import Any, Callable, Mapping, Optional
+import time
+from typing import Any, Mapping, Optional
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
+from decision_engine import evaluate_decision
 from enums import Timeframe
 from integration.paper_realtime_lifecycle import PaperRealtimeLifecycle
 from integration.paper_runtime_supervisor import PaperRuntimeSupervisor
 from models.market_event import MarketEvent, MarketEventType
-from models.market_event import MarketEventNormalizationError
 from models.opportunity import MarketMetrics
 from models.paper_capital import PaperLedger
 from models.signal_snapshot import MaterialChangePolicy, SignalIdentity, SignalSnapshot, build_next_snapshot
 from providers.market_stream import BinanceWebSocketMarketStream, MarketStreamRunner
-from services.opportunity_discovery import OpportunityConfig, OpportunityDiscovery, MarketUniverseDiscovery
-from tools.pending_order_revalidation import PendingOrder
-
-# The existing decision engine is the repository's decision boundary; the runner
-# adapts its result into the D3 immutable SignalSnapshot contract.
-from decision_engine import evaluate_decision
+from services.opportunity_discovery import MarketUniverseDiscovery, OpportunityConfig, OpportunityDiscovery
 
 UTC = timezone.utc
 BINANCE_PUBLIC_API = "https://api.binance.com"
@@ -70,11 +61,7 @@ class Paper8HConfig:
 
 
 class BinancePublicOpportunitySource:
-    """Minimal public REST adapter for D1 universe/24h metrics.
-
-    It is intentionally read-only and credential-free. Continuous market-event
-    consumption remains exclusively on BinanceWebSocketMarketStream.
-    """
+    """Read-only public Binance REST adapter for D1's required metrics."""
 
     def __init__(self, symbols: tuple[str, ...], *, ttl_seconds: float = 30.0, api_base: str = BINANCE_PUBLIC_API) -> None:
         self._symbols = tuple(sorted({symbol.upper() for symbol in symbols}))
@@ -84,16 +71,14 @@ class BinancePublicOpportunitySource:
         self._metrics_cache: dict[str, tuple[float, MarketMetrics]] = {}
 
     def _get_json(self, path: str, params: Mapping[str, str]) -> Mapping[str, Any] | list[Any]:
-        query = urlencode(params)
-        request = Request(f"{self._api_base}{path}?{query}", headers={"User-Agent": "ORION-paper-runner/1.0"}, method="GET")
+        request = Request(f"{self._api_base}{path}?{urlencode(params)}", headers={"User-Agent": "ORION-paper-runner/1.0"}, method="GET")
         with urlopen(request, timeout=10) as response:
             payload = json.loads(response.read().decode("utf-8"))
-        if isinstance(payload, dict) and payload.get("code") is not None and int(payload.get("code", 0)) < 0:
+        if isinstance(payload, Mapping) and payload.get("code") is not None and int(payload.get("code", 0)) < 0:
             raise RuntimeError(f"Binance public API error: {payload}")
         return payload
 
     def exchange_info(self) -> Mapping[str, Any]:
-        import time
         now = time.monotonic()
         if self._exchange_cache is not None and now - self._exchange_cache[0] < self._ttl:
             return self._exchange_cache[1]
@@ -107,7 +92,6 @@ class BinancePublicOpportunitySource:
         return result
 
     def metrics(self, symbol: str) -> MarketMetrics:
-        import time
         symbol = symbol.upper()
         now = time.monotonic()
         cached = self._metrics_cache.get(symbol)
@@ -120,13 +104,7 @@ class BinancePublicOpportunitySource:
         high = float(payload["highPrice"])
         low = float(payload["lowPrice"])
         volatility = abs(high - low) / last if last > 0.0 else float("nan")
-        metrics = MarketMetrics(
-            symbol=symbol,
-            quote_volume_24h=float(payload["quoteVolume"]),
-            volatility=volatility,
-            spread_bps=None,
-            tradable=True,
-        )
+        metrics = MarketMetrics(symbol=symbol, quote_volume_24h=float(payload["quoteVolume"]), volatility=volatility, spread_bps=None, tradable=True)
         self._metrics_cache[symbol] = (now, metrics)
         return metrics
 
@@ -143,11 +121,7 @@ class JsonlRunLog:
     def write(self, event_type: str, **payload: Any) -> None:
         if self._handle is None:
             raise RuntimeError("run log is not open")
-        record = {
-            "timestamp": datetime.now(UTC).isoformat(),
-            "event_type": event_type,
-            **payload,
-        }
+        record = {"timestamp": datetime.now(UTC).isoformat(), "event_type": event_type, **payload}
         self._handle.write(json.dumps(record, sort_keys=True, default=str) + "\n")
         self._handle.flush()
 
@@ -169,42 +143,23 @@ class Paper8HRunner:
     started_at: Optional[datetime] = None
     finished_at: Optional[datetime] = None
     runtime_failure: Optional[str] = None
-    _last_stream_reconnects: int = field(default=0, init=False, repr=False)
-    _last_stream_duplicates: int = field(default=0, init=False, repr=False)
+    peak_equity: float = 0.0
+    maximum_drawdown: float = 0.0
 
     @classmethod
     def create(cls, config: Paper8HConfig) -> "Paper8HRunner":
-        ledger = PaperLedger(starting_equity=config.starting_capital)
-        runtime = PaperRealtimeLifecycle(ledger=ledger)
+        runtime = PaperRealtimeLifecycle(ledger=PaperLedger(starting_equity=config.starting_capital))
         supervisor = PaperRuntimeSupervisor(runtime=runtime)
         public_source = BinancePublicOpportunitySource(config.symbols, ttl_seconds=config.metrics_ttl_seconds)
-        opportunity = OpportunityDiscovery(
-            MarketUniverseDiscovery(public_source, OpportunityConfig(default_top_n=config.top_n)),
-            public_source,
-            OpportunityConfig(default_top_n=config.top_n),
-        )
+        opportunity_config = OpportunityConfig(default_top_n=config.top_n)
+        opportunity = OpportunityDiscovery(MarketUniverseDiscovery(public_source, opportunity_config), public_source, opportunity_config)
         stream = BinanceWebSocketMarketStream(config.symbols, [Timeframe.M1])
-        return cls(
-            config=config,
-            stream=stream,
-            supervisor=supervisor,
-            opportunity=opportunity,
-            log=JsonlRunLog(config.output_dir / "events.jsonl"),
-        )
+        return cls(config, stream, supervisor, opportunity, JsonlRunLog(config.output_dir / "events.jsonl"), peak_equity=config.starting_capital)
 
     async def run(self) -> dict[str, Any]:
         self.started_at = datetime.now(UTC)
         self.log.open()
-        self.log.write(
-            "run_start",
-            duration_hours=self.config.duration_hours,
-            starting_equity=self.config.starting_capital,
-            symbols=self.config.symbols,
-            paper_only=True,
-            live_execution=False,
-            credentials_used=False,
-            exchange_orders=False,
-        )
+        self.log.write("run_start", duration_hours=self.config.duration_hours, starting_equity=self.config.starting_capital, symbols=self.config.symbols, paper_only=True, live_execution=False, credentials_used=False, exchange_orders=False)
         stream_runner = MarketStreamRunner(self.stream, on_event=self._on_market_event)
         stream_task = asyncio.create_task(stream_runner.run())
         timer_task = asyncio.create_task(asyncio.sleep(self.config.duration_hours * 3600.0))
@@ -216,8 +171,7 @@ class Paper8HRunner:
             else:
                 stream_runner.stop()
                 await timer_task
-                if stream_task.exception() is not None:
-                    raise stream_task.exception()
+                stream_task.result()
         except Exception as exc:
             self.runtime_failure = f"{type(exc).__name__}: {exc}"
             self.log.write("runtime_failure", error=self.runtime_failure)
@@ -235,30 +189,18 @@ class Paper8HRunner:
         price = event.payload.get("price")
         if price is not None:
             self.last_prices[event.symbol] = float(price)
-            self.supervisor.runtime.ledger = self.supervisor.runtime.ledger.mark(event.event_timestamp, event.symbol, float(price))
         try:
             filled = self.supervisor.process_market_event(event)
         except Exception as exc:
             self.runtime_failure = f"{type(exc).__name__}: {exc}"
             self.log.write("runtime_failure", event_id=event.event_id, error=self.runtime_failure)
             raise
-
+        state = self._account_state()
+        equity = self._marked_equity(state)
+        self.peak_equity = max(self.peak_equity, equity)
+        self.maximum_drawdown = max(self.maximum_drawdown, self.peak_equity - equity)
         health = self.supervisor.health
-        self.log.write(
-            "market_event",
-            event_id=event.event_id,
-            source_event_id=event.source_event_id,
-            symbol=event.symbol,
-            event_type=event.event_type.value,
-            price=price,
-            filled=filled,
-            active_orders=len(self.supervisor.active_orders),
-            active_positions=len(self.supervisor.active_positions),
-            equity=self._account_state().equity,
-            drawdown=self._account_state().current_drawdown,
-            health=health.healthy,
-        )
-
+        self.log.write("market_event", event_id=event.event_id, source_event_id=event.source_event_id, symbol=event.symbol, event_type=event.event_type.value, price=price, filled=filled, active_orders=len(self.supervisor.active_orders), active_positions=len(self.supervisor.active_positions), equity=equity, drawdown=max(self.peak_equity - equity, 0.0), health=health.healthy)
         if filled:
             for order_id in filled:
                 self.log.write("fill", order_id=order_id, symbol=event.symbol, price=price)
@@ -272,18 +214,14 @@ class Paper8HRunner:
             self.log.write("signal_cycle_failure", error=f"{type(exc).__name__}: {exc}")
             return
         for candidate in opportunities.candidates:
-            decision = evaluate_decision(
-                {"score": candidate.opportunity_score, "confidence": f"{candidate.opportunity_score:.2f}%", "modules": []},
-                {"health_score": 100, "trade_mode": "STANDARD"},
-            )
-            entry_price = float(self.last_prices.get(candidate.symbol, candidate.metrics.quote_volume_24h and 0.0))
-            if entry_price <= 0.0:
+            decision = evaluate_decision({"score": candidate.opportunity_score, "confidence": f"{candidate.opportunity_score:.2f}%", "modules": []}, {"health_score": 100, "trade_mode": "STANDARD"})
+            entry_price = self.last_prices.get(candidate.symbol)
+            if entry_price is None or entry_price <= 0.0:
                 continue
-            direction = "BUY"
-            relation = build_next_snapshot(
+            snapshot = build_next_snapshot(
                 previous=self.previous_signals.get(candidate.symbol),
                 identity=SignalIdentity(candidate.symbol, "D1_D3_PAPER", "ENTRY"),
-                direction=direction,
+                direction="BUY",
                 decision="FAVORABLE" if decision["decision"] == "BUY" else "WAIT",
                 confidence=float(candidate.opportunity_score),
                 entry_plan={"entry_price": entry_price, "quantity": self._quantity_for(entry_price)},
@@ -292,29 +230,12 @@ class Paper8HRunner:
                 policy=MaterialChangePolicy(entry_price_change_pct=0.10),
                 market_context_fingerprint=f"d1:{candidate.symbol}:{candidate.rank}:{candidate.opportunity_score:.8f}",
                 quality=float(candidate.opportunity_score),
-            )
-            snapshot = relation.current
+            ).current
             self.previous_signals[candidate.symbol] = snapshot
-            self.log.write(
-                "signal_event",
-                symbol=candidate.symbol,
-                version=snapshot.version,
-                decision=decision["decision"],
-                direction=snapshot.direction,
-                confidence=snapshot.confidence,
-                entry_price=entry_price,
-                quantity=snapshot.entry_plan["quantity"],
-                opportunity_score=candidate.opportunity_score,
-                rank=candidate.rank,
-            )
+            self.log.write("signal_event", symbol=candidate.symbol, version=snapshot.version, decision=decision["decision"], direction=snapshot.direction, confidence=snapshot.confidence, entry_price=entry_price, quantity=snapshot.entry_plan["quantity"], opportunity_score=candidate.opportunity_score, rank=candidate.rank)
             active = self.supervisor.runtime.pending.active_for_intent(snapshot.identity.identity_key)
             if active is not None:
-                action = self.supervisor.revalidate(
-                    intent_id=active.intent_id,
-                    snapshot=snapshot,
-                    market_price=entry_price,
-                    now=event.event_timestamp,
-                )
+                action = self.supervisor.revalidate(intent_id=active.intent_id, snapshot=snapshot, market_price=entry_price, now=event.event_timestamp)
                 self.log.write("order_revalidation", intent_id=active.intent_id, action=action.value, order_id=active.order_id)
             elif decision["decision"] == "BUY":
                 try:
@@ -325,11 +246,13 @@ class Paper8HRunner:
 
     def _quantity_for(self, price: float) -> float:
         state = self._account_state()
-        notional = state.wallet.available_cash * (self.config.max_notional_pct / 100.0)
-        return max(notional / price, 0.0)
+        return max(state.wallet.available_cash * self.config.max_notional_pct / 100.0 / price, 0.0)
 
     def _account_state(self):
         return self.supervisor.runtime.ledger.replay()
+
+    def _marked_equity(self, state: Any) -> float:
+        return state.wallet.cash + sum(position.quantity * self.last_prices[symbol] for position in state.positions if symbol in self.last_prices)
 
     def _finalize(self, stream_runner: MarketStreamRunner) -> dict[str, Any]:
         state = self._account_state()
@@ -339,19 +262,19 @@ class Paper8HRunner:
         replay_equal = original == recovered.replay_state()
         repeat_equal = recovered.replay_state() == recovered_again.replay_state()
         health = self.supervisor.health
-        duration_seconds = ((self.finished_at or datetime.now(UTC)) - (self.started_at or datetime.now(UTC))).total_seconds()
+        marked_equity = self._marked_equity(state)
         report = {
             "starting_equity": state.starting_equity,
-            "ending_equity": state.equity,
+            "ending_equity": marked_equity,
             "realized_pnl": state.realized_pnl,
-            "unrealized_pnl": state.unrealized_pnl,
+            "unrealized_pnl": sum(position.quantity * (self.last_prices.get(position.symbol, position.average_price) - position.average_price) for position in state.positions),
             "fees": state.cumulative_fees,
             "slippage": state.cumulative_slippage,
-            "max_drawdown": state.maximum_drawdown,
+            "max_drawdown": self.maximum_drawdown,
             "orders": len(self.supervisor.runtime.orders.events),
             "fills": sum(1 for event in self.supervisor.runtime.orders.events if event.event_type == "ORDER_FILLED"),
             "cancelled_replaced_orders": sum(1 for event in self.supervisor.runtime.orders.events if event.event_type in {"ORDER_CANCELLED", "ORDER_REPLACED"}),
-            "open_positions": len(self.supervisor.active_positions),
+            "open_position_at_end": [position.symbol for position in state.positions if position.quantity > 0.0],
             "reconnect_count": stream_runner.stats.reconnects,
             "duplicate_event_count": stream_runner.stats.duplicates,
             "runtime_health": health.healthy,
@@ -359,8 +282,8 @@ class Paper8HRunner:
             "runtime_failure": self.runtime_failure,
             "replay_equal_after_recovery": replay_equal,
             "replay_equal_after_repeated_recovery": repeat_equal,
-            "duration_seconds": duration_seconds,
             "last_market_event_id": health.last_market_event_id,
+            "duration_seconds": ((self.finished_at or datetime.now(UTC)) - (self.started_at or datetime.now(UTC))).total_seconds(),
         }
         if not replay_equal or not repeat_equal:
             raise RuntimeError("recovery/replay verification failed")
@@ -373,7 +296,7 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Official ORION public-market paper runtime runner")
     parser.add_argument("--duration-hours", type=float, default=8.0)
     parser.add_argument("--starting-capital", type=float, default=200.0)
-    parser.add_argument("--symbols", default="BTCUSDT", help="comma-separated Binance symbols")
+    parser.add_argument("--symbols", default="BTCUSDT")
     parser.add_argument("--output-dir", default="runs/paper")
     parser.add_argument("--max-notional-pct", type=float, default=20.0)
     parser.add_argument("--top-n", type=int, default=1)
@@ -382,17 +305,9 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
 
 def main(argv: Optional[list[str]] = None) -> int:
     args = parse_args(argv)
-    config = Paper8HConfig(
-        duration_hours=args.duration_hours,
-        starting_capital=args.starting_capital,
-        symbols=tuple(symbol.strip().upper() for symbol in args.symbols.split(",") if symbol.strip()),
-        output_dir=Path(args.output_dir),
-        max_notional_pct=args.max_notional_pct,
-        top_n=args.top_n,
-    )
-    runner = Paper8HRunner.create(config)
+    config = Paper8HConfig(duration_hours=args.duration_hours, starting_capital=args.starting_capital, symbols=tuple(symbol.strip().upper() for symbol in args.symbols.split(",") if symbol.strip()), output_dir=Path(args.output_dir), max_notional_pct=args.max_notional_pct, top_n=args.top_n)
     try:
-        report = asyncio.run(runner.run())
+        report = asyncio.run(Paper8HRunner.create(config).run())
     except KeyboardInterrupt:
         return 130
     except Exception as exc:
