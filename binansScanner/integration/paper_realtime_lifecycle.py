@@ -116,15 +116,33 @@ class PaperRealtimeLifecycle:
         self._last_signal[intent_id] = snapshot
         return result.action
 
-    def _d4_fill_eligible(self, order_id: str, market_price: float) -> bool:
-        """D4 owns fill authority; integrated Paper semantics require exact entry touch."""
-        order = self.orders.get(order_id)
+    def _current_active_order(self, order_id: str) -> Optional[PendingOrder]:
+        """Resolve active identity from D5 pending state before consulting D4 fill state."""
+        for candidate in self.pending.pending():
+            if candidate.order_id == order_id:
+                return candidate
+        return None
+
+    def _d4_fill_eligible(self, pending_order: PendingOrder, market_price: float, event_timestamp: datetime) -> bool:
+        """D4 owns fill authority; D5 supplies the current intent and limit semantics."""
+        order = self.orders.get(pending_order.order_id)
         if order.state is not OrderState.PENDING:
             return False
-        history = self.orders.history(order_id)
+        current = self._current_active_order(pending_order.order_id)
+        if current is None or current.intent_id != pending_order.intent_id or current.order_id != order.order_id:
+            return False
+        if event_timestamp >= current.expires_at:
+            return False
+        history = self.orders.history(order.order_id)
         if not history or history[-1].event_type != "ORDER_CREATED":
             return False
-        return float(market_price) == float(order.price)
+        market = float(market_price)
+        entry = float(order.price)
+        if order.side is ExecutionSide.BUY:
+            return market <= entry
+        if order.side is ExecutionSide.SELL:
+            return market >= entry
+        return False
 
     def on_market_event(self, event: MarketEvent) -> tuple[str, ...]:
         if event.event_id in self._seen_market_events:
@@ -138,7 +156,7 @@ class PaperRealtimeLifecycle:
         for order in self.pending.pending():
             if order.symbol != event.symbol:
                 continue
-            if not self._d4_fill_eligible(order.order_id, market_price):
+            if not self._d4_fill_eligible(order, market_price, event.event_timestamp):
                 continue
             try:
                 matched = self.pending.try_fill(order.order_id, market_price, event.event_timestamp)
