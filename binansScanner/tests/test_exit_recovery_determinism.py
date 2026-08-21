@@ -6,6 +6,7 @@ import unittest
 from integration.paper_runtime_supervisor import PaperRuntimeSupervisor
 from models.market_event import MarketEvent, MarketEventType
 from models.order_position_lifecycle import ExitReason, OrderState, PositionState
+from models.paper_capital import LedgerEventType
 from models.signal_snapshot import SignalIdentity, SignalSnapshot
 
 UTC = timezone.utc
@@ -57,7 +58,7 @@ class TestExitRecoveryDeterminism(unittest.TestCase):
         runtime.exit_position(symbol="BTCUSDT", price=110.0, now=t0 + timedelta(seconds=2), reason=ExitReason.TAKE_PROFIT)
         recovered = runtime.recover()
         self.assertEqual(recovered.runtime.positions.get(position.position_id).state, PositionState.CLOSED)
-        self.assertIsNone(recovered.active_positions)
+        self.assertEqual(recovered.active_positions, ())
 
     def test_exit_recovery_preserves_account_and_realized_pnl(self) -> None:
         runtime, t0, _, _ = self._open_long()
@@ -83,10 +84,9 @@ class TestExitRecoveryDeterminism(unittest.TestCase):
         exit_orders_twice = [event for event in recovered_twice.runtime.orders.events if event.aggregate_id == exit_id]
         self.assertEqual(len(exit_orders_once), 2)
         self.assertEqual(len(exit_orders_twice), 2)
-        exit_ledger_once = [event for event in recovered_once.runtime.ledger.events if event.payload.get("order_id") == exit_id]
-        exit_ledger_twice = [event for event in recovered_twice.runtime.ledger.events if event.payload.get("order_id") == exit_id]
-        self.assertEqual(len(exit_ledger_once), len(exit_ledger_twice))
-        self.assertEqual(position.position_id, exit_id.removeprefix("EXIT-") )
+        self.assertEqual(recovered_once.runtime.ledger.events, recovered_twice.runtime.ledger.events)
+        self.assertEqual(position.position_id, exit_id.removeprefix("EXIT-"))
+        self.assertEqual(sum(event.event_type is LedgerEventType.FILL and event.side is not None and event.symbol == "BTCUSDT" for event in recovered_once.runtime.ledger.events), 2)
 
     def test_exit_journal_contains_canonical_identity_and_fill_data(self) -> None:
         runtime, t0, _, position = self._open_long()
@@ -101,6 +101,9 @@ class TestExitRecoveryDeterminism(unittest.TestCase):
         self.assertEqual(data["quantity"], 1.0)
         self.assertEqual(data["price"], 110.0)
         self.assertEqual(data["reason"], ExitReason.TAKE_PROFIT)
+        self.assertEqual(len(data["order_events"]), 2)
+        self.assertEqual(len(data["position_events"]), 1)
+        self.assertGreaterEqual(len(data["ledger_events"]), 1)
 
 
 if __name__ == "__main__":
