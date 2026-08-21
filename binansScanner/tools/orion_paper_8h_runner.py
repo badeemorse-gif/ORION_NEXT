@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+from contextlib import suppress
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 import json
@@ -121,8 +122,7 @@ class JsonlRunLog:
     def write(self, event_type: str, **payload: Any) -> None:
         if self._handle is None:
             raise RuntimeError("run log is not open")
-        record = {"timestamp": datetime.now(UTC).isoformat(), "event_type": event_type, **payload}
-        self._handle.write(json.dumps(record, sort_keys=True, default=str) + "\n")
+        self._handle.write(json.dumps({"timestamp": datetime.now(UTC).isoformat(), "event_type": event_type, **payload}, sort_keys=True, default=str) + "\n")
         self._handle.flush()
 
     def close(self) -> None:
@@ -165,13 +165,15 @@ class Paper8HRunner:
         timer_task = asyncio.create_task(asyncio.sleep(self.config.duration_hours * 3600.0))
         try:
             done, _ = await asyncio.wait({stream_task, timer_task}, return_when=asyncio.FIRST_COMPLETED)
-            if timer_task in done:
-                stream_runner.stop()
-                await stream_task
+            if stream_task in done:
+                timer_task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await timer_task
+                stream_task.result()
             else:
                 stream_runner.stop()
-                await timer_task
-                stream_task.result()
+                await self.stream.close()
+                await stream_task
         except Exception as exc:
             self.runtime_failure = f"{type(exc).__name__}: {exc}"
             self.log.write("runtime_failure", error=self.runtime_failure)
