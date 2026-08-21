@@ -1,16 +1,4 @@
-"""
-===============================================================================
-Badee Binance Scanner
-Architecture : ORION
-Module      : core.dependency_container
-Version     : 1.8.0
-Status      : ORION Canonical Composition Root
-===============================================================================
-
-Composition Root responsible solely for object creation, dependency wiring,
-and lifecycle management.
-===============================================================================
-"""
+"""ORION composition root with D5 paper pending-order runtime wiring."""
 from __future__ import annotations
 
 import logging
@@ -23,6 +11,8 @@ from storage.market_storage import MarketStorage
 from storage.sqlite_market_storage import SQLiteMarketStorage
 from repositories.market_repository import MarketRepository
 from services.market_service import MarketService
+from services.pending_order_runtime import PaperPendingOrderRuntime, RepricingPolicy
+from models.order_position_lifecycle import OrderLifecycle, PositionBook
 from engines.indicator_engine import IndicatorEngine
 from engines.analysis_engine import AnalysisEngine
 from engines.profile_engine import ProfileEngine
@@ -41,7 +31,7 @@ base_logger = logging.getLogger(__name__)
 
 
 class ContainerError(Exception):
-    """Base exception for dependency-container failures."""
+    pass
 
 
 @dataclass(frozen=True)
@@ -64,39 +54,38 @@ class LoggerAdapter(logging.LoggerAdapter):
 
 
 class DependencyContainer:
-    """ORION composition root; no business logic is executed here."""
+    """Canonical composition root; D5 lifecycle is paper-only and container-owned."""
 
     def __init__(self, config: Optional[ContainerConfiguration] = None) -> None:
         self._config = config or ContainerConfiguration()
         self._logger_instance = self._config.logger or base_logger
         self._logger = LoggerAdapter(self._logger_instance, {"component": "DependencyContainer", "operation": "init"})
 
-        self._binance_provider_instance: Optional[BinanceProvider] = None
-        self._market_data_provider_instance: Optional[MarketDataProvider] = None
-        self._market_storage_instance: Optional[MarketStorage] = None
-        self._market_repository_instance: Optional[MarketRepository] = None
-        self._market_service_instance: Optional[MarketService] = None
-        self._indicator_engine_instance: Optional[IndicatorEngine] = None
-        self._analysis_engine_instance: Optional[AnalysisEngine] = None
-        self._profile_engine_instance: Optional[ProfileEngine] = None
-        self._score_engine_instance: Optional[ScoreEngine] = None
-        self._decision_engine_instance: Optional[DecisionEngine] = None
-        self._report_engine_instance: Optional[ReportEngine] = None
-        self._validation_engine_instance: Optional[ValidationEngine] = None
-        self._execution_adapter_instance: Optional[ExecutionAdapter] = None
-        self._execution_engine_instance: Optional[ExecutionEngine] = None
-        self._scheduler_service_instance: Optional[SchedulerService] = None
-        self._api_service_instance: Optional[ApiService] = None
-        self._api_router_instance: Optional[ApiRouter] = None
-        self._orchestrator_instance: Optional[Orchestrator] = None
-        self._pipeline_instance: Optional[Pipeline] = None
+        self._binance_provider_instance = None
+        self._market_data_provider_instance = None
+        self._market_storage_instance = None
+        self._market_repository_instance = None
+        self._market_service_instance = None
+        self._indicator_engine_instance = None
+        self._analysis_engine_instance = None
+        self._profile_engine_instance = None
+        self._score_engine_instance = None
+        self._decision_engine_instance = None
+        self._report_engine_instance = None
+        self._validation_engine_instance = None
+        self._execution_adapter_instance = None
+        self._execution_engine_instance = None
+        self._scheduler_service_instance = None
+        self._api_service_instance = None
+        self._api_router_instance = None
+        self._orchestrator_instance = None
+        self._pipeline_instance = None
+        self._order_lifecycle_instance: Optional[OrderLifecycle] = None
+        self._position_book_instance: Optional[PositionBook] = None
+        self._pending_order_runtime_instance: Optional[PaperPendingOrderRuntime] = None
 
     def _create_binance_provider(self) -> BinanceProvider:
-        return BinanceProvider(
-            api_key=self._config.binance_api_key,
-            api_secret=self._config.binance_api_secret,
-            testnet=self._config.binance_testnet,
-        )
+        return BinanceProvider(api_key=self._config.binance_api_key, api_secret=self._config.binance_api_secret, testnet=self._config.binance_testnet)
 
     def _create_market_data_provider(self) -> MarketDataProvider:
         return MarketDataProvider(source=self.build_binance_provider(), logger=self._logger_instance)
@@ -105,11 +94,7 @@ class DependencyContainer:
         return SQLiteMarketStorage(database_path=self._config.database_path, logger=self._logger_instance)
 
     def _create_market_repository(self) -> MarketRepository:
-        return MarketRepository(
-            market_provider=self.build_market_data_provider(),
-            storage=self.build_market_storage(),
-            logger=self._logger_instance,
-        )
+        return MarketRepository(market_provider=self.build_market_data_provider(), storage=self.build_market_storage(), logger=self._logger_instance)
 
     def _create_market_service(self) -> MarketService:
         return MarketService(repository=self.build_market_repository(), logger=self._logger_instance)
@@ -144,16 +129,22 @@ class DependencyContainer:
         return SchedulerService(logger=self._logger_instance)
 
     def _create_api_service(self) -> ApiService:
-        return ApiService(
-            scheduler=self.build_scheduler_service(),
-            pipeline=self.build_pipeline(),
-            logger=self._logger_instance,
-        )
+        return ApiService(scheduler=self.build_scheduler_service(), pipeline=self.build_pipeline(), logger=self._logger_instance)
 
     def _create_api_router(self) -> ApiRouter:
-        return ApiRouter(
-            service=self.build_api_service(),
-            logger=self._logger_instance,
+        return ApiRouter(service=self.build_api_service(), logger=self._logger_instance)
+
+    def _create_order_lifecycle(self) -> OrderLifecycle:
+        return OrderLifecycle()
+
+    def _create_position_book(self) -> PositionBook:
+        return PositionBook()
+
+    def _create_pending_order_runtime(self) -> PaperPendingOrderRuntime:
+        return PaperPendingOrderRuntime(
+            order_lifecycle=self.build_order_lifecycle(),
+            position_book=self.build_position_book(),
+            policy=RepricingPolicy(),
         )
 
     def build_binance_provider(self) -> BinanceProvider:
@@ -235,10 +226,7 @@ class DependencyContainer:
         if self._execution_engine_instance is None:
             if self._execution_adapter_instance is None:
                 self._execution_adapter_instance = self._create_execution_adapter()
-            self._execution_engine_instance = ExecutionEngine(
-                adapter=self._execution_adapter_instance,
-                logger=self._logger_instance,
-            )
+            self._execution_engine_instance = ExecutionEngine(adapter=self._execution_adapter_instance, logger=self._logger_instance)
         return self._execution_engine_instance
 
     def build_scheduler_service(self) -> SchedulerService:
@@ -260,32 +248,41 @@ class DependencyContainer:
         if self._orchestrator_instance is None:
             config = self._config.orchestrator_config or OrchestratorConfig()
             self._orchestrator_instance = Orchestrator(
-                provider=self.build_market_data_provider(),
-                storage=self.build_market_storage(),
-                indicator_engine=self.build_indicator_engine(),
-                analysis_engine=self.build_analysis_engine(),
-                profile_engine=self.build_profile_engine(),
-                score_engine=self.build_score_engine(),
-                decision_engine=self.build_decision_engine(),
-                validation_engine=self.build_validation_engine(),
-                config=config,
+                provider=self.build_market_data_provider(), storage=self.build_market_storage(),
+                indicator_engine=self.build_indicator_engine(), analysis_engine=self.build_analysis_engine(),
+                profile_engine=self.build_profile_engine(), score_engine=self.build_score_engine(),
+                decision_engine=self.build_decision_engine(), validation_engine=self.build_validation_engine(), config=config,
             )
         return self._orchestrator_instance
 
     def build_pipeline(self) -> Pipeline:
         if self._pipeline_instance is None:
             self._pipeline_instance = Pipeline(
-                orchestrator=self.build_orchestrator(),
-                execution_engine=self.build_execution_engine(),
-                report_engine=self.build_report_engine(),
-                logger=self._logger_instance,
+                orchestrator=self.build_orchestrator(), execution_engine=self.build_execution_engine(),
+                report_engine=self.build_report_engine(), logger=self._logger_instance,
             )
         return self._pipeline_instance
+
+    def build_order_lifecycle(self) -> OrderLifecycle:
+        if self._order_lifecycle_instance is None:
+            self._order_lifecycle_instance = self._create_order_lifecycle()
+        return self._order_lifecycle_instance
+
+    def build_position_book(self) -> PositionBook:
+        if self._position_book_instance is None:
+            self._position_book_instance = self._create_position_book()
+        return self._position_book_instance
+
+    def build_pending_order_runtime(self) -> PaperPendingOrderRuntime:
+        if self._pending_order_runtime_instance is None:
+            self._pending_order_runtime_instance = self._create_pending_order_runtime()
+        return self._pending_order_runtime_instance
 
     def reset(self) -> None:
         if self._scheduler_service_instance is not None:
             self._scheduler_service_instance.stop()
-
+        if self._pending_order_runtime_instance is not None:
+            self._pending_order_runtime_instance.reset()
         self._binance_provider_instance = None
         self._market_data_provider_instance = None
         self._market_storage_instance = None
@@ -305,9 +302,9 @@ class DependencyContainer:
         self._api_router_instance = None
         self._orchestrator_instance = None
         self._pipeline_instance = None
+        self._order_lifecycle_instance = None
+        self._position_book_instance = None
+        self._pending_order_runtime_instance = None
 
     def logger(self) -> logging.Logger:
         return self._logger_instance
-
-
-# End Of File
