@@ -152,12 +152,12 @@ class PaperPendingOrderRuntime:
         old = self.active_intent(key)
         if old is None:
             return self.submit(current_signal, current_plan, intent_id=key, at=when)
+        if current_signal.decision.upper() == "WAIT" or current_plan.side is ExecutionSide.HOLD:
+            return self._cancel(old, CancelReason.WAIT, when)
         if old.symbol != current_signal.identity.symbol or old.side is not current_plan.side:
             return self._cancel(old, CancelReason.OPPOSITE_DIRECTION, when)
         if current_signal.validity_at(when) is SignalValidity.EXPIRED:
             return self._cancel(old, CancelReason.EXPIRED_SIGNAL, when)
-        if current_signal.decision.upper() == "WAIT" or current_plan.side is ExecutionSide.HOLD:
-            return self._cancel(old, CancelReason.WAIT, when)
         if risk_breached:
             return self._cancel(old, CancelReason.RISK_BREACH, when)
         if self.position_exists(old.symbol):
@@ -183,7 +183,7 @@ class PaperPendingOrderRuntime:
         replacement = self._make_order(current_signal, current_plan, key, when, repricing_count=old.repricing_count + 1, cumulative_entry_drift_pct=next_drift)
         self._order_lifecycle.create(order_id=replacement.order_id, symbol=replacement.symbol, side=replacement.side, quantity=replacement.quantity, price=replacement.entry_price, created_at=when)
         self._activate(replacement)
-        return LifecycleResult(RuntimeAction.REPLACED, replacement, previous_order_id=cancelled.order_id, replacement_order_id=replacement.order_id, reason=CancelReason.STALE_SIGNAL)
+        return LifecycleResult(RuntimeAction.REPLACED, replacement, previous_order_id=cancelled.previous_order_id, replacement_order_id=replacement.order_id, reason=CancelReason.STALE_SIGNAL)
 
     def on_market_price(self, symbol: str, market_price: float, *, at: Optional[datetime] = None) -> tuple[LifecycleResult, ...]:
         when = self._utc(at or datetime.now(timezone.utc))
