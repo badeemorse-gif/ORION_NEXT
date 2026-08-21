@@ -56,6 +56,14 @@ class FakeOpportunity:
         return OpportunityCandidateSet(candidates=(candidate,), top_n=top_n or 1)
 
 
+class FakeDecisionContext:
+    def __init__(self, context):
+        self.context = context
+
+    def build(self, symbol):
+        return self.context
+
+
 class TestPaper8HConfig(unittest.TestCase):
     def test_default_contract_is_eight_hours_and_two_hundred(self):
         config = Paper8HConfig()
@@ -83,16 +91,31 @@ class TestCanonicalDecisionAdapter(unittest.TestCase):
             eligibility_reasons=(),
         )
 
-    def test_actual_d1_score_changes_decision(self):
-        below_entry = canonical_decision(self._candidate(84.0))
-        at_entry = canonical_decision(self._candidate(85.0))
+    def test_tradeable_canonical_context_and_d1_score_produce_buy(self):
+        decision = canonical_decision(
+            self._candidate(85.0),
+            {"health_score": 90.0, "trade_mode": "FULL_ANALYSIS"},
+        )
+        self.assertEqual(decision["decision"], "BUY")
+        self.assertEqual(decision["decision_score"], 85.0)
+
+    def test_legitimate_blocking_context_remains_blocked(self):
+        decision = canonical_decision(
+            self._candidate(95.0),
+            {"health_score": 40.0, "trade_mode": "FULL_ANALYSIS"},
+        )
+        self.assertEqual(decision["decision"], "REJECT")
+
+    def test_actual_d1_score_changes_decision_with_same_context(self):
+        context = {"health_score": 90.0, "trade_mode": "FULL_ANALYSIS"}
+        below_entry = canonical_decision(self._candidate(84.0), context)
+        at_entry = canonical_decision(self._candidate(85.0), context)
         self.assertNotEqual(below_entry["decision"], at_entry["decision"])
         self.assertEqual(at_entry["decision"], "BUY")
 
-    def test_adapter_does_not_construct_synthetic_context(self):
-        decision = canonical_decision(self._candidate(85.0))
-        self.assertEqual(decision["decision"], "BUY")
-        self.assertEqual(decision["decision_score"], 85.0)
+    def test_context_is_required(self):
+        with self.assertRaises(ValueError):
+            canonical_decision(self._candidate(90.0))
 
 
 class TestPaper8HRunnerE2E(unittest.IsolatedAsyncioTestCase):
@@ -107,6 +130,7 @@ class TestPaper8HRunnerE2E(unittest.IsolatedAsyncioTestCase):
             supervisor=supervisor,
             opportunity=FakeOpportunity(),
             log=JsonlRunLog(Path(self.tempdir.name) / "events.jsonl"),
+            decision_context=FakeDecisionContext({"health_score": 90.0, "trade_mode": "FULL_ANALYSIS"}),
         )
         self.runner.log.open()
 
