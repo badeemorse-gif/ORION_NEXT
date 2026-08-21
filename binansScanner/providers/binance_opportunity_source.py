@@ -64,7 +64,7 @@ class BinanceSpotOpportunitySource:
         return ema
 
     @classmethod
-    def _history_features(cls, rows: Sequence[Any]) -> tuple[float, float, float, float, float]:
+    def _history_features(cls, rows: Sequence[Any]) -> tuple[float, float, float, float, float, float]:
         closes = [float(row[4]) for row in rows if isinstance(row, Sequence) and len(row) > 4]
         if len(closes) < cls.MIN_HISTORY_CANDLES:
             raise ValueError("insufficient price history")
@@ -144,6 +144,6 @@ class BinanceSpotOpportunitySource:
                     trend_persistence=trend_persistence,
                     momentum_direction=momentum_direction,
                 )
-            except (KeyError, TypeError, ValueError, StatisticsError, ZeroDivisionError):
+            except (KeyError, TypeError, ValueError, statistics.StatisticsError, ZeroDivisionError):
                 continue
         return result
