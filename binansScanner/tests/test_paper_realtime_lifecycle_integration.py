@@ -144,6 +144,18 @@ class TestPaperRealtimeLifecycleIntegration(unittest.TestCase):
         self.assertAlmostEqual(state_a.wallet.cash, 210.0)
         self.assertTrue(runtime.no_live_execution())
 
+    def test_repriced_order_only_fills_at_current_entry_price(self) -> None:
+        runtime = PaperRealtimeLifecycle()
+        t0 = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
+        first = runtime.submit_signal(snapshot(version=1, price=100.0, generated_at=t0), now=t0)
+        t1 = t0 + timedelta(minutes=1)
+        runtime.revalidate(intent_id=first.intent_id, snapshot=snapshot(version=2, price=118.0, generated_at=t1), market_price=120.0, now=t1)
+        replacement = runtime.pending.active_for_intent(first.intent_id)
+        self.assertIsNotNone(replacement)
+        self.assertEqual(runtime.on_market_event(event(100.0, t1 + timedelta(minutes=1), "below-current-entry")), ())
+        self.assertEqual(runtime.on_market_event(event(118.0, t1 + timedelta(minutes=2), "current-entry")), (replacement.order_id,))
+        self.assertEqual(runtime.positions.active_for_symbol("BTCUSDT").source_order_id, replacement.order_id)
+
 
 if __name__ == "__main__":
     unittest.main()
