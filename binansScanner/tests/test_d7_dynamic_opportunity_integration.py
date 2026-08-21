@@ -1,10 +1,15 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import pathlib
+import sys
 import unittest
 
+_BINANS_SCANNER = pathlib.Path(__file__).resolve().parents[1]
+if str(_BINANS_SCANNER) not in sys.path:
+    sys.path.insert(0, str(_BINANS_SCANNER))
+
 from models.opportunity import MarketMetrics
-from providers.binance_opportunity_source import BinanceSpotOpportunitySource
 from services.opportunity_discovery import MarketUniverseDiscovery, OpportunityConfig, OpportunityDiscovery
 from tools.orion_paper_8h_runner import FixedUniverseSource
 
@@ -63,7 +68,6 @@ class TestD7DynamicOpportunityIntegration(unittest.TestCase):
         self.assertEqual(tuple(filtered.metrics_bulk(("BTCUSDT", "ETHUSDT"))), ("ETHUSDT",))
 
     def test_removed_candidate_does_not_imply_position_exit_policy(self):
-        # D1 produces opportunity membership only; position exit remains downstream.
         source = FakeBinanceSource(); cfg = OpportunityConfig(default_top_n=1, min_quote_volume_24h=1_000_000)
         result = OpportunityDiscovery(MarketUniverseDiscovery(source, cfg), source, cfg).discover(top_n=1)
         self.assertEqual(result.symbols(), ("BTCUSDT",))
