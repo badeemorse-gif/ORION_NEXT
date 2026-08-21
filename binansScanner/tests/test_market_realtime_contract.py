@@ -4,7 +4,7 @@ import unittest
 from datetime import timezone
 
 from models.market_event import MarketEvent, MarketEventType
-from providers.market_stream import MarketEventNormalizer, MarketStreamRunner, MarketStreamDisconnected
+from providers.market_stream import BinanceWebSocketMarketStream, MarketEventNormalizer, MarketStreamRunner, MarketStreamDisconnected
 from services.market_event_router import TimeframeAwareMarketRouter
 
 
@@ -55,6 +55,12 @@ class TestMarketEventContract(unittest.TestCase):
         self.assertEqual(event.payload["timeframe"], "4h")
         self.assertTrue(event.payload["is_closed"])
 
+    def test_websocket_subscription_preserves_required_timeframes(self) -> None:
+        from enums import Timeframe
+        stream = BinanceWebSocketMarketStream("BTCUSDT", [Timeframe.M1, Timeframe.M5, Timeframe.H1, Timeframe.H4, Timeframe.D1])
+        for timeframe in ("1m", "5m", "1h", "4h", "1d"):
+            self.assertIn(f"@kline_{timeframe}", stream.url)
+
     def test_payload_is_immutable(self) -> None:
         event = MarketEventNormalizer().normalize(trade_message())
         with self.assertRaises(TypeError):
@@ -101,6 +107,14 @@ class TestMarketStreamResilience(unittest.IsolatedAsyncioTestCase):
         await runner.run(max_events=2)
         self.assertEqual(seen, ["2", "3"])
         self.assertEqual(runner.stats.out_of_order, 1)
+
+    async def test_ordering_is_isolated_by_event_stream(self) -> None:
+        source = FakeSource([[trade_message(ts=62000, trade_id=2), candle_message(ts=61000, closed=True), trade_message(ts=63000, trade_id=3)]])
+        seen: list[MarketEventType] = []
+        runner = MarketStreamRunner(source, on_event=lambda event: seen.append(event.event_type), reconnect_delays=(0,))
+        await runner.run(max_events=3)
+        self.assertEqual(seen, [MarketEventType.TRADE, MarketEventType.CANDLE_CLOSE, MarketEventType.TRADE])
+        self.assertEqual(runner.stats.out_of_order, 0)
 
     async def test_disconnect_reconnects(self) -> None:
         source = FakeSource([[trade_message(ts=61000, trade_id=1)], [trade_message(ts=62000, trade_id=2)]])

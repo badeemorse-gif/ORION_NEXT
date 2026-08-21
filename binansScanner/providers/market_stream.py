@@ -5,7 +5,6 @@ from collections.abc import AsyncIterator, Awaitable, Callable, Iterable
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import json
-import logging
 import math
 from typing import Any, Protocol
 
@@ -141,8 +140,9 @@ class BinanceWebSocketMarketStream:
 
     BASE_URL = "wss://stream.binance.com:9443/stream"
 
-    def __init__(self, symbols: Iterable[str], timeframes: Iterable[Timeframe] = ()) -> None:
-        normalized_symbols = tuple(sorted({str(s).strip().lower() for s in symbols if str(s).strip()}))
+    def __init__(self, symbols: Iterable[str] | str, timeframes: Iterable[Timeframe] = ()) -> None:
+        symbol_values = (symbols,) if isinstance(symbols, str) else symbols
+        normalized_symbols = tuple(sorted({str(s).strip().lower() for s in symbol_values if str(s).strip()}))
         if not normalized_symbols:
             raise ValueError("At least one symbol is required")
         self._symbols = normalized_symbols
@@ -225,7 +225,7 @@ class MarketStreamRunner:
         self.dedupe_capacity = dedupe_capacity
         self.stats = MarketStreamStats()
         self._seen: dict[str, None] = {}
-        self._last_timestamp: dict[str, datetime] = {}
+        self._last_timestamp: dict[tuple[str, MarketEventType, str | None], datetime] = {}
         self._stop = False
 
     async def run(self, max_events: int | None = None) -> None:
@@ -240,12 +240,14 @@ class MarketStreamRunner:
                     if event.event_id in self._seen:
                         self.stats.duplicates += 1
                         continue
-                    last = self._last_timestamp.get(event.symbol)
+                    timeframe = str(event.payload.get("timeframe")) if event.payload.get("timeframe") is not None else None
+                    order_key = (event.symbol, event.event_type, timeframe)
+                    last = self._last_timestamp.get(order_key)
                     if last is not None and event.event_timestamp < last:
                         self.stats.out_of_order += 1
                         continue
                     self._remember(event.event_id)
-                    self._last_timestamp[event.symbol] = max(event.event_timestamp, last) if last else event.event_timestamp
+                    self._last_timestamp[order_key] = max(event.event_timestamp, last) if last else event.event_timestamp
                     self.stats.accepted += 1
                     if self.on_event is not None:
                         result = self.on_event(event)
