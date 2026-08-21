@@ -84,6 +84,8 @@ class PaperRealtimeLifecycle:
         # BUY remains blocked while a position is open to preserve single-position safety.
         if active_position is not None and direction != "SELL":
             raise ValueError(f"active position already exists for {snapshot.identity.symbol}")
+        if direction == "SELL" and active_position is None:
+            raise ValueError(f"SELL requires an open long position for {snapshot.identity.symbol}")
         observation = self._observation(snapshot, timeframe=timeframe, market_regime=market_regime)
         plan = self._execution_plan(snapshot, now=now)
         pending = build_pending_order(observation, plan, intent_id=intent_id or snapshot.identity.identity_key, now=now, policy=self.revalidation_policy, signal_version=snapshot.version)
@@ -110,17 +112,17 @@ class PaperRealtimeLifecycle:
             signal_validity=validity,
             material_signal_change=material,
             signal_version=snapshot.version,
-            # D6 defines SELL as EXIT-only. A pending SELL is therefore valid
-            # only against an already-open long and must not be rejected merely
+            # D6 defines SELL as EXIT-only. A pending SELL is valid only
+            # against an already-open long and must not be rejected merely
             # because PositionState reports that position.
             position_state=None if current.side is ExecutionSide.SELL else _PositionStateAdapter(self.positions),
         )
         if result.action is RevalidationAction.KEEP:
             self._last_signal[intent_id] = snapshot
             return result.action
-        if result.action is RevalidationAction.CANCEL:
+        if result.action in (RevalidationAction.CANCEL, RevalidationAction.NO_TRADE):
             self.pending.cancel(current.order_id)
-            self.orders.cancel(current.order_id, reason=result.reason.value if result.reason else "CANCEL", occurred_at=now)
+            self.orders.cancel(current.order_id, reason=result.reason.value if result.reason else result.action.value, occurred_at=now)
             self._last_signal[intent_id] = snapshot
             return result.action
         if result.action is RevalidationAction.REPLACE:
@@ -167,12 +169,7 @@ class PaperRealtimeLifecycle:
         snapshot = self._last_signal.get(order.intent_id)
         if snapshot is None:
             return RevalidationAction.NO_TRADE
-        return self.revalidate(
-            intent_id=order.intent_id,
-            snapshot=snapshot,
-            market_price=market_price,
-            now=event_timestamp,
-        )
+        return self.revalidate(intent_id=order.intent_id, snapshot=snapshot, market_price=market_price, now=event_timestamp)
 
     def on_market_event(self, event: MarketEvent) -> tuple[str, ...]:
         if event.event_id in self._seen_market_events:
@@ -186,9 +183,7 @@ class PaperRealtimeLifecycle:
         for order in tuple(self.pending.pending()):
             if order.symbol != event.symbol:
                 continue
-            # D5 revalidation is deliberately before the D4 fill gate. A
-            # MARKET_DISTANCE_LIMIT/expiry/WAIT/opposite decision cancels the
-            # current D4 order and removes it from the active pending set.
+            # D5 revalidation is deliberately before the D4 fill gate.
             action = self._revalidate_before_fill(order, market_price, event.event_timestamp)
             if action is not RevalidationAction.KEEP:
                 continue
