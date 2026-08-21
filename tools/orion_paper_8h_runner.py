@@ -21,9 +21,6 @@ from typing import Any, Mapping, Optional
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
-# This runner lives at repository-root/tools while ORION's production Python
-# packages live under binansScanner. Make the existing package root explicit;
-# do not create or shadow another tools package under binansScanner.
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 _BINANS_SCANNER = _REPO_ROOT / "binansScanner"
 if str(_BINANS_SCANNER) not in sys.path:
@@ -127,10 +124,10 @@ class JsonlRunLog:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self._handle = self.path.open("a", encoding="utf-8")
 
-    def write(self, event_type: str, **payload: Any) -> None:
+    def write(self, record_type: str, **payload: Any) -> None:
         if self._handle is None:
             raise RuntimeError("run log is not open")
-        self._handle.write(json.dumps({"timestamp": datetime.now(UTC).isoformat(), "event_type": event_type, **payload}, sort_keys=True, default=str) + "\n")
+        self._handle.write(json.dumps({"timestamp": datetime.now(UTC).isoformat(), "event_type": record_type, **payload}, sort_keys=True, default=str) + "\n")
         self._handle.flush()
 
     def close(self) -> None:
@@ -210,7 +207,7 @@ class Paper8HRunner:
         self.peak_equity = max(self.peak_equity, equity)
         self.maximum_drawdown = max(self.maximum_drawdown, self.peak_equity - equity)
         health = self.supervisor.health
-        self.log.write("market_event", event_id=event.event_id, source_event_id=event.source_event_id, symbol=event.symbol, event_type=event.event_type.value, price=price, filled=filled, active_orders=len(self.supervisor.active_orders), active_positions=len(self.supervisor.active_positions), equity=equity, drawdown=max(self.peak_equity - equity, 0.0), health=health.healthy)
+        self.log.write("market_event", event_id=event.event_id, source_event_id=event.source_event_id, symbol=event.symbol, market_event_type=event.event_type.value, price=price, filled=filled, active_orders=len(self.supervisor.active_orders), active_positions=len(self.supervisor.active_positions), equity=equity, drawdown=max(self.peak_equity - equity, 0.0), health=health.healthy)
         if filled:
             for order_id in filled:
                 self.log.write("fill", order_id=order_id, symbol=event.symbol, price=price)
