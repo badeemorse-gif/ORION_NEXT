@@ -90,7 +90,7 @@ class AllocationConfig:
     mode: CapitalMode = CapitalMode.FIXED_ALLOCATION
     allocation_rate: Optional[float] = None
     fixed_allocation: Optional[float] = None
-    max_concurrent_positions: int = 1
+    max_concurrent_positions: Optional[int] = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "starting_capital", _positive(self.starting_capital, "starting_capital"))
@@ -101,8 +101,8 @@ class AllocationConfig:
             object.__setattr__(self, "allocation_rate", rate)
         if self.fixed_allocation is not None:
             object.__setattr__(self, "fixed_allocation", _positive(self.fixed_allocation, "fixed_allocation"))
-        if self.max_concurrent_positions < 1:
-            raise ValueError("max_concurrent_positions must be at least 1")
+        if self.max_concurrent_positions is not None and self.max_concurrent_positions < 1:
+            raise ValueError("max_concurrent_positions must be at least 1 when configured")
         if self.allocation_rate is None and self.fixed_allocation is None:
             raise ValueError("allocation_rate or fixed_allocation must be configured")
 
@@ -270,7 +270,7 @@ class CapitalManager:
             rejection = AllocationRejection.DUPLICATE_ALLOCATION
             reason = rejection.value
             accepted = False
-        elif self._concurrent_count() >= self.config.max_concurrent_positions:
+        elif self.config.max_concurrent_positions is not None and self._concurrent_count() >= self.config.max_concurrent_positions:
             rejection = AllocationRejection.MAX_CONCURRENT_POSITIONS
             reason = rejection.value
             accepted = False
