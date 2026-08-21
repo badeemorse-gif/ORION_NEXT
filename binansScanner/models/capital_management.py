@@ -72,14 +72,8 @@ class CapitalSnapshot:
 
     def __post_init__(self) -> None:
         for name in (
-            "starting_capital",
-            "total_equity",
-            "realized_pnl",
-            "unrealized_pnl",
-            "reserved_capital",
-            "committed_capital",
-            "trading_capital",
-            "available_capital",
+            "starting_capital", "total_equity", "realized_pnl", "unrealized_pnl",
+            "reserved_capital", "committed_capital", "trading_capital", "available_capital",
         ):
             object.__setattr__(self, name, _finite(getattr(self, name), name))
         if self.starting_capital <= 0.0:
@@ -162,12 +156,7 @@ class PendingReservation:
 class CapitalManager:
     """Deterministic sizing and allocation engine over externally-owned accounting state."""
 
-    def __init__(
-        self,
-        config: AllocationConfig,
-        *,
-        accounting: Optional[AccountingView] = None,
-    ) -> None:
+    def __init__(self, config: AllocationConfig, *, accounting: Optional[AccountingView] = None) -> None:
         self.config = config
         self._accounting = accounting
         self._starting_capital = config.starting_capital
@@ -210,7 +199,6 @@ class CapitalManager:
 
     @property
     def trading_capital(self) -> float:
-        # Realized P&L is reusable by default. Unrealized P&L is deliberately excluded.
         return max(self._starting_capital + self.realized_pnl, 0.0)
 
     @property
@@ -222,14 +210,8 @@ class CapitalManager:
 
     def snapshot(self) -> CapitalSnapshot:
         return CapitalSnapshot(
-            starting_capital=self._starting_capital,
-            total_equity=self.total_equity,
-            realized_pnl=self.realized_pnl,
-            unrealized_pnl=self.unrealized_pnl,
-            reserved_capital=self.reserved_capital,
-            committed_capital=self.committed_capital,
-            trading_capital=self.trading_capital,
-            available_capital=self.available_capital,
+            self._starting_capital, self.total_equity, self.realized_pnl, self.unrealized_pnl,
+            self.reserved_capital, self.committed_capital, self.trading_capital, self.available_capital,
         )
 
     def record_realized_pnl(self, pnl: float) -> None:
@@ -258,8 +240,13 @@ class CapitalManager:
     def desired_allocation(self) -> float:
         return self._desired_allocation()
 
-    def _duplicate_key(self, symbol: str, intent: str) -> str:
+    @staticmethod
+    def _duplicate_key(symbol: str, intent: str) -> str:
         return f"{symbol}::{intent}"
+
+    def _concurrent_count(self) -> int:
+        pending_symbols = {reservation.symbol for reservation in self._reserved.values()}
+        return len(self._positions | pending_symbols)
 
     def calculate(self, candidate: AllocationCandidate, required_symbol_minimum: float) -> AllocationAudit:
         minimum = _finite(required_symbol_minimum, "required_symbol_minimum")
@@ -283,7 +270,7 @@ class CapitalManager:
             rejection = AllocationRejection.DUPLICATE_ALLOCATION
             reason = rejection.value
             accepted = False
-        elif len(self._positions) + len(self._committed) >= self.config.max_concurrent_positions:
+        elif self._concurrent_count() >= self.config.max_concurrent_positions:
             rejection = AllocationRejection.MAX_CONCURRENT_POSITIONS
             reason = rejection.value
             accepted = False
@@ -301,20 +288,8 @@ class CapitalManager:
             self._reserved[allocation_id] = PendingReservation(allocation_id, candidate.symbol, candidate.intent, final)
 
         audit = AllocationAudit(
-            allocation_id=allocation_id,
-            symbol=candidate.symbol,
-            intent=candidate.intent,
-            desired_allocation=desired,
-            required_symbol_minimum=minimum,
-            final_order_notional=final,
-            capital_mode=self.config.mode,
-            available_capital_before=before,
-            reserved_capital_before=reserved_before,
-            available_capital_after=max(after, 0.0),
-            reason=reason,
-            minimum_adjustment_applied=adjusted,
-            accepted=accepted,
-            rejection_reason=rejection,
+            allocation_id, candidate.symbol, candidate.intent, desired, minimum, final, self.config.mode,
+            before, reserved_before, max(after, 0.0), reason, adjusted, accepted, rejection,
         )
         self._audit.append(audit)
         return audit
