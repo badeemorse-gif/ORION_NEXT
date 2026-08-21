@@ -1,31 +1,24 @@
 """Cross-layer Paper Bot lifecycle coordinator.
 
-This module composes the delivered D3, D4, D5 and D6 runtime contracts without
-redefining them. D1/D2 remain upstream producers; this boundary consumes their
-canonical outputs. No live execution or exchange I/O is performed here.
+Composes delivered D3, D4, D5 and D6 runtime contracts without redefining them.
+D1/D2 remain upstream producers. No live execution or exchange I/O occurs here.
 """
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
-from typing import Any, Mapping, Optional
+from datetime import datetime
+from typing import Optional
 
 from models.execution import ExecutionPlan, ExecutionSide
 from models.market_event import MarketEvent
-from models.order_position_lifecycle import (
-    ExitReason,
-    FillMetadata,
-    LifecycleEvent,
-    LifecycleEventStore,
-    OrderLifecycle,
-    PositionBook,
-)
+from models.order_position_lifecycle import ExitReason, FillMetadata, OrderLifecycle, PositionBook
 from models.paper_capital import LedgerSide, PaperLedger
 from models.signal_journal import SignalObservation
-from models.signal_snapshot import SignalSnapshot, SignalValidity, material_change_reasons
+from models.signal_snapshot import MaterialChangePolicy, SignalSnapshot, SignalValidity, material_change_reasons
 from tools.pending_order_revalidation import (
     PendingOrder,
     PendingOrderBook,
+    PositionState,
     RevalidationAction,
     RevalidationPolicy,
     build_pending_order,
@@ -33,10 +26,18 @@ from tools.pending_order_revalidation import (
 )
 
 
+class _PositionStateAdapter(PositionState):
+    """D4 read-only adapter for the D5 PositionState port."""
+
+    def __init__(self, positions: PositionBook) -> None:
+        self._positions = positions
+
+    def has_open_position(self, symbol: str) -> bool:
+        return self._positions.active_for_symbol(symbol) is not None
+
+
 @dataclass(slots=True)
 class PaperRealtimeLifecycle:
-    """Deterministic integration state for one Paper Bot strategy stream."""
-
     revalidation_policy: RevalidationPolicy = field(default_factory=RevalidationPolicy)
     pending: PendingOrderBook = field(default_factory=PendingOrderBook)
     orders: OrderLifecycle = field(default_factory=OrderLifecycle)
@@ -47,8 +48,7 @@ class PaperRealtimeLifecycle:
 
     @staticmethod
     def _observation(snapshot: SignalSnapshot, *, timeframe: str, market_regime: str) -> SignalObservation:
-        entry_price = snapshot.entry_plan.get("entry_price")
-        if entry_price is None:
+        if snapshot.entry_plan.get("entry_price") is None:
             raise ValueError("SignalSnapshot entry_plan must contain entry_price")
         return SignalObservation(
             observation_id=snapshot.signal_id,
@@ -86,6 +86,8 @@ class PaperRealtimeLifecycle:
         market_regime: str = "PAPER",
         intent_id: Optional[str] = None,
     ) -> PendingOrder:
+        if self.positions.active_for_symbol(snapshot.identity.symbol) is not None:
+            raise ValueError(f"active position already exists for {snapshot.identity.symbol}")
         observation = self._observation(snapshot, timeframe=timeframe, market_regime=market_regime)
         plan = self._execution_plan(snapshot, now=now)
         pending = build_pending_order(
@@ -105,13 +107,7 @@ class PaperRealtimeLifecycle:
             price=pending.entry_price,
             created_at=now,
         )
-        self.ledger = self.ledger.record_order(
-            now,
-            pending.symbol,
-            LedgerSide(pending.side.value),
-            pending.quantity,
-            pending.entry_price,
-        )
+        self.ledger = self.ledger.record_order(now, pending.symbol, LedgerSide(pending.side.value), pending.quantity, pending.entry_price)
         self._last_signal[pending.intent_id] = snapshot
         return pending
 
@@ -129,21 +125,21 @@ class PaperRealtimeLifecycle:
         if current is None:
             return RevalidationAction.NO_TRADE
         previous = self._last_signal.get(intent_id)
+        material = previous is not None and bool(
+            material_change_reasons(previous, snapshot, policy=MaterialChangePolicy(entry_price_change_pct=self.revalidation_policy.minimum_entry_change_pct / 100.0))
+        )
         validity = SignalValidity.EXPIRED.value if snapshot.is_expired(now) else SignalValidity.ACTIVE.value
-        material = previous is not None and bool(material_change_reasons(previous, snapshot, policy=self._material_policy()))
-        observation = self._observation(snapshot, timeframe=timeframe, market_regime=market_regime)
-        plan = self._execution_plan(snapshot, now=now)
         result = revalidate_pending_order(
             current,
-            observation,
-            plan,
+            self._observation(snapshot, timeframe=timeframe, market_regime=market_regime),
+            self._execution_plan(snapshot, now=now),
             market_price=market_price,
             now=now,
             policy=self.revalidation_policy,
             signal_validity=validity,
             material_signal_change=material,
             signal_version=snapshot.version,
-            position_state=self.positions,
+            position_state=_PositionStateAdapter(self.positions),
         )
         if result.action is RevalidationAction.KEEP:
             self._last_signal[intent_id] = snapshot
@@ -159,29 +155,10 @@ class PaperRealtimeLifecycle:
                 raise RuntimeError("D5 returned REPLACE without replacement order")
             self.pending.replace(current.order_id, replacement)
             self.orders.replace(current.order_id, replacement_order_id=replacement.order_id, occurred_at=now)
-            self.orders.create(
-                order_id=replacement.order_id,
-                symbol=replacement.symbol,
-                side=replacement.side,
-                quantity=replacement.quantity,
-                price=replacement.entry_price,
-                created_at=now,
-            )
-            self.ledger = self.ledger.record_order(
-                now,
-                replacement.symbol,
-                LedgerSide(replacement.side.value),
-                replacement.quantity,
-                replacement.entry_price,
-            )
-            self._last_signal[intent_id] = snapshot
-            return result.action
+            self.orders.create(order_id=replacement.order_id, symbol=replacement.symbol, side=replacement.side, quantity=replacement.quantity, price=replacement.entry_price, created_at=now)
+            self.ledger = self.ledger.record_order(now, replacement.symbol, LedgerSide(replacement.side.value), replacement.quantity, replacement.entry_price)
         self._last_signal[intent_id] = snapshot
         return result.action
-
-    def _material_policy(self):
-        from models.signal_snapshot import MaterialChangePolicy
-        return MaterialChangePolicy(entry_price_change_pct=self.revalidation_policy.minimum_entry_change_pct / 100.0)
 
     def on_market_event(self, event: MarketEvent) -> tuple[str, ...]:
         if event.event_id in self._seen_market_events:
@@ -190,37 +167,24 @@ class PaperRealtimeLifecycle:
         price = event.payload.get("price")
         if price is None:
             return ()
-        now = event.event_timestamp
         filled: list[str] = []
         for order in self.pending.pending():
             if order.symbol != event.symbol:
                 continue
             try:
-                matched = self.pending.try_fill(order.order_id, float(price), now)
+                matched = self.pending.try_fill(order.order_id, float(price), event.event_timestamp)
             except (RuntimeError, KeyError, ValueError):
                 continue
             fill = FillMetadata(
                 fill_id=f"FILL-{matched.order_id}",
                 quantity=matched.quantity,
                 price=matched.entry_price,
-                occurred_at=now,
+                occurred_at=event.event_timestamp,
                 source="PAPER",
             )
             self.orders.fill(matched.order_id, fill)
-            self.positions.create_from_fill(
-                fill=fill,
-                symbol=matched.symbol,
-                side=matched.side,
-                source_order_id=matched.order_id,
-                position_id=f"POS-{matched.order_id}",
-            )
-            self.ledger = self.ledger.record_fill(
-                now,
-                matched.symbol,
-                LedgerSide(matched.side.value),
-                matched.quantity,
-                matched.entry_price,
-            )
+            self.positions.create_from_fill(fill=fill, symbol=matched.symbol, side=matched.side, source_order_id=matched.order_id, position_id=f"POS-{matched.order_id}")
+            self.ledger = self.ledger.record_fill(event.event_timestamp, matched.symbol, LedgerSide(matched.side.value), matched.quantity, matched.entry_price)
             filled.append(matched.order_id)
         return tuple(filled)
 
@@ -229,34 +193,13 @@ class PaperRealtimeLifecycle:
         if position is None:
             raise ValueError(f"no active position for {symbol}")
         order_id = f"EXIT-{position.position_id}"
-        self.orders.create(
-            order_id=order_id,
-            symbol=symbol,
-            side=ExecutionSide.SELL if position.side is ExecutionSide.BUY else ExecutionSide.BUY,
-            quantity=position.quantity,
-            price=price,
-            created_at=now,
-        )
-        fill = FillMetadata(
-            fill_id=f"FILL-{order_id}",
-            quantity=position.quantity,
-            price=price,
-            occurred_at=now,
-            source="PAPER",
-        )
+        side = ExecutionSide.SELL if position.side is ExecutionSide.BUY else ExecutionSide.BUY
+        self.orders.create(order_id=order_id, symbol=symbol, side=side, quantity=position.quantity, price=price, created_at=now)
+        fill = FillMetadata(fill_id=f"FILL-{order_id}", quantity=position.quantity, price=price, occurred_at=now, source="PAPER")
         self.orders.fill(order_id, fill)
         self.positions.exit(position.position_id, reason=reason, occurred_at=now)
-        self.ledger = self.ledger.record_fill(
-            now,
-            symbol,
-            LedgerSide.SELL if position.side is ExecutionSide.BUY else LedgerSide.BUY,
-            position.quantity,
-            price,
-        )
+        self.ledger = self.ledger.record_fill(now, symbol, LedgerSide.SELL if position.side is ExecutionSide.BUY else LedgerSide.BUY, position.quantity, price)
         return order_id
-
-    def replay(self) -> tuple[LifecycleEvent, ...]:
-        return tuple(self.orders.events) + tuple(self.positions.events)
 
     def replay_account(self):
         return self.ledger.replay()
