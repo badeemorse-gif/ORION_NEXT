@@ -183,7 +183,6 @@ class PaperRealtimeLifecycle:
         for order in tuple(self.pending.pending()):
             if order.symbol != event.symbol:
                 continue
-            # D5 revalidation is deliberately before the D4 fill gate.
             action = self._revalidate_before_fill(order, market_price, event.event_timestamp)
             if action is not RevalidationAction.KEEP:
                 continue
@@ -198,7 +197,16 @@ class PaperRealtimeLifecycle:
                 continue
             fill = FillMetadata(fill_id=f"FILL-{matched.order_id}", quantity=matched.quantity, price=matched.entry_price, occurred_at=event.event_timestamp, source="PAPER")
             self.orders.fill(matched.order_id, fill)
-            self.positions.create_from_fill(fill=fill, symbol=matched.symbol, side=matched.side, source_order_id=matched.order_id, position_id=f"POS-{matched.order_id}")
+            if matched.side is ExecutionSide.BUY:
+                self.positions.create_from_fill(fill=fill, symbol=matched.symbol, side=matched.side, source_order_id=matched.order_id, position_id=f"POS-{matched.order_id}")
+            else:
+                position = self.positions.active_for_symbol(matched.symbol)
+                if position is None or position.side is not ExecutionSide.BUY or position.quantity < matched.quantity:
+                    raise ValueError("SELL fill requires an existing long position")
+                if position.quantity == matched.quantity:
+                    self.positions.exit(position.position_id, reason=ExitReason.SIGNAL_REVERSAL, occurred_at=event.event_timestamp)
+                else:
+                    self.positions.reduce(position.position_id, matched.quantity, occurred_at=event.event_timestamp)
             self.ledger = self.ledger.record_fill(event.event_timestamp, matched.symbol, LedgerSide(matched.side.value), matched.quantity, matched.entry_price)
             filled.append(matched.order_id)
         return tuple(filled)
