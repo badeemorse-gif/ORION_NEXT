@@ -180,14 +180,25 @@ class OpportunityScorer:
             + self._config.volatility_weight * volatility_component
             + self._config.liquidity_weight * liquidity_component
         )
+        derived_momentum = self._neutral(metrics.momentum_quality)
+        if metrics.momentum_quality is None and metrics.price_change_pct_24h is not None and math.isfinite(metrics.price_change_pct_24h):
+            derived_momentum = min(abs(metrics.price_change_pct_24h) / 10.0, 1.0)
+        derived_structure = self._neutral(metrics.structure_quality)
+        if metrics.structure_quality is None and metrics.last_price is not None and metrics.weighted_avg_price_24h is not None:
+            if metrics.last_price > 0 and math.isfinite(metrics.weighted_avg_price_24h) and metrics.weighted_avg_price_24h > 0:
+                deviation = abs(metrics.last_price / metrics.weighted_avg_price_24h - 1.0)
+                derived_structure = max(0.0, 1.0 - min(deviation / 0.05, 1.0))
+        derived_trend = self._neutral(metrics.trend_quality)
+        if metrics.trend_quality is None and metrics.price_change_pct_24h is not None and math.isfinite(metrics.price_change_pct_24h):
+            derived_trend = min(abs(metrics.price_change_pct_24h) / 5.0, 1.0)
         return (
             ("legacy_volume", round(volume_component, 8)),
             ("legacy_volatility", round(volatility_component, 8)),
             ("legacy_liquidity", round(liquidity_component, 8)),
             ("baseline", round(baseline, 8)),
-            ("trend", round(self._neutral(metrics.trend_quality), 8)),
-            ("momentum", round(self._neutral(metrics.momentum_quality), 8)),
-            ("structure", round(self._neutral(metrics.structure_quality), 8)),
+            ("trend", round(derived_trend, 8)),
+            ("momentum", round(derived_momentum, 8)),
+            ("structure", round(derived_structure, 8)),
         )
 
     def score(self, metrics: MarketMetrics) -> float:

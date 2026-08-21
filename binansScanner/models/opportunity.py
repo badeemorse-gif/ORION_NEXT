@@ -27,6 +27,8 @@ class MarketMetrics:
     trend_quality: Optional[float] = None
     momentum_quality: Optional[float] = None
     structure_quality: Optional[float] = None
+    price_change_pct_24h: Optional[float] = None
+    weighted_avg_price_24h: Optional[float] = None
 
 
 @dataclass(frozen=True, slots=True)

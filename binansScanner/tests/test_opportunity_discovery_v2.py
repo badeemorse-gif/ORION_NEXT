@@ -74,6 +74,12 @@ class D1V2Tests(unittest.TestCase):
         self.assertGreater(strong, weak)
         self.assertLessEqual(strong, 100)
 
+    def test_bulk_market_fields_contribute_without_extra_requests(self):
+        scorer = OpportunityScorer(OpportunityConfig())
+        neutral = scorer.score(MarketMetrics("X", 100e6, .03, 5, True, 100, None, None, None, None, 0.0, 100))
+        moving = scorer.score(MarketMetrics("X", 100e6, .03, 5, True, 110, None, None, None, None, 8.0, 100))
+        self.assertGreater(moving, neutral)
+
     def test_score_determinism_and_bounds(self):
         m = MarketMetrics("X", 100e6, .03, 5, True, 1, .8, .8, .8, .8)
         scorer = OpportunityScorer(OpportunityConfig())
@@ -133,7 +139,7 @@ class SourceTests(unittest.TestCase):
         source=BinanceSpotOpportunitySource(ttl_seconds=30, clock=lambda:0)
         payloads={
             'exchangeInfo': {'symbols': [{'symbol':'BTCUSDT','status':'TRADING','baseAsset':'BTC','quoteAsset':'USDT','isSpotTradingAllowed':True}]},
-            'ticker/24hr': [{'symbol':'BTCUSDT','lastPrice':'100','quoteVolume':'200000000','priceChangePercent':'3'}],
+            'ticker/24hr': [{'symbol':'BTCUSDT','lastPrice':'100','quoteVolume':'200000000','priceChangePercent':'3','weightedAvgPrice':'99'}],
             'ticker/bookTicker': [{'symbol':'BTCUSDT','bidPrice':'99.9','askPrice':'100.1'}],
         }
         source._get_json=lambda path: (calls.append(path) or payloads[path])
@@ -141,12 +147,13 @@ class SourceTests(unittest.TestCase):
         result=source.metrics_bulk(['BTCUSDT'])
         self.assertEqual(result['BTCUSDT'].quote_volume_24h,200000000)
         self.assertAlmostEqual(result['BTCUSDT'].spread_bps,20.0,places=5)
+        self.assertEqual(result['BTCUSDT'].price_change_pct_24h,3.0)
         source.metrics_bulk(['BTCUSDT'])
         self.assertEqual(calls,['exchangeInfo','ticker/24hr','ticker/bookTicker'])
 
     def test_malformed_rows_fail_closed(self):
         source=BinanceSpotOpportunitySource(clock=lambda:0)
-        source._get_json=lambda path: [] if path != 'ticker/24hr' else [{'symbol':'BTCUSDT','lastPrice':'bad','quoteVolume':'1','priceChangePercent':'1'}]
+        source._get_json=lambda path: [] if path != 'ticker/24hr' else [{'symbol':'BTCUSDT','lastPrice':'bad','quoteVolume':'1','priceChangePercent':'1','weightedAvgPrice':'1'}]
         self.assertEqual(source.metrics_bulk(['BTCUSDT']),{})
 
 

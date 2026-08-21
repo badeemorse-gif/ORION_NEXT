@@ -64,6 +64,7 @@ class BinanceSpotOpportunitySource:
                 last_price = float(ticker["lastPrice"])
                 quote_volume = float(ticker["quoteVolume"])
                 change_pct = float(ticker["priceChangePercent"])
+                weighted_avg = float(ticker["weightedAvgPrice"])
                 book = book_by_symbol.get(symbol)
                 spread_bps = None
                 if book is not None:
@@ -78,6 +79,8 @@ class BinanceSpotOpportunitySource:
                     spread_bps=spread_bps,
                     tradable=True,
                     last_price=last_price,
+                    price_change_pct_24h=change_pct,
+                    weighted_avg_price_24h=weighted_avg,
                 )
             except (KeyError, TypeError, ValueError):
                 continue
