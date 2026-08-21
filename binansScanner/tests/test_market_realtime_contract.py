@@ -92,13 +92,14 @@ class TestMarketEventRouter(unittest.IsolatedAsyncioTestCase):
 
 
 class TestMarketStreamResilience(unittest.IsolatedAsyncioTestCase):
-    async def test_duplicate_event_is_suppressed(self) -> None:
-        source = FakeSource([[trade_message(ts=61000, trade_id=1), trade_message(ts=61000, trade_id=1), trade_message(ts=62000, trade_id=2)]])
+    async def test_duplicate_event_is_suppressed_across_reconnect(self) -> None:
+        source = FakeSource([[trade_message(ts=61000, trade_id=1)], [trade_message(ts=61000, trade_id=1), trade_message(ts=62000, trade_id=2)]])
         seen: list[str] = []
         runner = MarketStreamRunner(source, on_event=lambda event: seen.append(event.source_event_id or ""), reconnect_delays=(0,))
         await runner.run(max_events=2)
         self.assertEqual(seen, ["1", "2"])
         self.assertEqual(runner.stats.duplicates, 1)
+        self.assertGreaterEqual(runner.stats.reconnects, 1)
 
     async def test_out_of_order_event_is_dropped(self) -> None:
         source = FakeSource([[trade_message(ts=62000, trade_id=2), trade_message(ts=61000, trade_id=1), trade_message(ts=63000, trade_id=3)]])
