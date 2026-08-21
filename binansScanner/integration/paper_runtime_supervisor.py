@@ -97,10 +97,32 @@ class PaperRuntimeSupervisor:
     def exit_position(self, *, symbol: str, price: float, now: datetime, reason: ExitReason = ExitReason.SIGNAL_REVERSAL) -> str:
         if self._failed:
             raise RuntimeError("paper runtime is failed closed")
-        order_id = self.runtime.exit_position(symbol=symbol, price=price, now=now, reason=reason)
+        order_id = f"EXIT-{self.runtime.positions.active_for_symbol(symbol).position_id}" if self.runtime.positions.active_for_symbol(symbol) is not None else None
+        if order_id is None:
+            raise ValueError(f"no active position for {symbol}")
         position = self.runtime.positions.active_for_symbol(symbol)
-        position_id = order_id.removeprefix("EXIT-")
-        self._operations.append(("exit", symbol, price, now, reason, order_id, position_id))
+        if position is None:
+            raise ValueError(f"no active position for {symbol}")
+        quantity = position.quantity
+        fill_id = f"FILL-{order_id}"
+        source = "PAPER"
+        self.runtime.exit_position(symbol=symbol, price=price, now=now, reason=reason)
+        self._operations.append(("exit", {
+            "order_id": order_id,
+            "symbol": symbol,
+            "side": "SELL" if position.side.value == "BUY" else "BUY",
+            "quantity": quantity,
+            "price": float(price),
+            "timestamp": now,
+            "fill_id": fill_id,
+            "fill_quantity": quantity,
+            "fill_price": float(price),
+            "fill_timestamp": now,
+            "fill_source": source,
+            "position_id": position.position_id,
+            "position_action": "EXIT",
+            "reason": reason,
+        }))
         return order_id
 
     def process_market_event(self, event: MarketEvent) -> tuple[str, ...]:
@@ -130,7 +152,13 @@ class PaperRuntimeSupervisor:
         return processed
 
     def recover(self) -> "PaperRuntimeSupervisor":
-        """Rebuild a fresh aggregate using journaled canonical identities."""
+        """Rebuild a fresh aggregate from canonical journal operations.
+
+        EXIT operations retain the canonical order/fill/position identity and
+        are replayed only once, after their entry position exists. D4 remains
+        the authority for every lifecycle transition and D6 remains the
+        authority for accounting; this method only orchestrates reconstruction.
+        """
         recovered = PaperRuntimeSupervisor(runtime=PaperRealtimeLifecycle(revalidation_policy=self.runtime.revalidation_policy))
         for operation in self._operations:
             if operation[0] == "submit":
@@ -140,8 +168,8 @@ class PaperRuntimeSupervisor:
                 _, intent_id, snapshot, market_price, now, timeframe, market_regime, replacement_order_id = operation
                 recovered.revalidate(intent_id=intent_id, snapshot=snapshot, market_price=market_price, now=now, timeframe=timeframe, market_regime=market_regime, replacement_order_id=replacement_order_id)
             elif operation[0] == "exit":
-                _, symbol, price, now, reason, _, _ = operation
-                recovered.exit_position(symbol=symbol, price=price, now=now, reason=reason)
+                data = operation[1]
+                recovered.exit_position(symbol=data["symbol"], price=data["price"], now=data["timestamp"], reason=data["reason"])
             elif operation[0] == "market":
                 recovered.process_market_event(operation[1])
         return recovered
