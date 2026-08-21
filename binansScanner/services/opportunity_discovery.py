@@ -109,8 +109,6 @@ class MarketUniverseDiscovery:
                 continue
             if item.get("isSpotTradingAllowed") is False:
                 continue
-            if item.get("isMarginTradingAllowed") is True and item.get("isSpotTradingAllowed") is None:
-                continue
             by_symbol[symbol] = UniverseCandidate(symbol, base, quote)
         return tuple(sorted(by_symbol.values(), key=lambda c: c.symbol))
 
