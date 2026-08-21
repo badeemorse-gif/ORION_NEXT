@@ -13,7 +13,6 @@ sys.path.insert(0, str(ROOT / "binansScanner"))
 
 from models.execution import ExecutionPlan, ExecutionSide
 from models.signal_journal import SignalObservation
-from models.signal_snapshot import SignalValidity
 from tools.pending_order_revalidation import (
     CancelReason,
     PendingOrderBook,
@@ -84,7 +83,7 @@ class TestPendingOrderContract(unittest.TestCase):
             buy(100.5),
             market_price=101.0,
             now=BASE + timedelta(minutes=1),
-            signal_validity=SignalValidity.ACTIVE,
+            signal_validity="ACTIVE",
             material_signal_change=False,
         )
         self.assertEqual(r.action, RevalidationAction.KEEP)
@@ -97,7 +96,7 @@ class TestPendingOrderContract(unittest.TestCase):
             buy(118.0),
             market_price=120.0,
             now=BASE + timedelta(minutes=2),
-            signal_validity=SignalValidity.STALE,
+            signal_validity="STALE",
             material_signal_change=True,
         )
         self.assertEqual((r.action, r.reason), (RevalidationAction.CANCEL, CancelReason.MATERIAL_SIGNAL_CHANGE))
@@ -110,7 +109,7 @@ class TestPendingOrderContract(unittest.TestCase):
             buy(118.0),
             market_price=120.0,
             now=BASE + timedelta(minutes=2),
-            signal_validity=SignalValidity.ACTIVE,
+            signal_validity="ACTIVE",
             material_signal_change=True,
             signal_version=2,
         )
@@ -159,7 +158,7 @@ class TestPendingOrderContract(unittest.TestCase):
             buy(118.0),
             market_price=118.0,
             now=BASE + timedelta(minutes=1),
-            signal_validity=SignalValidity.EXPIRED,
+            signal_validity="EXPIRED",
         )
         self.assertEqual((r.action, r.reason), (RevalidationAction.CANCEL, CancelReason.EXPIRED))
 
@@ -275,7 +274,7 @@ class TestPendingOrderE2E(unittest.TestCase):
             buy(118.0),
             market_price=120.0,
             now=BASE + timedelta(minutes=2),
-            signal_validity=SignalValidity.ACTIVE,
+            signal_validity="ACTIVE",
             material_signal_change=True,
             signal_version=2,
         )
@@ -295,7 +294,7 @@ class TestPendingOrderE2E(unittest.TestCase):
             buy(118.0),
             market_price=120.0,
             now=BASE + timedelta(minutes=2),
-            signal_validity=SignalValidity.STALE,
+            signal_validity="STALE",
             material_signal_change=True,
             signal_version=2,
         )
