@@ -8,19 +8,12 @@ from providers.market_stream import MarketEventNormalizer, MarketStreamRunner, M
 from services.market_event_router import TimeframeAwareMarketRouter
 
 
-def trade_message(ts: int = 1000, trade_id: int = 1, symbol: str = "BTCUSDT") -> dict:
-    return {
-        "data": {"e": "trade", "E": ts, "T": ts, "s": symbol, "t": trade_id, "p": "100.5", "q": "2"},
-    }
+def trade_message(ts: int = 61000, trade_id: int = 1, symbol: str = "BTCUSDT") -> dict:
+    return {"data": {"e": "trade", "E": ts, "T": ts, "s": symbol, "t": trade_id, "p": "100.5", "q": "2"}}
 
 
-def candle_message(ts: int = 1000, closed: bool = True, interval: str = "1m") -> dict:
-    return {
-        "data": {
-            "e": "kline", "E": ts, "s": "BTCUSDT",
-            "k": {"t": ts - 60000, "T": ts, "s": "BTCUSDT", "i": interval, "o": "100", "h": "101", "l": "99", "c": "100.5", "v": "10", "x": closed},
-        }
-    }
+def candle_message(ts: int = 61000, closed: bool = True, interval: str = "1m") -> dict:
+    return {"data": {"e": "kline", "E": ts, "s": "BTCUSDT", "k": {"t": ts - 60000, "T": ts, "s": "BTCUSDT", "i": interval, "o": "100", "h": "101", "l": "99", "c": "100.5", "v": "10", "x": closed}}}
 
 
 class FakeSource:
@@ -88,13 +81,13 @@ class TestMarketEventRouter(unittest.IsolatedAsyncioTestCase):
         seen: list[str] = []
         router.subscribe_candle_intelligence("1m", lambda event: seen.append(event.event_type.value))
         await router.route(MarketEventNormalizer().normalize(candle_message(closed=False)))
-        await router.route(MarketEventNormalizer().normalize(candle_message(ts=2000, closed=True)))
+        await router.route(MarketEventNormalizer().normalize(candle_message(ts=121000, closed=True)))
         self.assertEqual(seen, ["candle_close"])
 
 
 class TestMarketStreamResilience(unittest.IsolatedAsyncioTestCase):
     async def test_duplicate_event_is_suppressed(self) -> None:
-        source = FakeSource([[trade_message(ts=1000, trade_id=1), trade_message(ts=1000, trade_id=1), trade_message(ts=2000, trade_id=2)]])
+        source = FakeSource([[trade_message(ts=61000, trade_id=1), trade_message(ts=61000, trade_id=1), trade_message(ts=62000, trade_id=2)]])
         seen: list[str] = []
         runner = MarketStreamRunner(source, on_event=lambda event: seen.append(event.source_event_id or ""), reconnect_delays=(0,))
         await runner.run(max_events=2)
@@ -102,7 +95,7 @@ class TestMarketStreamResilience(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(runner.stats.duplicates, 1)
 
     async def test_out_of_order_event_is_dropped(self) -> None:
-        source = FakeSource([[trade_message(ts=2000, trade_id=2), trade_message(ts=1000, trade_id=1), trade_message(ts=3000, trade_id=3)]])
+        source = FakeSource([[trade_message(ts=62000, trade_id=2), trade_message(ts=61000, trade_id=1), trade_message(ts=63000, trade_id=3)]])
         seen: list[str] = []
         runner = MarketStreamRunner(source, on_event=lambda event: seen.append(event.source_event_id or ""), reconnect_delays=(0,))
         await runner.run(max_events=2)
@@ -110,7 +103,7 @@ class TestMarketStreamResilience(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(runner.stats.out_of_order, 1)
 
     async def test_disconnect_reconnects(self) -> None:
-        source = FakeSource([[trade_message(ts=1000, trade_id=1)], [trade_message(ts=2000, trade_id=2)]])
+        source = FakeSource([[trade_message(ts=61000, trade_id=1)], [trade_message(ts=62000, trade_id=2)]])
         seen: list[str] = []
         runner = MarketStreamRunner(source, on_event=lambda event: seen.append(event.source_event_id or ""), reconnect_delays=(0,))
         await runner.run(max_events=2)
@@ -120,9 +113,9 @@ class TestMarketStreamResilience(unittest.IsolatedAsyncioTestCase):
         self.assertGreaterEqual(runner.stats.disconnects, 1)
 
     async def test_non_finite_market_value_is_rejected_without_delivery(self) -> None:
-        raw = trade_message()
+        raw = trade_message(ts=61000)
         raw["data"]["p"] = "nan"
-        source = FakeSource([[raw, trade_message(ts=2000, trade_id=2)]])
+        source = FakeSource([[raw, trade_message(ts=62000, trade_id=2)]])
         seen: list[MarketEvent] = []
         runner = MarketStreamRunner(source, on_event=lambda event: seen.append(event), reconnect_delays=(0,))
         await runner.run(max_events=1)
