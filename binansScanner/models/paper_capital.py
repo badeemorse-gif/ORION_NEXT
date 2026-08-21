@@ -1,8 +1,4 @@
-"""Deterministic paper-capital accounting and replay contracts.
-
-Independent from order lifecycle and live execution. All account state is
-reconstructible from the immutable append-only ledger.
-"""
+"""Deterministic paper-capital accounting and replay contracts."""
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -207,7 +203,9 @@ class PaperAccountState:
 
     @property
     def accounting_adjustments(self) -> float:
-        return self.cumulative_fees + self.cumulative_slippage - self.realized_pnl - self.unrealized_pnl
+        # Fees reduce equity directly. Slippage is already represented in
+        # execution_price and therefore already carried by P&L/position cost.
+        return self.cumulative_fees - self.realized_pnl - self.unrealized_pnl
 
     def accounting_identity_holds(self) -> bool:
         return math.isclose(self.starting_equity, self.wallet.cash + self.open_position_value + self.accounting_adjustments, rel_tol=0.0, abs_tol=1e-9)
@@ -276,7 +274,9 @@ class PaperLedger:
         slip = self.slippage_model.amount(side, reference, quantity)
         if side is LedgerSide.BUY and execution * quantity + fee > state.wallet.available_cash:
             raise ValueError("insufficient available cash for fill")
-        realized = (execution - current.average_price) * min(quantity, current.quantity) if side is LedgerSide.SELL and current.quantity > 0.0 else 0.0
+        if side is LedgerSide.SELL and quantity > current.quantity:
+            raise ValueError("sell quantity cannot exceed open position")
+        realized = (execution - current.average_price) * quantity if side is LedgerSide.SELL else 0.0
         cash_delta = -(execution * quantity + fee) if side is LedgerSide.BUY else (execution * quantity - fee)
         ledger = self.append(self._event(LedgerEventType.FILL, timestamp, symbol=symbol, side=side, quantity=quantity, price=execution, notional=execution * quantity, fee=fee, slippage=slip, realized_pnl=realized, cash_delta=cash_delta, position_quantity_delta=(quantity if side is LedgerSide.BUY else -quantity)))
         ledger = ledger.append(ledger._event(LedgerEventType.FEE, timestamp, symbol=symbol, side=side, quantity=quantity, price=execution, notional=execution * quantity, fee=fee))
@@ -320,17 +320,14 @@ class PaperLedger:
                     avg = ((current.quantity * current.average_price) + (event.quantity * event.price)) / new_qty
                     positions[symbol] = Position(symbol, new_qty, avg, current.realized_pnl)
                 elif event.side is LedgerSide.SELL:
-                    closed = min(event.quantity, current.quantity)
-                    remaining = current.quantity - closed
+                    remaining = current.quantity - event.quantity
                     realized += event.realized_pnl
                     positions[symbol] = Position(symbol, max(remaining, 0.0), current.average_price if remaining > 0.0 else 0.0, current.realized_pnl + event.realized_pnl)
                 wallet = VirtualWallet(wallet.starting_equity, wallet.cash + event.cash_delta, wallet.reserved_cash)
                 prices[symbol] = event.price
                 fees += event.fee
                 slippage += event.slippage
-            elif event.event_type is LedgerEventType.RESERVE:
-                wallet = VirtualWallet(wallet.starting_equity, wallet.cash, wallet.reserved_cash + event.reserved_cash_delta)
-            elif event.event_type is LedgerEventType.RELEASE:
+            elif event.event_type in (LedgerEventType.RESERVE, LedgerEventType.RELEASE):
                 wallet = VirtualWallet(wallet.starting_equity, wallet.cash, wallet.reserved_cash + event.reserved_cash_delta)
             elif event.event_type is LedgerEventType.POSITION:
                 if event.symbol:
