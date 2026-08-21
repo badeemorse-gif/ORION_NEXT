@@ -1,4 +1,6 @@
 from datetime import datetime, timedelta, timezone
+import ast
+from pathlib import Path
 import unittest
 
 from binansScanner.models.signal_snapshot import (
@@ -153,6 +155,18 @@ class SignalSnapshotContractTests(unittest.TestCase):
                 generated_at=T0 + timedelta(minutes=1), valid_until=T0 + timedelta(hours=2),
                 policy=MaterialChangePolicy(entry_price_change_pct=0.10),
             )
+
+    def test_signal_snapshot_has_no_live_execution_dependency(self):
+        module_path = Path(__file__).resolve().parents[1] / "models" / "signal_snapshot.py"
+        tree = ast.parse(module_path.read_text(encoding="utf-8"))
+        imported = []
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                imported.extend(alias.name for alias in node.names)
+            elif isinstance(node, ast.ImportFrom) and node.module:
+                imported.append(node.module)
+        forbidden = ("execution", "order", "position", "binance")
+        self.assertFalse(any(any(token in name.lower() for token in forbidden) for name in imported), imported)
 
 
 if __name__ == "__main__":
