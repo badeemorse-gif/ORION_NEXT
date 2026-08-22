@@ -28,15 +28,7 @@ def candles(*, start: float, drift: float, volume: float, count: int = 48, range
 
 
 def candidate(symbol: str = "BTCUSDT", score: float = 75.0) -> OpportunityCandidate:
-    return OpportunityCandidate(
-        symbol,
-        score,
-        1,
-        MarketMetrics(symbol, 100_000_000, 0.02, 5, True, 100),
-        (),
-        (("base", 0.75),),
-        0.5,
-    )
+    return OpportunityCandidate(symbol, score, 1, MarketMetrics(symbol, 100_000_000, 0.02, 5, True, 100), (), (("base", 0.75),), 0.5)
 
 
 class ScalpingTests(unittest.TestCase):
@@ -51,10 +43,10 @@ class ScalpingTests(unittest.TestCase):
             type(breakout_base[0])(
                 item.timestamp,
                 item.open,
-                item.high + 4.0,
-                item.low - 0.5,
-                item.close + 1.5,
-                item.volume * 3.0,
+                item.high + 10.0,
+                item.low - 1.0,
+                item.close + 6.0,
+                item.volume * 5.0,
             )
             for item in breakout_base[-2:]
         )
@@ -82,11 +74,7 @@ class ScalpingTests(unittest.TestCase):
         rise = list(candles(start=100, drift=0.6, volume=100, count=42))
         last = rise[-1]
         from models.scalping_opportunity import Candle
-        rise[-3:] = [
-            Candle(last.timestamp - 2, last.close, last.close + 0.2, last.close - 1.0, last.close - 0.5, 100),
-            Candle(last.timestamp - 1, last.close - 0.5, last.close + 0.2, last.close - 0.3, last.close + 0.1, 120),
-            Candle(last.timestamp, last.close + 0.1, last.close + 1.0, last.close, last.close + 0.8, 130),
-        ]
+        rise[-3:] = [Candle(last.timestamp - 2, last.close, last.close + 0.2, last.close - 1.0, last.close - 0.5, 100), Candle(last.timestamp - 1, last.close - 0.5, last.close + 0.2, last.close - 0.3, last.close + 0.1, 120), Candle(last.timestamp, last.close + 0.1, last.close + 1.0, last.close, last.close + 0.8, 130)]
         seq = tuple(rise)
         result = self.engine.compute({"1d": seq, "4h": seq, "1h": seq, "15m": seq})
         self.assertIn(result.opportunity_class, (OpportunityClass.PULLBACK_CONTINUATION, OpportunityClass.TREND_CONTINUATION))
@@ -103,12 +91,10 @@ class ScalpingTests(unittest.TestCase):
         self.assertNotEqual(evidence[2].momentum_score, evidence[2].acceleration_score)
 
     def test_volume_expansion_is_distinct_feature(self):
-        evidence = self.engine.compute(self.candle_map).evidence[-1]
-        self.assertGreater(evidence.volume_expansion, 0.5)
+        self.assertGreater(self.engine.compute(self.candle_map).evidence[-1].volume_expansion, 0.5)
 
     def test_range_expansion_is_distinct_feature(self):
-        evidence = self.engine.compute(self.candle_map).evidence[-1]
-        self.assertGreater(evidence.range_expansion, 0.5)
+        self.assertGreater(self.engine.compute(self.candle_map).evidence[-1].range_expansion, 0.5)
 
     def test_structure_feature_exists(self):
         evidence = self.engine.compute(self.candle_map).evidence[2]
@@ -123,8 +109,8 @@ class ScalpingTests(unittest.TestCase):
         self.assertNotEqual(with_st.supertrend_enabled, baseline.supertrend_enabled)
 
     def test_supertrend_ab_is_measurable(self):
-        baseline = [(True, 0.02, 0.01, 0.5, 1.0), (False, -0.01, 0.00, 0.4, 2.0)]
-        improved = [(True, 0.025, 0.01, 0.5, 1.0), (False, -0.01, 0.00, 0.4, 2.0)]
+        baseline = [(True, 0.02, 0.01, 0.5, 1.0), (False, -0.01, 0.0, 0.4, 2.0)]
+        improved = [(True, 0.025, 0.01, 0.5, 1.0), (False, -0.01, 0.0, 0.4, 2.0)]
         result = ScalpingReplayEvaluator.compare_supertrend(baseline, improved)
         self.assertEqual(result.capture_delta, 0.0)
         self.assertGreaterEqual(result.expectancy_delta, 0.0)
@@ -136,10 +122,7 @@ class ScalpingTests(unittest.TestCase):
         self.assertIsNotNone(result.decision_trace)
 
     def test_entry_readiness_is_separate_from_opportunity_quality(self):
-        result = self.decision.decide(
-            candidate(score=95),
-            {"1d": self.up, "4h": self.up, "1h": self.up, "15m": self.flat},
-        )
+        result = self.decision.decide(candidate(score=95), {"1d": self.up, "4h": self.up, "1h": self.up, "15m": self.flat})
         self.assertGreaterEqual(result.entry_readiness, 0.0)
         self.assertLess(result.entry_readiness, self.config.a_readiness)
         self.assertEqual(result.entry_state, EntryState.B.value)
@@ -159,12 +142,10 @@ class ScalpingTests(unittest.TestCase):
         self.assertEqual(result.entry_state, EntryState.D.value)
 
     def test_pause_rejection_is_traced(self):
-        result = self.decision.decide(candidate(), self.candle_map, pause=True)
-        self.assertIn(RejectionReason.PAUSE, result.decision_trace.rejection_reasons)
+        self.assertIn(RejectionReason.PAUSE, self.decision.decide(candidate(), self.candle_map, pause=True).decision_trace.rejection_reasons)
 
     def test_duplicate_position_rejection_is_traced(self):
-        result = self.decision.decide(candidate(), self.candle_map, active_symbols=("BTCUSDT",))
-        self.assertIn(RejectionReason.DUPLICATE_POSITION, result.decision_trace.rejection_reasons)
+        self.assertIn(RejectionReason.DUPLICATE_POSITION, self.decision.decide(candidate(), self.candle_map, active_symbols=("BTCUSDT",)).decision_trace.rejection_reasons)
 
     def test_market_failure_is_fail_closed_and_observable(self):
         result = self.decision.decide(candidate(), {"1d": self.flat})
@@ -185,8 +166,7 @@ class ScalpingTests(unittest.TestCase):
         self.assertEqual(len(result.active_set.candidates), 1)
 
     def test_decision_trace_contains_all_required_answers(self):
-        result = self.decision.decide(candidate(score=95), self.candle_map)
-        trace = result.decision_trace
+        trace = self.decision.decide(candidate(score=95), self.candle_map).decision_trace
         self.assertTrue(trace.discovered)
         self.assertTrue(trace.eligible)
         self.assertGreater(len(trace.measured_features), 5)
@@ -196,8 +176,7 @@ class ScalpingTests(unittest.TestCase):
         self.assertIsNotNone(trace.entry_state)
 
     def test_replay_metrics_cover_required_dimensions(self):
-        results = [(True, 0.02, 1, 0.5, 30), (False, -0.01, 0, 0.4, 45), (True, 0.01, 1, 0.6, 20)]
-        metrics = ScalpingReplayEvaluator.metrics(results)
+        metrics = ScalpingReplayEvaluator.metrics([(True,0.02,1,0.5,30),(False,-0.01,0,0.4,45),(True,0.01,1,0.6,20)])
         self.assertGreaterEqual(metrics.opportunity_capture_rate, 0.0)
         self.assertGreaterEqual(metrics.entry_acceptance_rate, 0.0)
         self.assertGreaterEqual(metrics.trades_per_day, 0.0)
@@ -209,19 +188,16 @@ class ScalpingTests(unittest.TestCase):
         self.assertTrue(math.isfinite(metrics.false_negative_rate))
 
     def test_ab_comparison_is_deterministic(self):
-        baseline = [(True, 0.02, 1, 0.5, 30), (False, -0.01, 0, 0.4, 45)]
-        improved = [(True, 0.025, 1, 0.5, 30), (True, 0.01, 1, 0.6, 20)]
-        first = ScalpingReplayEvaluator.compare(baseline, improved)
-        second = ScalpingReplayEvaluator.compare(baseline, improved)
-        self.assertEqual(first, second)
+        baseline = [(True,0.02,1,0.5,30),(False,-0.01,0,0.4,45)]
+        improved = [(True,0.025,1,0.5,30),(True,0.01,1,0.6,20)]
+        self.assertEqual(ScalpingReplayEvaluator.compare(baseline, improved), ScalpingReplayEvaluator.compare(baseline, improved))
 
     def test_no_live_or_execution_imports(self):
         source = __import__("inspect").getsource(__import__("services.scalping_opportunity", fromlist=["x"]))
         tree = ast.parse(source)
-        banned = ("execution", "live", "paper")
         imports = [node for node in ast.walk(tree) if isinstance(node, (ast.Import, ast.ImportFrom))]
         text = "\n".join(ast.unparse(node) for node in imports).lower()
-        self.assertFalse(any(token in text for token in banned))
+        self.assertFalse(any(token in text for token in ("execution", "live", "paper")))
 
 
 if __name__ == "__main__":
