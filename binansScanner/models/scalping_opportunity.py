@@ -30,6 +30,8 @@ class RejectionReason(str, Enum):
     PAUSE = "PAUSE"
     DUPLICATE_POSITION = "DUPLICATE_POSITION"
     MARKET_DATA_FAILURE = "MARKET_DATA_FAILURE"
+    DIRECTIONAL_CONFLICT = "DIRECTIONAL_CONFLICT"
+    DIRECTIONAL_INSUFFICIENT = "DIRECTIONAL_INSUFFICIENT"
 
 
 @dataclass(frozen=True, slots=True)
@@ -94,6 +96,51 @@ class ScalpingCandidateSet:
     @property
     def candidates(self) -> tuple[OpportunityCandidate, ...]:
         return self.active_set.candidates
+
+
+@dataclass(frozen=True, slots=True)
+class ReplayEvent:
+    """One replay observation with explicit metric semantics.
+
+    ``opportunity_captured`` means the opportunity survived discovery/evaluation.
+    ``entry_accepted`` means the entry was actually accepted from that captured opportunity.
+    ``hold_time_hours`` is the realized/observed holding duration for an accepted trade.
+    ``fees_slippage_pct`` is the explicit cost burden attributable to that trade.
+    ``capital_utilization_pct`` is capital committed divided by available capital for
+    the observation window, expressed as a percentage in [0, 100].
+    ``profitable_opportunity`` marks ground-truth opportunities that would have been
+    profitable when evaluated forward; it is used only to measure false negatives.
+    """
+
+    opportunity_captured: bool
+    return_pct: float
+    entry_accepted: bool
+    hold_time_hours: float
+    fees_slippage_pct: float
+    capital_utilization_pct: float
+    profitable_opportunity: bool
+
+    def __post_init__(self) -> None:
+        if self.hold_time_hours < 0:
+            raise ValueError("hold_time_hours must be non-negative")
+        if self.fees_slippage_pct < 0:
+            raise ValueError("fees_slippage_pct must be non-negative")
+        if not 0.0 <= self.capital_utilization_pct <= 100.0:
+            raise ValueError("capital_utilization_pct must be between 0 and 100")
+        if self.entry_accepted and not self.opportunity_captured:
+            raise ValueError("entry_accepted requires opportunity_captured")
+
+
+@dataclass(frozen=True, slots=True)
+class ReplayEvaluation:
+    """Deterministic replay basis with explicit evaluation duration."""
+
+    events: tuple[ReplayEvent, ...]
+    evaluation_days: float
+
+    def __post_init__(self) -> None:
+        if self.evaluation_days <= 0:
+            raise ValueError("evaluation_days must be positive")
 
 
 @dataclass(frozen=True, slots=True)
