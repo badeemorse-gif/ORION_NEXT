@@ -191,6 +191,7 @@ class Paper8HRunner:
                     max_concurrent_positions=self.config.max_concurrent_positions,
                 ),
                 self.supervisor.runtime.ledger,
+                journal_path=self.config.output_dir / "capital_allocations.jsonl",
             )
 
     @classmethod
