@@ -1,5 +1,6 @@
 import importlib.util
 import sys
+import tempfile
 import unittest
 from datetime import datetime, timezone
 from pathlib import Path
@@ -8,6 +9,7 @@ from types import SimpleNamespace
 from integration.paper_capital_runner_bridge import PaperRunnerCapitalBridge
 from integration.trading_control import TradingState
 from models.capital_management import AllocationConfig, CapitalMode
+from models.order_position_lifecycle import OrderState
 from models.paper_capital import LedgerSide, PaperLedger
 
 
@@ -40,6 +42,14 @@ class _Source:
 
 class _Opportunity:
     _metrics_source = _Source()
+
+
+class _TerminalOrders:
+    def __init__(self, state: OrderState):
+        self.state = state
+
+    def get(self, _order_id: str):
+        return SimpleNamespace(state=self.state)
 
 
 class TestPaperRunnerCapitalIntegration(unittest.TestCase):
@@ -140,10 +150,56 @@ class TestPaperRunnerCapitalIntegration(unittest.TestCase):
         self.assertEqual(recovered.audit_state(), recovered_again.audit_state())
         self.assertEqual(len(bridge.ledger.events), len(recovered.ledger.events))
 
+    def test_durable_reservation_binding_survives_restart_and_release_is_exactly_once(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            journal = Path(tmp) / "capital_allocations.jsonl"
+            config = AllocationConfig(starting_capital=50.0, mode=CapitalMode.FIXED_ALLOCATION, allocation_rate=0.10)
+            ledger = PaperLedger(starting_equity=50.0)
+            first = PaperRunnerCapitalBridge(config, ledger, journal_path=journal)
+            audit = first.allocation_for(symbol="BTCUSDT", rank=1, opportunity_score=100.0, required_symbol_minimum=5.0)
+            first.bind_order(audit.allocation_id, "ORDER-1")
+            lines_before = journal.read_text(encoding="utf-8").splitlines()
+            self.assertEqual(len(lines_before), 2)
+            recovered = PaperRunnerCapitalBridge(config, ledger, journal_path=journal)
+            self.assertEqual(recovered.pending_reserved, 5.0)
+            self.assertEqual(recovered._allocation_to_order[audit.allocation_id], "ORDER-1")
+            recovered_again = recovered.recover(ledger)
+            self.assertEqual(recovered_again.pending_reserved, 5.0)
+            self.assertEqual(recovered_again._allocation_to_order[audit.allocation_id], "ORDER-1")
+            self.assertTrue(recovered_again.release_for_order("ORDER-1", reason="CANCELLED"))
+            self.assertFalse(recovered_again.release_for_order("ORDER-1", reason="CANCELLED_AGAIN"))
+            lines_after = journal.read_text(encoding="utf-8").splitlines()
+            self.assertEqual(len(lines_after), 3)
+            restarted_after_release = PaperRunnerCapitalBridge(config, ledger, journal_path=journal)
+            self.assertEqual(restarted_after_release.pending_reserved, 0.0)
+            self.assertNotIn(audit.allocation_id, restarted_after_release._allocation_to_order)
+
+    def test_cancel_reject_expire_release_exactly_once_after_recovery(self):
+        for terminal_state in (OrderState.CANCELLED, OrderState.FAILED, OrderState.EXPIRED):
+            with self.subTest(terminal_state=terminal_state):
+                with tempfile.TemporaryDirectory() as tmp:
+                    journal = Path(tmp) / "capital_allocations.jsonl"
+                    config = AllocationConfig(starting_capital=50.0, mode=CapitalMode.FIXED_ALLOCATION, allocation_rate=0.10)
+                    bridge = PaperRunnerCapitalBridge(config, PaperLedger(starting_equity=50.0), journal_path=journal)
+                    audit = bridge.allocation_for(symbol="BTCUSDT", rank=1, opportunity_score=100.0, required_symbol_minimum=5.0)
+                    bridge.bind_order(audit.allocation_id, "ORDER-1")
+                    recovered = PaperRunnerCapitalBridge(config, bridge.ledger, journal_path=journal)
+                    lifecycle = _TerminalOrders(terminal_state)
+                    recovered.reconcile_terminal_orders(lifecycle)
+                    self.assertEqual(recovered.pending_reserved, 0.0)
+                    first_release_lines = journal.read_text(encoding="utf-8").splitlines()
+                    recovered.reconcile_terminal_orders(lifecycle)
+                    second_release_lines = journal.read_text(encoding="utf-8").splitlines()
+                    self.assertEqual(len(second_release_lines), len(first_release_lines))
+
     def test_runner_contains_no_local_percentage_sizing(self):
         source = _RUNNER_PATH.read_text(encoding="utf-8")
         self.assertNotIn("max_notional_pct", source)
         self.assertIn("PaperRunnerCapitalBridge", source)
+
+    def test_runner_persists_capital_journal_under_output_dir(self):
+        source = _RUNNER_PATH.read_text(encoding="utf-8")
+        self.assertIn('journal_path=self.config.output_dir / "capital_allocations.jsonl"', source)
 
     def test_runner_is_paper_only(self):
         bridge = PaperRunnerCapitalBridge(AllocationConfig(starting_capital=50.0, mode=CapitalMode.FIXED_ALLOCATION, allocation_rate=0.10), PaperLedger(starting_equity=50.0))
