@@ -18,6 +18,9 @@ class _InitialSet:
     def __init__(self, symbols):
         self.candidates = tuple(type("Candidate", (), {"symbol": symbol})() for symbol in symbols)
 
+    def symbols(self):
+        return tuple(candidate.symbol for candidate in self.candidates)
+
 
 class _PipelineSpy:
     def __init__(self, *args, **kwargs):
@@ -51,6 +54,16 @@ class _StreamSpy:
         self.symbols = tuple(symbols)
 
 
+class _SupervisorSpy:
+    def __init__(self, *args, **kwargs):
+        self.runtime = type("Runtime", (), {"ledger": object()})()
+
+
+class _CapitalBridgeSpy:
+    def __init__(self, *args, **kwargs):
+        pass
+
+
 class TestPaperRunnerScalpingIntegration(unittest.TestCase):
     def test_runner_create_wires_the_approved_scalping_pipeline(self):
         config = runner_module.Paper8HConfig(top_n=2)
@@ -60,8 +73,8 @@ class TestPaperRunnerScalpingIntegration(unittest.TestCase):
              patch.object(runner_module, "ScalpingOpportunityPipeline", _PipelineSpy), \
              patch.object(runner_module, "DynamicMarketStream", _StreamSpy), \
              patch.object(runner_module, "PaperRealtimeLifecycle"), \
-             patch.object(runner_module, "PaperRuntimeSupervisor") as supervisor_cls:
-            supervisor_cls.return_value.runtime.ledger = None
+             patch.object(runner_module, "PaperRuntimeSupervisor", _SupervisorSpy), \
+             patch.object(runner_module, "PaperRunnerCapitalBridge", _CapitalBridgeSpy):
             runner = runner_module.Paper8HRunner.create(config)
         self.assertIsInstance(runner.opportunity, _PipelineSpy)
         self.assertEqual(runner.stream.symbols, ("BTCUSDT", "ETHUSDT"))
@@ -84,7 +97,7 @@ class TestPaperRunnerScalpingIntegration(unittest.TestCase):
         source = _RUNNER_PATH.read_text(encoding="utf-8")
         for field in ("opportunity_class", "opportunity_score", "directional_evidence", "entry_state", "entry_readiness", "risk_reward", "decision_trace"):
             self.assertIn(field, source)
-        self.assertIn('event_type="signal_event"' if False else '"signal_event"', source)
+        self.assertIn('"signal_event"', source)
 
     def test_market_data_failure_is_fail_closed_without_legacy_fallback(self):
         source = _RUNNER_PATH.read_text(encoding="utf-8")
