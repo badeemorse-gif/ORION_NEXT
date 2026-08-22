@@ -50,6 +50,12 @@ class OpportunityCandidate:
     eligibility_reasons: tuple[str, ...]
     score_components: tuple[tuple[str, float], ...] = ()
     directional_evidence: float = 0.0
+    opportunity_class: str = "UNCLASSIFIED"
+    entry_state: str = "C"
+    entry_readiness: float = 0.0
+    risk_reward: object | None = None
+    timeframe_evidence: tuple[object, ...] = ()
+    decision_trace: object | None = None
 
 
 @dataclass(frozen=True, slots=True)
