@@ -15,13 +15,8 @@ from integration.paper_runtime_supervisor import PaperRuntimeSupervisor
 from models.market_event import MarketEvent, MarketEventType
 from models.opportunity import MarketMetrics, OpportunityCandidate, OpportunityCandidateSet
 from models.paper_capital import PaperLedger
-from tools.orion_paper_8h_runner import (
-    DynamicMarketStream,
-    JsonlRunLog,
-    Paper8HConfig,
-    Paper8HRunner,
-    parse_args,
-)
+from models.scalping_opportunity import DecisionTrace, EntryState, OpportunityClass, ScalpingCandidateSet
+from tools.orion_paper_8h_runner import DynamicMarketStream, JsonlRunLog, Paper8HConfig, Paper8HRunner, parse_args
 
 UTC = timezone.utc
 
@@ -34,24 +29,35 @@ def candle_event(symbol: str, price: float, event_id: str, timestamp: datetime) 
     return MarketEvent(symbol=symbol, event_timestamp=timestamp, event_type=MarketEventType.CANDLE_CLOSE, payload={"close": price, "price": price, "timeframe": "1m", "is_closed": True}, source_event_id=event_id)
 
 
-class FakeDecisionContext:
-    def build(self, symbol: str):
-        return {"health_score": 100.0, "trade_mode": "FULL_ANALYSIS"}
-
-
-class FakeOpportunity:
+class FakeScalpingOpportunity:
     def __init__(self, symbols=("BTCUSDT",)):
         self.symbols_sequence = [tuple(symbols)]
         self.calls = 0
 
-    def discover(self, top_n=None):
+    @staticmethod
+    def _candidate(symbol: str, rank: int) -> OpportunityCandidate:
+        score = 90.0 - rank + 1
+        trace = DecisionTrace(
+            discovered=True,
+            eligible=True,
+            measured_features=("regime", "trend", "momentum", "acceleration", "directional_evidence"),
+            opportunity_class=OpportunityClass.TREND_CONTINUATION,
+            opportunity_score=score,
+            directional_evidence=0.8,
+            entry_state=EntryState.A,
+            entry_allowed=True,
+            rejection_reasons=(),
+            reasons=("trend_continuation",),
+        )
+        return OpportunityCandidate(symbol=symbol, opportunity_score=score, rank=rank, metrics=MarketMetrics(symbol, 200_000_000.0, 0.03, None, True, 100.0), eligibility_reasons=(), directional_evidence=0.8, opportunity_class=OpportunityClass.TREND_CONTINUATION.value, entry_state=EntryState.A.value, entry_readiness=0.9, decision_trace=trace)
+
+    def discover(self, *args, **kwargs):
         symbols = self.symbols_sequence[min(self.calls, len(self.symbols_sequence) - 1)]
         self.calls += 1
-        candidates = tuple(
-            OpportunityCandidate(symbol=s, opportunity_score=90.0 - i, rank=i + 1, metrics=MarketMetrics(s, 200_000_000.0, 0.03, None, True, 100.0), eligibility_reasons=())
-            for i, s in enumerate(symbols)
-        )
-        return OpportunityCandidateSet(candidates=candidates, top_n=top_n or len(candidates))
+        active = tuple(self._candidate(symbol, index + 1) for index, symbol in enumerate(symbols))
+        broad = OpportunityCandidateSet(candidates=active, top_n=max(len(active) + 1, 2))
+        active_set = OpportunityCandidateSet(candidates=active, top_n=len(active))
+        return ScalpingCandidateSet(broad_pool=broad, active_set=active_set, refreshed=True)
 
 
 class TestPaper8HConfig(unittest.TestCase):
@@ -92,16 +98,8 @@ class TestPaper8HRunnerE2E(unittest.IsolatedAsyncioTestCase):
         config = Paper8HConfig(output_dir=Path(self.tempdir.name))
         runtime = PaperRealtimeLifecycle(ledger=PaperLedger(starting_equity=200.0))
         supervisor = PaperRuntimeSupervisor(runtime=runtime)
-        self.opportunity = FakeOpportunity()
-        self.runner = Paper8HRunner(
-            config=config,
-            stream=DynamicMarketStream(("BTCUSDT",)),
-            supervisor=supervisor,
-            opportunity=self.opportunity,
-            log=JsonlRunLog(Path(self.tempdir.name) / "events.jsonl"),
-            decision_context=FakeDecisionContext(),
-            previous_top_symbols=("BTCUSDT",),
-        )
+        self.opportunity = FakeScalpingOpportunity()
+        self.runner = Paper8HRunner(config=config, stream=DynamicMarketStream(("BTCUSDT",)), supervisor=supervisor, opportunity=self.opportunity, log=JsonlRunLog(Path(self.tempdir.name) / "events.jsonl"), previous_top_symbols=("BTCUSDT",))
         self.runner.log.open()
 
     async def asyncTearDown(self):
