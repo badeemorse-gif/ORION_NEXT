@@ -7,10 +7,10 @@ state recoverable without creating a second ledger.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
 from typing import Optional
 
 from models.capital_management import AllocationAudit, AllocationCandidate, AllocationConfig, CapitalManager
+from models.order_position_lifecycle import OrderState
 from models.paper_capital import PaperLedger
 
 
@@ -120,6 +120,20 @@ class PaperRunnerCapitalBridge:
         self.sync_policy_positions()
         return allocation_id
 
+    def reconcile_terminal_orders(self, order_lifecycle: object) -> None:
+        """Release reservations for terminal non-filled orders after D5 revalidation."""
+        get_order = getattr(order_lifecycle, "get", None)
+        if not callable(get_order):
+            return
+        for order_id in tuple(self._order_to_allocation):
+            try:
+                state = get_order(order_id).state
+            except (KeyError, AttributeError):
+                continue
+            if state is OrderState.PENDING or state is OrderState.FILLED:
+                continue
+            self.release_for_order(order_id, reason=f"TERMINAL:{state.value}")
+
     def on_exit_symbol(self, symbol: str) -> None:
         for allocation_id, order_id in tuple(self._allocation_to_order.items()):
             if allocation_id.split("::", 1)[0] == symbol:
@@ -147,10 +161,7 @@ class PaperRunnerCapitalBridge:
                 audit = operation[1]
                 assert isinstance(audit, AllocationAudit)
                 recovered._pending_notional[audit.allocation_id] = audit.final_order_notional
-                recovered.manager.calculate(
-                    AllocationCandidate(audit.symbol, 1, 0.0, True, audit.intent),
-                    audit.required_symbol_minimum,
-                )
+                recovered.manager.calculate(AllocationCandidate(audit.symbol, 1, 0.0, True, audit.intent), audit.required_symbol_minimum)
             elif kind == "bind":
                 _, allocation_id, order_id = operation
                 recovered._order_to_allocation[str(order_id)] = str(allocation_id)
