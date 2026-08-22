@@ -5,17 +5,17 @@ import unittest
 from models.capital_management import AllocationConfig, CapitalManager
 from models.opportunity import MarketMetrics
 from models.scalping_opportunity import Candle, EntryState, OpportunityClass
-from services.scalping_opportunity import ScalpingConfig
+from services.scalping_opportunity import ScalpingCandidatePoolManager, ScalpingConfig
 from services.scalping_pipeline import ScalpingOpportunityPipeline
 from services.opportunity_discovery import OpportunityConfig, OpportunityDiscovery, MarketUniverseDiscovery
 
 
 class FakeUniverse:
     def exchange_info(self):
-        return {"symbols": [
-            {"symbol": "BTCUSDT", "baseAsset": "BTC", "quoteAsset": "USDT", "status": "TRADING"},
-            {"symbol": "ETHUSDT", "baseAsset": "ETH", "quoteAsset": "USDT", "status": "TRADING"},
-        ]}
+        symbols = []
+        for symbol in ("BTCUSDT", "ETHUSDT", "SOLUSDT", "ADAUSDT", "XRPUSDT", "BNBUSDT", "DOGEUSDT", "AVAXUSDT"):
+            symbols.append({"symbol": symbol, "baseAsset": symbol[:-4], "quoteAsset": "USDT", "status": "TRADING"})
+        return {"symbols": symbols}
 
 
 class FakeMetrics:
@@ -42,20 +42,41 @@ class FakeCandles:
 
 
 class ScalpingPipelineTests(unittest.TestCase):
-    def test_full_universe_to_active_entry_pipeline(self):
-        discovery = OpportunityDiscovery(MarketUniverseDiscovery(FakeUniverse()), FakeMetrics(), OpportunityConfig(default_top_n=2), clock=lambda: 0.0)
+    def test_full_universe_to_broad_then_active_pipeline(self):
+        config = ScalpingConfig(active_top_n=2, broad_pool_top_n=6)
+        discovery = OpportunityDiscovery(
+            MarketUniverseDiscovery(FakeUniverse()),
+            FakeMetrics(),
+            OpportunityConfig(default_top_n=8),
+            clock=lambda: 0.0,
+        )
         pipeline = ScalpingOpportunityPipeline(
             discovery,
             FakeCandles(),
-            pool_manager=__import__("services.scalping_opportunity", fromlist=["ScalpingCandidatePoolManager"]).ScalpingCandidatePoolManager(ScalpingConfig(active_top_n=1)),
+            pool_manager=ScalpingCandidatePoolManager(config),
         )
-        result = pipeline.discover(top_n=2)
-        self.assertEqual(len(result.broad_pool.candidates), 2)
-        self.assertLessEqual(len(result.active_set.candidates), 1)
+        result = pipeline.discover()
+        self.assertEqual(len(result.broad_pool.candidates), 6)
+        self.assertEqual(len(result.active_set.candidates), 2)
+        self.assertGreater(len(result.broad_pool.candidates), len(result.active_set.candidates))
+        self.assertEqual(result.broad_pool.symbols(), tuple(sorted(result.broad_pool.symbols(), key=lambda s: (-result.broad_pool.candidates[result.broad_pool.symbols().index(s)].opportunity_score, s))))
         for item in result.broad_pool.candidates:
             self.assertIn(item.opportunity_class, {x.value for x in OpportunityClass})
             self.assertIn(item.entry_state, {x.value for x in EntryState})
             self.assertIsNotNone(item.decision_trace)
+
+    def test_explicit_broad_override_is_never_active_top_n(self):
+        config = ScalpingConfig(active_top_n=1, broad_pool_top_n=4)
+        discovery = OpportunityDiscovery(
+            MarketUniverseDiscovery(FakeUniverse()),
+            FakeMetrics(),
+            OpportunityConfig(default_top_n=8),
+            clock=lambda: 0.0,
+        )
+        pipeline = ScalpingOpportunityPipeline(discovery, FakeCandles(), pool_manager=ScalpingCandidatePoolManager(config))
+        result = pipeline.discover(top_n=4)
+        self.assertEqual(len(result.broad_pool.candidates), 4)
+        self.assertEqual(len(result.active_set.candidates), 1)
 
     def test_capital_boundary_is_read_only_during_discovery(self):
         manager = CapitalManager(AllocationConfig(starting_capital=50.0, fixed_allocation=10.0))
