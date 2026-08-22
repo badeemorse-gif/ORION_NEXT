@@ -181,5 +181,4 @@ class SourceTests(unittest.TestCase):
         self.assertEqual(source.metrics_bulk(["BTCUSDT"]), {})
 
 
-if __name__ == "__main__":
-    unittest.main()
+if __name__ == "__main__": unittest.main()
