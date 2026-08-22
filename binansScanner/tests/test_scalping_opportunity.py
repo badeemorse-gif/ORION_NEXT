@@ -95,8 +95,11 @@ class ScalpingTests(unittest.TestCase):
         self.assertLess(bear_features.directional_evidence, 0)
 
     def test_acceleration_is_separate_from_momentum(self):
-        evidence = self.engine.compute(self.candle_map).evidence
-        self.assertNotEqual(evidence[2].momentum_score, evidence[2].acceleration_score)
+        steady = candles(start=100, drift=0.9, volume=100)
+        steady_features = self.engine.compute({"1d": self.flat, "4h": self.flat, "1h": steady, "15m": self.flat}).evidence[2]
+        accelerated_features = self.engine.compute(self.candle_map).evidence[2]
+        self.assertEqual(steady_features.momentum_score, accelerated_features.momentum_score)
+        self.assertNotEqual(steady_features.acceleration_score, accelerated_features.acceleration_score)
 
     def test_volume_expansion_is_distinct_feature(self):
         self.assertGreater(self.engine.compute(self.candle_map).evidence[-1].volume_expansion, 0.5)
