@@ -118,7 +118,7 @@ class DynamicMarketStream:
 @dataclass(frozen=True, slots=True)
 class Paper8HConfig:
     duration_hours: float = 8.0
-    starting_capital: float = 50.0
+    starting_capital: float = 200.0
     symbols: tuple[str, ...] = ()
     dynamic_universe: bool = True
     output_dir: Path = Path("runs/paper")
@@ -180,6 +180,19 @@ class Paper8HRunner:
     maximum_drawdown: float = 0.0
     capital: Optional[PaperRunnerCapitalBridge] = None
 
+    def __post_init__(self) -> None:
+        if self.capital is None:
+            self.capital = PaperRunnerCapitalBridge(
+                AllocationConfig(
+                    starting_capital=self.config.starting_capital,
+                    mode=self.config.capital_mode,
+                    allocation_rate=self.config.allocation_rate,
+                    fixed_allocation=self.config.fixed_allocation,
+                    max_concurrent_positions=self.config.max_concurrent_positions,
+                ),
+                self.supervisor.runtime.ledger,
+            )
+
     @classmethod
     def create(cls, config: Paper8HConfig) -> "Paper8HRunner":
         source = BinanceSpotOpportunitySource(ttl_seconds=config.metrics_ttl_seconds)
@@ -192,9 +205,7 @@ class Paper8HRunner:
         if not symbols:
             raise RuntimeError("D1 returned no eligible Top-N opportunities")
         runtime = PaperRealtimeLifecycle(ledger=PaperLedger(starting_equity=config.starting_capital))
-        allocation_config = AllocationConfig(starting_capital=config.starting_capital, mode=config.capital_mode, allocation_rate=config.allocation_rate, fixed_allocation=config.fixed_allocation, max_concurrent_positions=config.max_concurrent_positions)
-        bridge = PaperRunnerCapitalBridge(allocation_config, runtime.ledger)
-        return cls(config, DynamicMarketStream(symbols), PaperRuntimeSupervisor(runtime=runtime), opportunity, JsonlRunLog(config.output_dir / "events.jsonl"), peak_equity=config.starting_capital, previous_top_symbols=symbols, capital=bridge)
+        return cls(config, DynamicMarketStream(symbols), PaperRuntimeSupervisor(runtime=runtime), opportunity, JsonlRunLog(config.output_dir / "events.jsonl"), peak_equity=config.starting_capital)
 
     async def run(self) -> dict[str, Any]:
         self.started_at = datetime.now(UTC)
@@ -242,6 +253,7 @@ class Paper8HRunner:
         for order_id in filled:
             allocation_id = self.capital.on_fill(order_id)
             self.log.write("fill", order_id=order_id, symbol=event.symbol, price=event.payload.get("price"), allocation_id=allocation_id, capital_state=self.capital.audit_state())
+        self.capital.reconcile_terminal_orders(self.supervisor.runtime.orders)
         state = self._account_state()
         equity = self._marked_equity(state)
         self.peak_equity = max(self.peak_equity, equity)
@@ -328,7 +340,6 @@ class Paper8HRunner:
             if snapshot is None:
                 continue
             self.previous_signals[candidate.symbol] = snapshot
-            self.log.write("signal_event", symbol=candidate.symbol, version=snapshot.version, decision=decision["decision"], direction=snapshot.direction, confidence=snapshot.confidence, entry_price=price, quantity=snapshot.entry_plan["quantity"], opportunity_score=candidate.opportunity_score, rank=candidate.rank, allocation_id=audit.allocation_id if audit is not None else None)
             active = self.supervisor.runtime.pending.active_for_intent(snapshot.identity.identity_key)
             if active is not None:
                 action = self.supervisor.revalidate(intent_id=active.intent_id, snapshot=snapshot, market_price=price, now=event.event_timestamp)
@@ -373,7 +384,7 @@ class Paper8HRunner:
 def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Official ORION public-market paper runtime runner")
     parser.add_argument("--duration-hours", type=float, default=8.0)
-    parser.add_argument("--starting-capital", type=float, default=50.0)
+    parser.add_argument("--starting-capital", type=float, default=200.0)
     parser.add_argument("--capital-mode", choices=("FIXED_ALLOCATION", "COMPOUNDING"), default="FIXED_ALLOCATION")
     parser.add_argument("--allocation-rate", type=float, default=0.10)
     parser.add_argument("--fixed-allocation", type=float, default=None)
