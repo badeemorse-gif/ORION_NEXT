@@ -37,7 +37,15 @@ class ScalpingTests(unittest.TestCase):
         self.engine = ScalpingEvidenceEngine(self.config)
         self.decision = ScalpingDecisionEngine(self.config)
         self.flat = candles(start=100, drift=0.0, volume=100)
-        self.up = candles(start=100, drift=0.9, volume=100)
+        up_base = list(candles(start=100, drift=0.9, volume=100))
+        last = up_base[-1]
+        from models.scalping_opportunity import Candle
+        up_base[-3:] = [
+            Candle(last.timestamp - 2, last.close, last.close + 1.0, last.close - 0.2, last.close + 0.8, 100),
+            Candle(last.timestamp - 1, last.close + 0.8, last.close + 4.0, last.close + 0.6, last.close + 3.5, 120),
+            Candle(last.timestamp, last.close + 3.5, last.close + 9.0, last.close + 3.0, last.close + 8.5, 160),
+        ]
+        self.up = tuple(up_base)
         breakout_base = candles(start=100, drift=0.5, volume=100)
         self.breakout = breakout_base[:-2] + tuple(
             type(breakout_base[0])(
