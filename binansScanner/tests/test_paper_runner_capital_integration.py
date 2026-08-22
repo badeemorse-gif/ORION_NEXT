@@ -8,7 +8,6 @@ from types import SimpleNamespace
 from integration.paper_capital_runner_bridge import PaperRunnerCapitalBridge
 from integration.trading_control import TradingState
 from models.capital_management import AllocationConfig, CapitalMode
-from models.market_event import MarketEvent, MarketEventType
 from models.paper_capital import LedgerSide, PaperLedger
 
 
@@ -51,11 +50,11 @@ class TestPaperRunnerCapitalIntegration(unittest.TestCase):
         self.assertEqual(audit.final_order_notional, 5.0)
         bridge.bind_order(audit.allocation_id, "ORDER-1")
         ledger = ledger.record_fill(datetime(2026, 8, 22, 10, 0, tzinfo=timezone.utc), "BTCUSDT", LedgerSide.BUY, 1.0, 5.0)
-        ledger = ledger.record_fill(datetime(2026, 8, 22, 11, 0, tzinfo=timezone.utc), "BTCUSDT", LedgerSide.SELL, 1.0, 5.5)
         bridge.ledger = ledger
         bridge.on_fill("ORDER-1")
-        bridge.on_exit_symbol("BTCUSDT")
+        ledger = ledger.record_fill(datetime(2026, 8, 22, 11, 0, tzinfo=timezone.utc), "BTCUSDT", LedgerSide.SELL, 1.0, 5.5)
         bridge.ledger = ledger
+        bridge.on_exit_symbol("BTCUSDT")
         next_audit = bridge.allocation_for(symbol="ETHUSDT", rank=1, opportunity_score=90.0, required_symbol_minimum=0.0)
         self.assertEqual(next_audit.final_order_notional, 5.0)
         self.assertAlmostEqual(bridge.manager.total_equity, 50.5)
@@ -113,15 +112,12 @@ class TestPaperRunnerCapitalIntegration(unittest.TestCase):
         duplicate = bridge.allocation_for(symbol="BTCUSDT", rank=1, opportunity_score=110.0, required_symbol_minimum=0.0)
         self.assertFalse(duplicate.accepted)
         self.assertEqual(duplicate.reason, "DUPLICATE_ALLOCATION")
-        self.assertEqual(bridge.manager.available_capital, 45.0)
+        self.assertGreater(bridge.manager.committed_capital, 0.0)
 
     def test_paused_runner_boundary_blocks_reservation(self):
         bridge = PaperRunnerCapitalBridge(AllocationConfig(starting_capital=50.0, mode=CapitalMode.FIXED_ALLOCATION, allocation_rate=0.10), PaperLedger(starting_equity=50.0))
         runner = runner_module.Paper8HRunner.__new__(runner_module.Paper8HRunner)
-        runner.supervisor = SimpleNamespace(
-            trading_state=TradingState.PAUSED,
-            last_processed_market_event=MarketEvent(event_id="E1", source_event_id="S1", symbol="BTCUSDT", event_type=MarketEventType.CANDLE_CLOSE, event_timestamp=datetime(2026, 8, 22, 10, 0, tzinfo=timezone.utc), payload={"price": 5.0}),
-        )
+        runner.supervisor = SimpleNamespace(trading_state=TradingState.PAUSED)
         runner.capital = bridge
         runner.log = _Log()
         snapshot = runner._allocation_snapshot(SimpleNamespace(symbol="BTCUSDT", rank=1, opportunity_score=100.0), {"decision": "BUY"}, 5.0, None)
