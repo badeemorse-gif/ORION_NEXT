@@ -52,7 +52,6 @@ class CanonicalDecisionContextProvider:
             return self._cache[symbol]
         import urllib.request
         from urllib.parse import urlencode
-
         frames: dict[Timeframe, Any] = {}
         for interval, timeframe in self._PROFILE_TIMEFRAMES:
             request = urllib.request.Request(
@@ -67,10 +66,7 @@ class CanonicalDecisionContextProvider:
             frames[timeframe] = self._mapper.convert_klines_to_dataframe(payload)
         dataset = self._mapper.create_market_dataset(symbol=symbol, timeframe_data=frames, source="BINANCE_PUBLIC_PROFILE")
         profile = self._profile_engine.build_profile(self._indicator_engine.calculate_dataset(dataset))
-        context = {
-            "health_score": float(profile.statistics.health_score),
-            "trade_mode": "FULL_ANALYSIS" if profile.is_tradeable else "NEW_LISTING",
-        }
+        context = {"health_score": float(profile.statistics.health_score), "trade_mode": "FULL_ANALYSIS" if profile.is_tradeable else "NEW_LISTING"}
         self._cache[symbol] = context
         return context
 
@@ -142,13 +138,7 @@ class Paper8HConfig:
             raise ValueError("fixed universe override requires symbols")
         if self.top_n <= 0 or self.metrics_ttl_seconds < 0:
             raise ValueError("invalid runner configuration")
-        AllocationConfig(
-            starting_capital=self.starting_capital,
-            mode=self.capital_mode,
-            allocation_rate=self.allocation_rate,
-            fixed_allocation=self.fixed_allocation,
-            max_concurrent_positions=self.max_concurrent_positions,
-        )
+        AllocationConfig(starting_capital=self.starting_capital, mode=self.capital_mode, allocation_rate=self.allocation_rate, fixed_allocation=self.fixed_allocation, max_concurrent_positions=self.max_concurrent_positions)
 
 
 @dataclass(slots=True)
@@ -163,8 +153,7 @@ class JsonlRunLog:
     def write(self, record_type: str, **payload: Any) -> None:
         if self._handle is None:
             raise RuntimeError("run log is not open")
-        record = {"timestamp": datetime.now(UTC).isoformat(), "event_type": record_type, **payload}
-        self._handle.write(json.dumps(record, sort_keys=True, default=str) + "\n")
+        self._handle.write(json.dumps({"timestamp": datetime.now(UTC).isoformat(), "event_type": record_type, **payload}, sort_keys=True, default=str) + "\n")
         self._handle.flush()
 
     def close(self) -> None:
@@ -197,50 +186,21 @@ class Paper8HRunner:
         universe_source: Any = source if config.dynamic_universe else FixedUniverseSource(source, config.symbols)
         d1 = OpportunityConfig(default_top_n=config.top_n, refresh_interval_seconds=config.metrics_ttl_seconds, cache_ttl_seconds=config.metrics_ttl_seconds)
         opportunity = OpportunityDiscovery(MarketUniverseDiscovery(universe_source, d1), source, d1)
+        opportunity.market_provider = source
         initial = opportunity.discover(config.top_n)
         symbols = initial.symbols()
         if not symbols:
             raise RuntimeError("D1 returned no eligible Top-N opportunities")
         runtime = PaperRealtimeLifecycle(ledger=PaperLedger(starting_equity=config.starting_capital))
-        allocation_config = AllocationConfig(
-            starting_capital=config.starting_capital,
-            mode=config.capital_mode,
-            allocation_rate=config.allocation_rate,
-            fixed_allocation=config.fixed_allocation,
-            max_concurrent_positions=config.max_concurrent_positions,
-        )
+        allocation_config = AllocationConfig(starting_capital=config.starting_capital, mode=config.capital_mode, allocation_rate=config.allocation_rate, fixed_allocation=config.fixed_allocation, max_concurrent_positions=config.max_concurrent_positions)
         bridge = PaperRunnerCapitalBridge(allocation_config, runtime.ledger)
-        return cls(
-            config,
-            DynamicMarketStream(symbols),
-            PaperRuntimeSupervisor(runtime=runtime),
-            opportunity,
-            JsonlRunLog(config.output_dir / "events.jsonl"),
-            peak_equity=config.starting_capital,
-            previous_top_symbols=symbols,
-            capital=bridge,
-        )
+        return cls(config, DynamicMarketStream(symbols), PaperRuntimeSupervisor(runtime=runtime), opportunity, JsonlRunLog(config.output_dir / "events.jsonl"), peak_equity=config.starting_capital, previous_top_symbols=symbols, capital=bridge)
 
     async def run(self) -> dict[str, Any]:
         self.started_at = datetime.now(UTC)
         self.log.open()
         assert self.capital is not None
-        self.log.write(
-            "run_start",
-            duration_hours=self.config.duration_hours,
-            starting_equity=self.config.starting_capital,
-            capital_mode=self.config.capital_mode.value,
-            allocation_rate=self.config.allocation_rate,
-            fixed_allocation=self.config.fixed_allocation,
-            max_concurrent_positions=self.config.max_concurrent_positions,
-            universe="dynamic" if self.config.dynamic_universe else "fixed_override",
-            top_n=self.config.top_n,
-            symbols=self.previous_top_symbols,
-            paper_only=True,
-            live_execution=False,
-            credentials_used=False,
-            exchange_orders=False,
-        )
+        self.log.write("run_start", duration_hours=self.config.duration_hours, starting_equity=self.config.starting_capital, capital_mode=self.config.capital_mode.value, allocation_rate=self.config.allocation_rate, fixed_allocation=self.config.fixed_allocation, max_concurrent_positions=self.config.max_concurrent_positions, universe="dynamic" if self.config.dynamic_universe else "fixed_override", top_n=self.config.top_n, symbols=self.previous_top_symbols, paper_only=True, live_execution=False, credentials_used=False, exchange_orders=False)
         runner = MarketStreamRunner(self.stream, on_event=self._on_market_event)
         stream_task = asyncio.create_task(runner.run())
         timer_task = asyncio.create_task(asyncio.sleep(self.config.duration_hours * 3600.0))
@@ -277,32 +237,17 @@ class Paper8HRunner:
             self.runtime_failure = f"{type(exc).__name__}: {exc}"
             self.log.write("runtime_failure", event_id=event.event_id, error=self.runtime_failure)
             raise
-
         assert self.capital is not None
         self.capital.ledger = self.supervisor.runtime.ledger
         for order_id in filled:
             allocation_id = self.capital.on_fill(order_id)
             self.log.write("fill", order_id=order_id, symbol=event.symbol, price=event.payload.get("price"), allocation_id=allocation_id, capital_state=self.capital.audit_state())
-
         state = self._account_state()
         equity = self._marked_equity(state)
         self.peak_equity = max(self.peak_equity, equity)
         self.maximum_drawdown = max(self.maximum_drawdown, self.peak_equity - equity)
         health = self.supervisor.health
-        self.log.write(
-            "market_event",
-            event_id=event.event_id,
-            source_event_id=event.source_event_id,
-            symbol=event.symbol,
-            market_event_type=event.event_type.value,
-            price=event.payload.get("price"),
-            filled=filled,
-            active_orders=len(self.supervisor.active_orders),
-            active_positions=len(self.supervisor.active_positions),
-            equity=equity,
-            drawdown=max(self.peak_equity - equity, 0.0),
-            health=health.healthy,
-        )
+        self.log.write("market_event", event_id=event.event_id, source_event_id=event.source_event_id, symbol=event.symbol, market_event_type=event.event_type.value, price=event.payload.get("price"), filled=filled, active_orders=len(self.supervisor.active_orders), active_positions=len(self.supervisor.active_positions), equity=equity, drawdown=max(self.peak_equity - equity, 0.0), health=health.healthy)
         if event.event_type is MarketEventType.CANDLE_CLOSE:
             await self._run_signal_cycle(event)
 
@@ -311,77 +256,31 @@ class Paper8HRunner:
         for row in exchange_info.get("symbols", []):
             if str(row.get("symbol", "")).upper() != symbol.upper():
                 continue
-            minimums = []
-            for rule in row.get("filters", []):
-                if rule.get("filterType") in {"MIN_NOTIONAL", "NOTIONAL"}:
-                    value = rule.get("minNotional")
-                    if value is not None:
-                        minimums.append(float(value))
+            minimums = [float(rule["minNotional"]) for rule in row.get("filters", []) if rule.get("filterType") in {"MIN_NOTIONAL", "NOTIONAL"} and rule.get("minNotional") is not None]
             return max(minimums, default=0.0)
         return 0.0
 
     def _required_symbol_minimum(self, symbol: str) -> float:
-        source = self.opportunity.market_provider
-        return self._symbol_minimum(source.exchange_info(), symbol) if hasattr(source, "exchange_info") else 0.0
-
-    def _allocation_snapshot(
-        self,
-        candidate: OpportunityCandidate,
-        decision: Mapping[str, Any],
-        price: float,
-        previous: Optional[SignalSnapshot],
-    ) -> tuple[Optional[SignalSnapshot], Optional[Any]]:
-        assert self.capital is not None
-        if self.supervisor.trading_state is not TradingState.RUNNING:
-            self.log.write("allocation_blocked", symbol=candidate.symbol, reason="PAUSED", trading_state=self.supervisor.trading_state.value)
-            return None, None
-        minimum = self._required_symbol_minimum(candidate.symbol)
-        audit = self.capital.allocation_for(
-            symbol=candidate.symbol,
-            rank=candidate.rank,
-            opportunity_score=float(candidate.opportunity_score),
-            required_symbol_minimum=minimum,
-        )
-        self.log.write(
-            "capital_allocation",
-            allocation_id=audit.allocation_id,
-            symbol=audit.symbol,
-            intent=audit.intent,
-            desired_allocation=audit.desired_allocation,
-            required_symbol_minimum=audit.required_symbol_minimum,
-            final_order_notional=audit.final_order_notional,
-            capital_mode=audit.capital_mode.value,
-            available_capital_before=audit.available_capital_before,
-            available_capital_after=self.capital.manager.available_capital,
-            reserved_capital_before=audit.reserved_capital_before,
-            reserved_capital_after=self.capital.manager.reserved_capital,
-            committed_capital=self.capital.manager.committed_capital,
-            minimum_adjustment_applied=audit.minimum_adjustment_applied,
-            accepted=audit.accepted,
-            rejection_reason=audit.rejection_reason.value if audit.rejection_reason else None,
-        )
-        if not audit.accepted:
-            return None, audit
-        quantity = audit.final_order_notional / price
-        snapshot = build_next_snapshot(
-            previous=previous,
-            identity=SignalIdentity(candidate.symbol, "D1_D3_PAPER", "ENTRY"),
-            direction="BUY",
-            decision=decision["decision"],
-            confidence=float(candidate.opportunity_score),
-            entry_plan={"entry_price": price, "quantity": quantity, "allocation_id": audit.allocation_id, "final_order_notional": audit.final_order_notional},
-            generated_at=self._current_event_time,
-            valid_until=self._current_event_time + timedelta(minutes=15),
-            policy=MaterialChangePolicy(entry_price_change_pct=0.10),
-            market_context_fingerprint=f"d1:{candidate.symbol}:{candidate.rank}:{candidate.opportunity_score:.8f}",
-            quality=float(candidate.opportunity_score),
-        ).current
-        return snapshot, audit
+        source = getattr(self.opportunity, "market_provider", getattr(self.opportunity, "_metrics_source", None))
+        return self._symbol_minimum(source.exchange_info(), symbol) if source is not None and hasattr(source, "exchange_info") else 0.0
 
     @property
     def _current_event_time(self) -> datetime:
         event = self.supervisor.last_processed_market_event
         return event.event_timestamp if event is not None else datetime.now(UTC)
+
+    def _allocation_snapshot(self, candidate: OpportunityCandidate, decision: Mapping[str, Any], price: float, previous: Optional[SignalSnapshot]):
+        assert self.capital is not None
+        if self.supervisor.trading_state is not TradingState.RUNNING:
+            self.log.write("allocation_blocked", symbol=candidate.symbol, reason="PAUSED", trading_state=self.supervisor.trading_state.value)
+            return None, None
+        audit = self.capital.allocation_for(symbol=candidate.symbol, rank=candidate.rank, opportunity_score=float(candidate.opportunity_score), required_symbol_minimum=self._required_symbol_minimum(candidate.symbol))
+        self.log.write("capital_allocation", allocation_id=audit.allocation_id, symbol=audit.symbol, intent=audit.intent, desired_allocation=audit.desired_allocation, required_symbol_minimum=audit.required_symbol_minimum, final_order_notional=audit.final_order_notional, capital_mode=audit.capital_mode.value, available_capital_before=audit.available_capital_before, available_capital_after=self.capital.manager.available_capital, reserved_capital_before=audit.reserved_capital_before, reserved_capital_after=self.capital.manager.reserved_capital, committed_capital=self.capital.manager.committed_capital, minimum_adjustment_applied=audit.minimum_adjustment_applied, accepted=audit.accepted, rejection_reason=audit.rejection_reason.value if audit.rejection_reason else None)
+        if not audit.accepted:
+            return None, audit
+        quantity = audit.final_order_notional / price
+        snapshot = build_next_snapshot(previous=previous, identity=SignalIdentity(candidate.symbol, "D1_D3_PAPER", "ENTRY"), direction="BUY", decision=decision["decision"], confidence=float(candidate.opportunity_score), entry_plan={"entry_price": price, "quantity": quantity, "allocation_id": audit.allocation_id, "final_order_notional": audit.final_order_notional}, generated_at=self._current_event_time, valid_until=self._current_event_time + timedelta(minutes=15), policy=MaterialChangePolicy(entry_price_change_pct=0.10), market_context_fingerprint=f"d1:{candidate.symbol}:{candidate.rank}:{candidate.opportunity_score:.8f}", quality=float(candidate.opportunity_score)).current
+        return snapshot, audit
 
     async def _run_signal_cycle(self, event: MarketEvent) -> None:
         assert self.capital is not None
@@ -394,24 +293,12 @@ class Paper8HRunner:
         added = tuple(s for s in selected if s not in self.previous_top_symbols)
         removed = tuple(s for s in self.previous_top_symbols if s not in selected)
         if added or removed or selected != self.previous_top_symbols:
-            self.log.write(
-                "opportunity_refresh",
-                universe_snapshot_size="dynamic",
-                eligible_candidate_count=len(opportunities.candidates),
-                top_n_symbols=selected,
-                scores={c.symbol: c.opportunity_score for c in opportunities.candidates},
-                directional_evidence={c.symbol: c.directional_evidence for c in opportunities.candidates},
-                refresh_timestamp=event.event_timestamp.isoformat(),
-                candidate_additions=added,
-                candidate_removals=removed,
-            )
+            self.log.write("opportunity_refresh", universe_snapshot_size="dynamic", eligible_candidate_count=len(opportunities.candidates), top_n_symbols=selected, scores={c.symbol: c.opportunity_score for c in opportunities.candidates}, directional_evidence={c.symbol: c.directional_evidence for c in opportunities.candidates}, refresh_timestamp=event.event_timestamp.isoformat(), candidate_additions=added, candidate_removals=removed)
             if isinstance(self.stream, DynamicMarketStream) and self.stream.set_symbols(selected):
                 self.log.write("market_stream_resubscribe", symbols=selected)
             self.previous_top_symbols = selected
-
         self.capital.ledger = self.supervisor.runtime.ledger
         self.capital.sync_policy_positions()
-
         for candidate in opportunities.candidates:
             try:
                 context = await asyncio.to_thread(self.decision_context.build, candidate.symbol)
@@ -428,43 +315,20 @@ class Paper8HRunner:
                 exit_order_id = self.supervisor.runtime.exit_position(symbol=candidate.symbol, price=price, now=event.event_timestamp)
                 self.capital.ledger = self.supervisor.runtime.ledger
                 self.capital.on_exit_symbol(candidate.symbol)
-                self.log.write(
-                    "signal_event",
-                    symbol=candidate.symbol,
-                    direction="SELL",
-                    decision=decision["decision"],
-                    exit_trigger="DECISION_NOT_BUY",
-                    price=price,
-                    realized_pnl=self._account_state().realized_pnl,
-                )
+                self.log.write("signal_event", symbol=candidate.symbol, direction="SELL", decision=decision["decision"], exit_trigger="DECISION_NOT_BUY", price=price, realized_pnl=self._account_state().realized_pnl)
                 self.log.write("order_lifecycle", action="EXIT_SELL", order_id=exit_order_id, symbol=candidate.symbol, price=price, quantity=active_position.quantity)
                 self.previous_signals.pop(candidate.symbol, None)
                 continue
-
             if active_position is not None:
                 self.log.write("allocation_rejected", symbol=candidate.symbol, reason="DUPLICATE_ALLOCATION", existing_position=True)
                 continue
-
             if decision["decision"] != "BUY":
                 continue
-
             snapshot, audit = self._allocation_snapshot(candidate, decision, price, previous)
             if snapshot is None:
                 continue
             self.previous_signals[candidate.symbol] = snapshot
-            self.log.write(
-                "signal_event",
-                symbol=candidate.symbol,
-                version=snapshot.version,
-                decision=decision["decision"],
-                direction=snapshot.direction,
-                confidence=snapshot.confidence,
-                entry_price=price,
-                quantity=snapshot.entry_plan["quantity"],
-                opportunity_score=candidate.opportunity_score,
-                rank=candidate.rank,
-                allocation_id=audit.allocation_id if audit is not None else None,
-            )
+            self.log.write("signal_event", symbol=candidate.symbol, version=snapshot.version, decision=decision["decision"], direction=snapshot.direction, confidence=snapshot.confidence, entry_price=price, quantity=snapshot.entry_plan["quantity"], opportunity_score=candidate.opportunity_score, rank=candidate.rank, allocation_id=audit.allocation_id if audit is not None else None)
             active = self.supervisor.runtime.pending.active_for_intent(snapshot.identity.identity_key)
             if active is not None:
                 action = self.supervisor.revalidate(intent_id=active.intent_id, snapshot=snapshot, market_price=price, now=event.event_timestamp)
@@ -475,15 +339,7 @@ class Paper8HRunner:
                 try:
                     pending = self.supervisor.submit_signal(snapshot, now=event.event_timestamp)
                     self.capital.bind_order(audit.allocation_id, pending.order_id)
-                    self.log.write(
-                        "order_lifecycle",
-                        action="PENDING",
-                        order_id=pending.order_id,
-                        symbol=pending.symbol,
-                        price=pending.entry_price,
-                        quantity=pending.quantity,
-                        allocation_id=audit.allocation_id,
-                    )
+                    self.log.write("order_lifecycle", action="PENDING", order_id=pending.order_id, symbol=pending.symbol, price=pending.entry_price, quantity=pending.quantity, allocation_id=audit.allocation_id)
                 except (ValueError, PermissionError) as exc:
                     self.capital.release(audit.allocation_id, reason=f"ENTRY_REJECTED:{type(exc).__name__}")
                     self.log.write("order_rejected", symbol=candidate.symbol, reason=str(exc), allocation_id=audit.allocation_id)
@@ -511,29 +367,7 @@ class Paper8HRunner:
             raise RuntimeError("recovery/replay verification failed")
         if not health.paper_only:
             raise RuntimeError("paper-only safety contract failed")
-        return {
-            "starting_equity": state.starting_equity,
-            "ending_equity": self._marked_equity(state),
-            "realized_pnl": state.realized_pnl,
-            "unrealized_pnl": state.unrealized_pnl,
-            "fees": state.cumulative_fees,
-            "slippage": state.cumulative_slippage,
-            "max_drawdown": self.maximum_drawdown,
-            "orders": len(self.supervisor.runtime.orders.events),
-            "fills": sum(1 for e in self.supervisor.runtime.orders.events if e.event_type == "ORDER_FILLED"),
-            "cancelled_replaced_orders": sum(1 for e in self.supervisor.runtime.orders.events if e.event_type in {"ORDER_CANCELLED", "ORDER_REPLACED"}),
-            "open_position_at_end": [p.symbol for p in state.positions if p.quantity > 0],
-            "reconnect_count": runner.stats.reconnects,
-            "duplicate_event_count": runner.stats.duplicates,
-            "runtime_health": health.healthy,
-            "paper_only": health.paper_only,
-            "runtime_failure": self.runtime_failure,
-            "replay_equal_after_recovery": replay_equal,
-            "replay_equal_after_repeated_recovery": repeat_equal,
-            "capital_replay_equal": capital_replay_equal,
-            "capital_state": capital_original,
-            "last_market_event_id": health.last_market_event_id,
-        }
+        return {"starting_equity": state.starting_equity, "ending_equity": self._marked_equity(state), "realized_pnl": state.realized_pnl, "unrealized_pnl": state.unrealized_pnl, "fees": state.cumulative_fees, "slippage": state.cumulative_slippage, "max_drawdown": self.maximum_drawdown, "orders": len(self.supervisor.runtime.orders.events), "fills": sum(1 for e in self.supervisor.runtime.orders.events if e.event_type == "ORDER_FILLED"), "cancelled_replaced_orders": sum(1 for e in self.supervisor.runtime.orders.events if e.event_type in {"ORDER_CANCELLED", "ORDER_REPLACED"}), "open_position_at_end": [p.symbol for p in state.positions if p.quantity > 0], "reconnect_count": runner.stats.reconnects, "duplicate_event_count": runner.stats.duplicates, "runtime_health": health.healthy, "paper_only": health.paper_only, "runtime_failure": self.runtime_failure, "replay_equal_after_recovery": replay_equal, "replay_equal_after_repeated_recovery": repeat_equal, "capital_replay_equal": capital_replay_equal, "capital_state": capital_original, "last_market_event_id": health.last_market_event_id}
 
 
 def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
@@ -555,18 +389,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     args = parse_args(argv)
     symbols = tuple(s.strip().upper() for s in args.symbols.split(",") if s.strip())
     try:
-        config = Paper8HConfig(
-            duration_hours=args.duration_hours,
-            starting_capital=args.starting_capital,
-            symbols=symbols,
-            dynamic_universe=args.universe == "dynamic",
-            output_dir=Path(args.output_dir),
-            capital_mode=CapitalMode(args.capital_mode),
-            allocation_rate=args.allocation_rate,
-            fixed_allocation=args.fixed_allocation,
-            max_concurrent_positions=args.max_concurrent_positions,
-            top_n=args.top_n,
-        )
+        config = Paper8HConfig(duration_hours=args.duration_hours, starting_capital=args.starting_capital, symbols=symbols, dynamic_universe=args.universe == "dynamic", output_dir=Path(args.output_dir), capital_mode=CapitalMode(args.capital_mode), allocation_rate=args.allocation_rate, fixed_allocation=args.fixed_allocation, max_concurrent_positions=args.max_concurrent_positions, top_n=args.top_n)
         report = asyncio.run(Paper8HRunner.create(config).run())
     except KeyboardInterrupt:
         return 130
