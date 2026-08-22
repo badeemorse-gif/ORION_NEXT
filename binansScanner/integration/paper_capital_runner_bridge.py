@@ -1,9 +1,4 @@
-"""Paper Runner integration boundary for the canonical Capital Manager.
-
-This adapter owns no accounting. It exposes the PaperLedger state through the
-read-only AccountingView required by CapitalManager and keeps policy allocation
-state recoverable without creating a second ledger.
-"""
+"""Paper Runner integration boundary for the canonical Capital Manager."""
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -58,11 +53,15 @@ class PaperRunnerCapitalBridge:
     def _view(self) -> PaperLedgerAccountingView:
         return PaperLedgerAccountingView(self.ledger, sum(self._pending_notional.values()))
 
-    def _sync_ledger(self, ledger: PaperLedger) -> None:
-        self.ledger = ledger
+    def _refresh_accounting(self) -> None:
         self.manager.sync_from_accounting(self._view())
 
+    def _sync_ledger(self, ledger: PaperLedger) -> None:
+        self.ledger = ledger
+        self._refresh_accounting()
+
     def sync_policy_positions(self) -> None:
+        self._refresh_accounting()
         state = self.ledger.replay()
         self.manager.set_active_positions(position.symbol for position in state.positions if position.quantity > 0.0)
 
@@ -87,6 +86,7 @@ class PaperRunnerCapitalBridge:
         if audit.accepted:
             self._pending_notional[audit.allocation_id] = audit.final_order_notional
             self._operations.append(("reserve", audit))
+            self._refresh_accounting()
         return audit
 
     def bind_order(self, allocation_id: str, order_id: str) -> None:
@@ -101,6 +101,7 @@ class PaperRunnerCapitalBridge:
         self._pending_notional.pop(allocation_id, None)
         self.manager.on_cancel(allocation_id)
         self._operations.append(("release", allocation_id, reason))
+        self._refresh_accounting()
 
     def release_for_order(self, order_id: str, *, reason: str) -> Optional[str]:
         allocation_id = self._order_to_allocation.pop(order_id, None)
@@ -115,6 +116,7 @@ class PaperRunnerCapitalBridge:
         if allocation_id is None:
             return None
         self._pending_notional.pop(allocation_id, None)
+        self._refresh_accounting()
         self.manager.on_fill(allocation_id)
         self._operations.append(("fill", order_id, allocation_id))
         self.sync_policy_positions()
@@ -140,12 +142,13 @@ class PaperRunnerCapitalBridge:
                 self._pending_notional.pop(allocation_id, None)
                 self._allocation_to_order.pop(allocation_id, None)
                 self._order_to_allocation.pop(order_id, None)
+                self._refresh_accounting()
                 self.manager.on_exit(allocation_id)
                 self._operations.append(("exit", symbol, allocation_id))
         self.sync_policy_positions()
 
     def audit_state(self) -> dict[str, float | int]:
-        self.manager.sync_from_accounting(self._view())
+        self._refresh_accounting()
         return {
             "reserved_capital": self.manager.reserved_capital,
             "committed_capital": self.manager.committed_capital,
@@ -162,6 +165,7 @@ class PaperRunnerCapitalBridge:
                 assert isinstance(audit, AllocationAudit)
                 recovered._pending_notional[audit.allocation_id] = audit.final_order_notional
                 recovered.manager.calculate(AllocationCandidate(audit.symbol, 1, 0.0, True, audit.intent), audit.required_symbol_minimum)
+                recovered._refresh_accounting()
             elif kind == "bind":
                 _, allocation_id, order_id = operation
                 recovered._order_to_allocation[str(order_id)] = str(allocation_id)
@@ -170,14 +174,17 @@ class PaperRunnerCapitalBridge:
                 _, allocation_id, _reason = operation
                 recovered._pending_notional.pop(str(allocation_id), None)
                 recovered.manager.on_cancel(str(allocation_id))
+                recovered._refresh_accounting()
             elif kind == "fill":
                 _, order_id, allocation_id = operation
                 recovered._pending_notional.pop(str(allocation_id), None)
+                recovered._refresh_accounting()
                 recovered.manager.on_fill(str(allocation_id))
                 recovered._order_to_allocation[str(order_id)] = str(allocation_id)
             elif kind == "exit":
                 _, symbol, allocation_id = operation
                 recovered._pending_notional.pop(str(allocation_id), None)
+                recovered._refresh_accounting()
                 recovered.manager.on_exit(str(allocation_id))
                 recovered._allocation_to_order.pop(str(allocation_id), None)
         recovered.sync_policy_positions()
