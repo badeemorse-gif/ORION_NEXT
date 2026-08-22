@@ -6,20 +6,8 @@ import unittest
 
 from models.capital_management import AllocationConfig, CapitalManager
 from models.opportunity import MarketMetrics, OpportunityCandidate, OpportunityCandidateSet
-from models.scalping_opportunity import (
-    EntryState,
-    OpportunityClass,
-    RejectionReason,
-    ReplayEvaluation,
-    ReplayEvent,
-)
-from services.scalping_opportunity import (
-    ScalpingCandidatePoolManager,
-    ScalpingConfig,
-    ScalpingDecisionEngine,
-    ScalpingEvidenceEngine,
-    ScalpingReplayEvaluator,
-)
+from models.scalping_opportunity import EntryState, OpportunityClass, RejectionReason, ReplayEvaluation, ReplayEvent
+from services.scalping_opportunity import ScalpingCandidatePoolManager, ScalpingConfig, ScalpingDecisionEngine, ScalpingEvidenceEngine, ScalpingReplayEvaluator
 
 
 def candles(*, start: float, drift: float, volume: float, count: int = 48, range_size: float = 0.8):
@@ -43,16 +31,7 @@ def candidate(symbol: str = "BTCUSDT", score: float = 75.0) -> OpportunityCandid
     return OpportunityCandidate(symbol, score, 1, MarketMetrics(symbol, 100_000_000, 0.02, 5, True, 100), (), (("base", 0.75),), 0.5)
 
 
-def replay_event(
-    *,
-    captured: bool = True,
-    accepted: bool = True,
-    return_pct: float = 0.02,
-    hold_hours: float = 1.0,
-    costs_pct: float = 0.10,
-    utilization_pct: float = 25.0,
-    profitable: bool = True,
-) -> ReplayEvent:
+def replay_event(*, captured: bool = True, accepted: bool = True, return_pct: float = 0.02, hold_hours: float = 1.0, costs_pct: float = 0.10, utilization_pct: float = 25.0, profitable: bool = True) -> ReplayEvent:
     return ReplayEvent(captured, return_pct, accepted, hold_hours, costs_pct, utilization_pct, profitable)
 
 
@@ -74,14 +53,9 @@ class ScalpingTests(unittest.TestCase):
         breakout_base = candles(start=100, drift=0.5, volume=100)
         self.breakout = breakout_base[:-2] + tuple(
             type(breakout_base[0])(
-                item.timestamp,
-                item.open,
-                item.high + 10.0,
-                item.low - 1.0,
-                item.close + 6.0,
-                item.volume * 5.0,
-            )
-            for item in breakout_base[-2:]
+                item.timestamp, item.open, item.high + 10.0, item.low - 1.0,
+                item.close + 6.0, item.volume * 5.0,
+            ) for item in breakout_base[-2:]
         )
         self.candle_map = {"1d": self.flat, "4h": self.flat, "1h": self.up, "15m": self.breakout}
 
@@ -90,8 +64,7 @@ class ScalpingTests(unittest.TestCase):
         self.assertEqual(tuple(x.timeframe for x in result.evidence), ("1d", "4h", "1h", "15m"))
 
     def test_four_hour_is_not_hard_scalping_gate(self):
-        result = self.engine.compute(self.candle_map)
-        self.assertEqual(result.opportunity_class, OpportunityClass.BREAKOUT_ACCELERATION)
+        self.assertEqual(self.engine.compute(self.candle_map).opportunity_class, OpportunityClass.BREAKOUT_ACCELERATION)
 
     def test_breakout_class_detected(self):
         result = self.engine.compute(self.candle_map)
@@ -269,7 +242,7 @@ class ScalpingTests(unittest.TestCase):
         self.assertTrue(math.isfinite(metrics.expectancy))
 
     def test_replay_trades_per_day_changes_with_time_basis(self):
-        events = (replay_event(), replay_event(return_pct=-0.01, profitable=False))
+        events = (replay_event(), replay_event(accepted=False, return_pct=-0.01, profitable=False))
         short = ScalpingReplayEvaluator.metrics(ReplayEvaluation(events, 1.0))
         long = ScalpingReplayEvaluator.metrics(ReplayEvaluation(events, 4.0))
         self.assertNotEqual(short.trades_per_day, long.trades_per_day)
@@ -298,11 +271,11 @@ class ScalpingTests(unittest.TestCase):
         self.assertGreater(metrics.profit_factor, 0)
 
     def test_replay_metrics_same_inputs_are_deterministic(self):
-        evaluation = ReplayEvaluation((replay_event(), replay_event(return_pct=-0.01, profitable=False)), 2.0)
+        evaluation = ReplayEvaluation((replay_event(), replay_event(return_pct=-0.01, accepted=False, profitable=False)), 2.0)
         self.assertEqual(ScalpingReplayEvaluator.metrics(evaluation), ScalpingReplayEvaluator.metrics(evaluation))
 
     def test_ab_comparison_is_deterministic(self):
-        baseline = ReplayEvaluation((replay_event(), replay_event(return_pct=-0.01, profitable=False)), 1.0)
+        baseline = ReplayEvaluation((replay_event(), replay_event(return_pct=-0.01, accepted=False, profitable=False)), 1.0)
         improved = ReplayEvaluation((replay_event(return_pct=0.025, costs_pct=0.05), replay_event(return_pct=0.01, costs_pct=0.05)), 1.0)
         self.assertEqual(ScalpingReplayEvaluator.compare(baseline, improved), ScalpingReplayEvaluator.compare(baseline, improved))
 
