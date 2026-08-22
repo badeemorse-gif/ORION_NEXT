@@ -91,7 +91,7 @@ class TestPaperRunnerScalpingIntegration(unittest.TestCase):
     def test_entry_requires_d1_entry_allowed_and_a_or_a_plus(self):
         source = _RUNNER_PATH.read_text(encoding="utf-8")
         self.assertIn('if not trace.entry_allowed or candidate.entry_state not in {"A", "A+"}', source)
-        self.assertIn('decision = {"decision": "BUY"}', source)
+        self.assertIn('decision.get("decision", "BUY")', source)
 
     def test_runner_preserves_d1_decision_trace_in_observability(self):
         source = _RUNNER_PATH.read_text(encoding="utf-8")
