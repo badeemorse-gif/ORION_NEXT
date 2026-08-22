@@ -10,7 +10,7 @@ from services.scalping_opportunity import ScalpingCandidatePoolManager, Scalping
 
 
 class ScalpingOpportunityPipeline:
-    """Universe -> opportunity pool -> classification -> entry state -> active set."""
+    """Universe -> broad opportunity pool -> evaluation -> stable active set."""
 
     def __init__(
         self,
@@ -23,7 +23,7 @@ class ScalpingOpportunityPipeline:
         self.discovery = discovery
         self.candle_source = candle_source
         self.decision_engine = decision_engine or ScalpingDecisionEngine()
-        self.pool_manager = pool_manager or ScalpingCandidatePoolManager()
+        self.pool_manager = pool_manager or ScalpingCandidatePoolManager(self.decision_engine.config)
 
     def _candles_for(self, symbol: str) -> Mapping[str, Sequence[Candle]]:
         return {
@@ -32,7 +32,16 @@ class ScalpingOpportunityPipeline:
         }
 
     def discover(self, top_n: int | None = None, **decision_kwargs) -> ScalpingCandidateSet:
-        broad = self.discovery.discover(top_n=top_n or self.pool_manager.config.active_top_n)
+        """Evaluate the broad pool before selecting the smaller stable active set.
+
+        ``top_n`` is an explicit broad-discovery override. The default uses the
+        dedicated ``broad_pool_top_n``; ``active_top_n`` is never used as the
+        discovery limit.
+        """
+        broad_top_n = top_n if top_n is not None else self.pool_manager.config.broad_pool_top_n
+        if broad_top_n <= self.pool_manager.config.active_top_n:
+            raise ValueError("broad discovery pool must be larger than active_top_n")
+        broad = self.discovery.discover(top_n=broad_top_n)
         enriched = []
         for candidate in broad.candidates:
             try:
