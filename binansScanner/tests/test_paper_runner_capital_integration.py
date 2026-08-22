@@ -1,4 +1,5 @@
 import importlib.util
+import sys
 import unittest
 from datetime import datetime, timezone
 from pathlib import Path
@@ -8,14 +9,15 @@ from integration.paper_capital_runner_bridge import PaperRunnerCapitalBridge
 from integration.trading_control import TradingState
 from models.capital_management import AllocationConfig, CapitalMode
 from models.market_event import MarketEvent, MarketEventType
-from models.paper_capital import PaperLedger
+from models.paper_capital import LedgerSide, PaperLedger
 
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _RUNNER_PATH = _REPO_ROOT / "tools" / "orion_paper_8h_runner.py"
-_SPEC = importlib.util.spec_from_file_location("orion_paper_8h_runner", _RUNNER_PATH)
+_SPEC = importlib.util.spec_from_file_location("orion_paper_8h_runner_integration_under_test", _RUNNER_PATH)
 assert _SPEC is not None and _SPEC.loader is not None
 runner_module = importlib.util.module_from_spec(_SPEC)
+sys.modules[_SPEC.name] = runner_module
 _SPEC.loader.exec_module(runner_module)
 
 
@@ -48,8 +50,8 @@ class TestPaperRunnerCapitalIntegration(unittest.TestCase):
         audit = bridge.allocation_for(symbol="BTCUSDT", rank=1, opportunity_score=90.0, required_symbol_minimum=0.0)
         self.assertEqual(audit.final_order_notional, 5.0)
         bridge.bind_order(audit.allocation_id, "ORDER-1")
-        ledger = ledger.record_fill(datetime(2026, 8, 22, 10, 0, tzinfo=timezone.utc), "BTCUSDT", "BUY", 1.0, 5.0)
-        ledger = ledger.record_fill(datetime(2026, 8, 22, 11, 0, tzinfo=timezone.utc), "BTCUSDT", "SELL", 1.0, 5.5)
+        ledger = ledger.record_fill(datetime(2026, 8, 22, 10, 0, tzinfo=timezone.utc), "BTCUSDT", LedgerSide.BUY, 1.0, 5.0)
+        ledger = ledger.record_fill(datetime(2026, 8, 22, 11, 0, tzinfo=timezone.utc), "BTCUSDT", LedgerSide.SELL, 1.0, 5.5)
         bridge.ledger = ledger
         bridge.on_fill("ORDER-1")
         bridge.on_exit_symbol("BTCUSDT")
@@ -60,8 +62,8 @@ class TestPaperRunnerCapitalIntegration(unittest.TestCase):
 
     def test_compounding_mode_through_runner_boundary_recalculates_from_realized_pnl(self):
         ledger = PaperLedger(starting_equity=50.0)
-        ledger = ledger.record_fill(datetime(2026, 8, 22, 10, 0, tzinfo=timezone.utc), "BTCUSDT", "BUY", 1.0, 5.0)
-        ledger = ledger.record_fill(datetime(2026, 8, 22, 11, 0, tzinfo=timezone.utc), "BTCUSDT", "SELL", 1.0, 6.0)
+        ledger = ledger.record_fill(datetime(2026, 8, 22, 10, 0, tzinfo=timezone.utc), "BTCUSDT", LedgerSide.BUY, 1.0, 5.0)
+        ledger = ledger.record_fill(datetime(2026, 8, 22, 11, 0, tzinfo=timezone.utc), "BTCUSDT", LedgerSide.SELL, 1.0, 6.0)
         bridge = PaperRunnerCapitalBridge(AllocationConfig(starting_capital=50.0, mode=CapitalMode.COMPOUNDING, allocation_rate=0.10), ledger)
         audit = bridge.allocation_for(symbol="ETHUSDT", rank=1, opportunity_score=90.0, required_symbol_minimum=0.0)
         self.assertAlmostEqual(audit.final_order_notional, 5.1)
@@ -93,8 +95,8 @@ class TestPaperRunnerCapitalIntegration(unittest.TestCase):
         self.assertTrue(two.accepted)
         bridge.bind_order(one.allocation_id, "ORDER-1")
         bridge.bind_order(two.allocation_id, "ORDER-2")
-        bridge.ledger = bridge.ledger.record_fill(datetime(2026, 8, 22, 10, 0, tzinfo=timezone.utc), "BTCUSDT", "BUY", 1.0, 5.0)
-        bridge.ledger = bridge.ledger.record_fill(datetime(2026, 8, 22, 10, 1, tzinfo=timezone.utc), "ETHUSDT", "BUY", 1.0, 5.0)
+        bridge.ledger = bridge.ledger.record_fill(datetime(2026, 8, 22, 10, 0, tzinfo=timezone.utc), "BTCUSDT", LedgerSide.BUY, 1.0, 5.0)
+        bridge.ledger = bridge.ledger.record_fill(datetime(2026, 8, 22, 10, 1, tzinfo=timezone.utc), "ETHUSDT", LedgerSide.BUY, 1.0, 5.0)
         bridge.on_fill("ORDER-1")
         bridge.on_fill("ORDER-2")
         blocked = bridge.allocation_for(symbol="SOLUSDT", rank=3, opportunity_score=80.0, required_symbol_minimum=0.0)
@@ -105,7 +107,7 @@ class TestPaperRunnerCapitalIntegration(unittest.TestCase):
         bridge = PaperRunnerCapitalBridge(AllocationConfig(starting_capital=50.0, mode=CapitalMode.FIXED_ALLOCATION, allocation_rate=0.10), PaperLedger(starting_equity=50.0))
         allocation = bridge.allocation_for(symbol="BTCUSDT", rank=1, opportunity_score=100.0, required_symbol_minimum=0.0)
         bridge.bind_order(allocation.allocation_id, "ORDER-1")
-        bridge.ledger = bridge.ledger.record_fill(datetime(2026, 8, 22, 10, 0, tzinfo=timezone.utc), "BTCUSDT", "BUY", 1.0, 5.0)
+        bridge.ledger = bridge.ledger.record_fill(datetime(2026, 8, 22, 10, 0, tzinfo=timezone.utc), "BTCUSDT", LedgerSide.BUY, 1.0, 5.0)
         bridge.on_fill("ORDER-1")
         bridge.sync_policy_positions()
         duplicate = bridge.allocation_for(symbol="BTCUSDT", rank=1, opportunity_score=110.0, required_symbol_minimum=0.0)
@@ -130,10 +132,10 @@ class TestPaperRunnerCapitalIntegration(unittest.TestCase):
         bridge = PaperRunnerCapitalBridge(AllocationConfig(starting_capital=50.0, mode=CapitalMode.COMPOUNDING, allocation_rate=0.10), PaperLedger(starting_equity=50.0))
         allocation = bridge.allocation_for(symbol="BTCUSDT", rank=1, opportunity_score=100.0, required_symbol_minimum=0.0)
         bridge.bind_order(allocation.allocation_id, "ORDER-1")
-        ledger = bridge.ledger.record_fill(datetime(2026, 8, 22, 10, 0, tzinfo=timezone.utc), "BTCUSDT", "BUY", 1.0, 5.0)
+        ledger = bridge.ledger.record_fill(datetime(2026, 8, 22, 10, 0, tzinfo=timezone.utc), "BTCUSDT", LedgerSide.BUY, 1.0, 5.0)
         bridge.ledger = ledger
         bridge.on_fill("ORDER-1")
-        bridge.ledger = ledger.record_fill(datetime(2026, 8, 22, 11, 0, tzinfo=timezone.utc), "BTCUSDT", "SELL", 1.0, 6.0)
+        bridge.ledger = ledger.record_fill(datetime(2026, 8, 22, 11, 0, tzinfo=timezone.utc), "BTCUSDT", LedgerSide.SELL, 1.0, 6.0)
         bridge.on_exit_symbol("BTCUSDT")
         original = bridge.audit_state()
         recovered = bridge.recover(bridge.ledger)
