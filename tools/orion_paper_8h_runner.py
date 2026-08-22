@@ -27,7 +27,6 @@ from models.market_event import MarketEvent, MarketEventType
 from models.opportunity import OpportunityCandidate
 from models.paper_capital import PaperLedger
 from models.signal_snapshot import MaterialChangePolicy, SignalIdentity, SignalSnapshot, build_next_snapshot
-from providers.binance_mapper import BinanceMapper
 from providers.binance_opportunity_source import BinanceSpotOpportunitySource
 from providers.market_stream import BinanceWebSocketMarketStream, MarketStreamRunner
 from services.binance_scalping_source import BinanceScalpingCandleSource
@@ -42,15 +41,9 @@ class _PublicBinanceKlineProvider:
     """Read-only public Binance adapter used by the approved D1 candle boundary."""
 
     def klines(self, symbol: str, timeframe: Timeframe, limit: int):
-        interval = {
-            Timeframe.D1: "1d",
-            Timeframe.H4: "4h",
-            Timeframe.H1: "1h",
-            Timeframe.M15: "15m",
-        }[timeframe]
-        query = f"symbol={symbol.upper()}&interval={interval}&limit={int(limit)}"
+        interval = {Timeframe.D1: "1d", Timeframe.H4: "4h", Timeframe.H1: "1h", Timeframe.M15: "15m"}[timeframe]
         request = urllib.request.Request(
-            f"https://api.binance.com/api/v3/klines?{query}",
+            f"https://api.binance.com/api/v3/klines?symbol={symbol.upper()}&interval={interval}&limit={int(limit)}",
             headers={"User-Agent": "ORION-paper-runner/1.0"},
             method="GET",
         )
@@ -177,17 +170,14 @@ class Paper8HRunner:
     def create(cls, config: Paper8HConfig) -> "Paper8HRunner":
         source = BinanceSpotOpportunitySource(ttl_seconds=config.metrics_ttl_seconds)
         universe_source: Any = source if config.dynamic_universe else FixedUniverseSource(source, config.symbols)
-        discovery_config = OpportunityConfig(default_top_n=max(config.top_n * 10, config.top_n + 1), refresh_interval_seconds=config.metrics_ttl_seconds, cache_ttl_seconds=config.metrics_ttl_seconds)
+        broad_top_n = max(config.top_n * 10, config.top_n + 1)
+        discovery_config = OpportunityConfig(default_top_n=broad_top_n, refresh_interval_seconds=config.metrics_ttl_seconds, cache_ttl_seconds=config.metrics_ttl_seconds)
         discovery = OpportunityDiscovery(MarketUniverseDiscovery(universe_source, discovery_config), source, discovery_config)
         discovery.market_provider = source
-        scalping_config = ScalpingConfig(active_top_n=config.top_n, broad_pool_top_n=max(config.top_n * 10, config.top_n + 1))
-        scalping_engine = ScalpingDecisionEngine(scalping_config)
-        pool = ScalpingCandidatePoolManager(scalping_config)
-        candle_source = BinanceScalpingCandleSource(_PublicBinanceKlineProvider())
-        pipeline = ScalpingOpportunityPipeline(discovery, candle_source, decision_engine=scalping_engine, pool_manager=pool)
+        scalping_config = ScalpingConfig(active_top_n=config.top_n, broad_pool_top_n=broad_top_n)
+        pipeline = ScalpingOpportunityPipeline(discovery, BinanceScalpingCandleSource(_PublicBinanceKlineProvider()), decision_engine=ScalpingDecisionEngine(scalping_config), pool_manager=ScalpingCandidatePoolManager(scalping_config))
         initial = pipeline.discover()
-        symbols = initial.candidates and initial.candidates
-        selected_symbols = tuple(c.symbol for c in symbols)
+        selected_symbols = tuple(candidate.symbol for candidate in initial.candidates)
         if not selected_symbols:
             raise RuntimeError("D1 scalping pipeline returned no active opportunities")
         runtime = PaperRealtimeLifecycle(ledger=PaperLedger(starting_equity=config.starting_capital))
@@ -289,7 +279,7 @@ class Paper8HRunner:
         except Exception as exc:
             self.log.write("signal_cycle_failure", error=f"{type(exc).__name__}: {exc}", fail_closed=True, rejection_reason="MARKET_DATA_FAILURE")
             return
-        selected = opportunities.symbols()
+        selected = tuple(candidate.symbol for candidate in opportunities.candidates)
         added = tuple(s for s in selected if s not in self.previous_top_symbols)
         removed = tuple(s for s in self.previous_top_symbols if s not in selected)
         if added or removed or selected != self.previous_top_symbols:
@@ -321,8 +311,7 @@ class Paper8HRunner:
             if not trace.entry_allowed or candidate.entry_state not in {"A", "A+"}:
                 self.log.write("entry_rejected", symbol=candidate.symbol, entry_state=candidate.entry_state, entry_allowed=trace.entry_allowed, rejection_reasons=tuple(r.value for r in trace.rejection_reasons))
                 continue
-            decision = {"decision": "BUY"}
-            snapshot, audit = self._allocation_snapshot(candidate, decision, price, self.previous_signals.get(candidate.symbol))
+            snapshot, audit = self._allocation_snapshot(candidate, {"decision": "BUY"}, price, self.previous_signals.get(candidate.symbol))
             if snapshot is None:
                 continue
             self.previous_signals[candidate.symbol] = snapshot
