@@ -86,8 +86,7 @@ class PaperRunnerCapitalBridge:
                 line = raw.strip()
                 if not line:
                     continue
-                event = json.loads(line)
-                self._apply_journal_event(event)
+                self._apply_journal_event(json.loads(line))
 
     def _apply_journal_event(self, event: dict[str, object]) -> None:
         kind = str(event.get("type", ""))
@@ -97,7 +96,16 @@ class PaperRunnerCapitalBridge:
         if kind == "RESERVE":
             if self._allocation_state.get(allocation_id) in {"RELEASED", "FILLED", "EXITED"}:
                 return
-            self._pending_notional[allocation_id] = float(event["final_order_notional"])
+            candidate = AllocationCandidate(
+                symbol=str(event["symbol"]),
+                rank=int(event.get("rank", 1)),
+                opportunity_score=float(event.get("opportunity_score", 0.0)),
+                intent=str(event.get("intent", "ENTRY")),
+            )
+            audit = self.manager.calculate(candidate, float(event["required_symbol_minimum"]))
+            if not audit.accepted or audit.allocation_id != allocation_id or abs(audit.final_order_notional - float(event["final_order_notional"])) > 1e-9:
+                raise ValueError("invalid durable capital reservation journal state")
+            self._pending_notional[allocation_id] = audit.final_order_notional
             self._allocation_state[allocation_id] = "RESERVED"
         elif kind == "BIND":
             order_id = str(event["order_id"])
@@ -109,7 +117,10 @@ class PaperRunnerCapitalBridge:
                 self._allocation_state[allocation_id] = "BOUND"
         elif kind == "FILL":
             order_id = str(event["order_id"])
+            if self._allocation_state.get(allocation_id) == "FILLED":
+                return
             self._pending_notional.pop(allocation_id, None)
+            self.manager.on_fill(allocation_id)
             self._allocation_state[allocation_id] = "FILLED"
             if order_id:
                 self._order_to_allocation[order_id] = allocation_id
@@ -121,12 +132,16 @@ class PaperRunnerCapitalBridge:
             if order_id is not None:
                 self._order_to_allocation.pop(order_id, None)
             self._pending_notional.pop(allocation_id, None)
+            self.manager.on_cancel(allocation_id)
             self._allocation_state[allocation_id] = "RELEASED"
         elif kind == "EXIT":
+            if self._allocation_state.get(allocation_id) == "EXITED":
+                return
             order_id = self._allocation_to_order.pop(allocation_id, None)
             if order_id is not None:
                 self._order_to_allocation.pop(order_id, None)
             self._pending_notional.pop(allocation_id, None)
+            self.manager.on_exit(allocation_id)
             self._allocation_state[allocation_id] = "EXITED"
 
     def sync_policy_positions(self) -> None:
@@ -160,6 +175,8 @@ class PaperRunnerCapitalBridge:
                     "type": "RESERVE",
                     "allocation_id": audit.allocation_id,
                     "symbol": audit.symbol,
+                    "rank": rank,
+                    "opportunity_score": opportunity_score,
                     "intent": audit.intent,
                     "desired_allocation": audit.desired_allocation,
                     "required_symbol_minimum": audit.required_symbol_minimum,
