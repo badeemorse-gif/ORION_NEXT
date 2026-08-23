@@ -1,9 +1,14 @@
 import asyncio
 import json
+import sys
 import tempfile
 import unittest
 from datetime import timedelta
 from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
 
 from integration.paper_capital_runner_bridge import PaperRunnerCapitalBridge
 from integration.paper_experiment import (
@@ -111,8 +116,6 @@ class TestPaperCapitalCrashWindows(unittest.TestCase):
             live = self._new_bridge(journal)
             audit = live.allocation_for(symbol="BTCUSDT", rank=1, opportunity_score=90.0, required_symbol_minimum=0.0)
             self.assertTrue(audit.accepted)
-
-            # Process-stop boundary: discard the live bridge and construct a fresh runtime.
             recovered = self._new_bridge(journal)
             self.assertEqual(recovered.pending_reserved, 5.0)
             self.assertEqual(recovered._allocation_state[audit.allocation_id], "RESERVED")
@@ -121,7 +124,6 @@ class TestPaperCapitalCrashWindows(unittest.TestCase):
             self.assertEqual(recovered.audit_state()["reserved_capital"], 0.0)
             events = [json.loads(line) for line in journal.read_text(encoding="utf-8").splitlines() if line.strip()]
             self.assertEqual([event["type"] for event in events], ["RESERVE", "RELEASE"])
-
             recovered_again = self._new_bridge(journal)
             self.assertEqual(recovered_again.audit_state(), recovered.audit_state())
 
@@ -131,8 +133,6 @@ class TestPaperCapitalCrashWindows(unittest.TestCase):
             live = self._new_bridge(journal)
             audit = live.allocation_for(symbol="ETHUSDT", rank=2, opportunity_score=80.0, required_symbol_minimum=0.0)
             live.bind_order(audit.allocation_id, "ENTRY-ORDER-1")
-
-            # Process-stop boundary: all in-memory mappings are discarded.
             recovered = self._new_bridge(journal)
             self.assertEqual(recovered._allocation_state[audit.allocation_id], "BOUND")
             self.assertEqual(recovered._allocation_to_order[audit.allocation_id], "ENTRY-ORDER-1")
@@ -182,7 +182,6 @@ class TestPaperRunnerNetworkFailureMatrix(unittest.TestCase):
                     self.assertEqual(failure["rejection_reason"], "MARKET_DATA_FAILURE")
                 finally:
                     runner.log.close()
-
         asyncio.run(run_case())
 
     def test_dns_failure_fail_closed(self):
