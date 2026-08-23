@@ -1,3 +1,4 @@
+# Issue #93: readiness semantics preserved on approved release-candidate lineage.
 import asyncio
 import json
 import sys
@@ -52,33 +53,15 @@ class TestPaperExperimentContract(unittest.TestCase):
 
     def test_metrics_are_semantic_and_deterministic(self):
         observation = PaperExperimentObservation(
-            opportunity_evaluated=10,
-            opportunity_accepted=4,
-            entry_evaluated=4,
-            entry_accepted=3,
-            actionable_outcomes=2,
-            false_negatives=1,
-            strategy_rejections=3,
-            capital_rejections=1,
-            pause_rejections=2,
-            duplicate_rejections=1,
-            market_data_failures=2,
-            recovery_count=3,
-            duplicate_event_count=1,
-            committed_capital_samples=(5.0, 10.0, 7.0),
-            closed_trade_pnl=(2.0, -1.0, 3.0),
-            hold_seconds=(60.0, 120.0, 180.0),
+            opportunity_evaluated=10, opportunity_accepted=4, entry_evaluated=4, entry_accepted=3,
+            actionable_outcomes=2, false_negatives=1, strategy_rejections=3, capital_rejections=1,
+            pause_rejections=2, duplicate_rejections=1, market_data_failures=2, recovery_count=3,
+            duplicate_event_count=1, committed_capital_samples=(5.0, 10.0, 7.0),
+            closed_trade_pnl=(2.0, -1.0, 3.0), hold_seconds=(60.0, 120.0, 180.0),
         )
-        account = {
-            "starting_equity": 50.0,
-            "ending_equity": 54.0,
-            "realized_pnl": 4.0,
-            "unrealized_pnl": 0.0,
-            "fees": 0.1,
-            "slippage": 0.2,
-            "maximum_drawdown": 1.5,
-            "fills": 6,
-        }
+        account = {"starting_equity": 50.0, "ending_equity": 54.0, "realized_pnl": 4.0,
+                   "unrealized_pnl": 0.0, "fees": 0.1, "slippage": 0.2,
+                   "maximum_drawdown": 1.5, "fills": 6}
         a = build_metrics(account=account, observation=observation)
         b = build_metrics(account=account, observation=observation)
         self.assertEqual(a, b)
@@ -95,7 +78,9 @@ class TestPaperExperimentContract(unittest.TestCase):
 
     def test_ab_comparison_is_neutral_and_structurally_compatible(self):
         observation = PaperExperimentObservation(closed_trade_pnl=(1.0, -0.5))
-        account = {"starting_equity": 50.0, "ending_equity": 50.5, "realized_pnl": 0.5, "unrealized_pnl": 0.0, "fees": 0.0, "slippage": 0.0, "maximum_drawdown": 0.0, "fills": 2}
+        account = {"starting_equity": 50.0, "ending_equity": 50.5, "realized_pnl": 0.5,
+                   "unrealized_pnl": 0.0, "fees": 0.0, "slippage": 0.0,
+                   "maximum_drawdown": 0.0, "fills": 2}
         metrics = build_metrics(account=account, observation=observation)
         comparison = PaperABComparison(metrics, metrics)
         self.assertTrue(comparison.structurally_equal())
@@ -106,8 +91,7 @@ class TestPaperCapitalCrashWindows(unittest.TestCase):
     def _new_bridge(self, journal: Path, ledger: PaperLedger | None = None):
         return PaperRunnerCapitalBridge(
             AllocationConfig(starting_capital=50.0, mode=CapitalMode.FIXED_ALLOCATION, fixed_allocation=5.0),
-            ledger or PaperLedger(starting_equity=50.0),
-            journal_path=journal,
+            ledger or PaperLedger(starting_equity=50.0), journal_path=journal,
         )
 
     def test_reserve_stop_recover_preserves_identity_and_releases_once(self):
@@ -147,24 +131,14 @@ class TestPaperCapitalCrashWindows(unittest.TestCase):
 
 class TestPaperRunnerNetworkFailureMatrix(unittest.TestCase):
     def _runner(self, tmp: str, error: Exception) -> Paper8HRunner:
-        config = Paper8HConfig(
-            duration_hours=1.0,
-            starting_capital=50.0,
-            dynamic_universe=True,
-            output_dir=Path(tmp),
-            capital_mode=CapitalMode.FIXED_ALLOCATION,
-            allocation_rate=0.10,
-            top_n=2,
-        )
+        config = Paper8HConfig(duration_hours=1.0, starting_capital=50.0, dynamic_universe=True,
+                               output_dir=Path(tmp), capital_mode=CapitalMode.FIXED_ALLOCATION,
+                               allocation_rate=0.10, top_n=2)
         runtime = PaperRealtimeLifecycle(ledger=PaperLedger(starting_equity=50.0))
         supervisor = PaperRuntimeSupervisor(runtime=runtime)
-        runner = Paper8HRunner(
-            config=config,
-            stream=object(),
-            supervisor=supervisor,
-            opportunity=_FailingOpportunity(error),
-            log=JsonlRunLog(Path(tmp) / "events.jsonl"),
-        )
+        runner = Paper8HRunner(config=config, stream=object(), supervisor=supervisor,
+                               opportunity=_FailingOpportunity(error),
+                               log=JsonlRunLog(Path(tmp) / "events.jsonl"))
         runner.log.open()
         return runner
 
@@ -184,17 +158,10 @@ class TestPaperRunnerNetworkFailureMatrix(unittest.TestCase):
                     runner.log.close()
         asyncio.run(run_case())
 
-    def test_dns_failure_fail_closed(self):
-        self._assert_fail_closed(OSError("DNS resolution failed"))
-
-    def test_timeout_fail_closed(self):
-        self._assert_fail_closed(TimeoutError("market request timed out"))
-
-    def test_market_data_failure_fail_closed(self):
-        self._assert_fail_closed(RuntimeError("market data unavailable"))
-
-    def test_decision_context_failure_fail_closed(self):
-        self._assert_fail_closed(ValueError("decision context unavailable"))
+    def test_dns_failure_fail_closed(self): self._assert_fail_closed(OSError("DNS resolution failed"))
+    def test_timeout_fail_closed(self): self._assert_fail_closed(TimeoutError("market request timed out"))
+    def test_market_data_failure_fail_closed(self): self._assert_fail_closed(RuntimeError("market data unavailable"))
+    def test_decision_context_failure_fail_closed(self): self._assert_fail_closed(ValueError("decision context unavailable"))
 
 
 if __name__ == "__main__":
