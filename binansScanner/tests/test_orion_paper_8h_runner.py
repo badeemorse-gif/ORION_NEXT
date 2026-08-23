@@ -100,7 +100,7 @@ class TestPaper8HRunnerE2E(unittest.IsolatedAsyncioTestCase):
         self.tempdir = tempfile.TemporaryDirectory()
         config = Paper8HConfig(output_dir=Path(self.tempdir.name))
         runtime = PaperRealtimeLifecycle(ledger=PaperLedger(starting_equity=200.0))
-        supervisor = PaperRuntimeSupervisor(runtime=runtime)
+        supervisor = PaperRuntimeSupervisor(runtime=runtime, control_path=Path(self.tempdir.name) / "trading_control.json")
         self.opportunity = FakeScalpingOpportunity()
         self.runner = Paper8HRunner(config=config, stream=DynamicMarketStream(("BTCUSDT",)), supervisor=supervisor, opportunity=self.opportunity, log=JsonlRunLog(Path(self.tempdir.name) / "events.jsonl"), previous_top_symbols=("BTCUSDT",))
         self.runner.log.open()
