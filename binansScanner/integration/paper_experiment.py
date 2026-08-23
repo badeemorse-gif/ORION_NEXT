@@ -233,9 +233,24 @@ class PaperABComparison:
     improved: PaperExperimentMetrics
 
     def delta(self, field_name: str) -> float:
+        """Return the deterministic improved-minus-baseline metric delta.
+
+        ``profit_factor`` may legitimately be ``+inf`` when there are profits
+        and no losses. IEEE ``inf - inf`` would yield ``NaN``, which is not a
+        valid deterministic A/B result. Therefore the comparison contract
+        explicitly maps infinity cases to ``0.0`` when both sides are ``+inf``
+        and to ``+inf`` when exactly one side is ``+inf``. Finite values retain
+        the normal ``improved - baseline`` delta.
+        """
         if field_name not in self.baseline.as_dict() or field_name in {"trades", "fills"}:
             raise ValueError("field is not a numeric comparison metric")
-        return float(getattr(self.improved, field_name)) - float(getattr(self.baseline, field_name))
+        baseline = float(getattr(self.baseline, field_name))
+        improved = float(getattr(self.improved, field_name))
+        if field_name == "profit_factor" and (baseline == float("inf") or improved == float("inf")):
+            if baseline == float("inf") and improved == float("inf"):
+                return 0.0
+            return float("inf")
+        return improved - baseline
 
     def structurally_equal(self) -> bool:
         left = self.baseline.as_dict()
