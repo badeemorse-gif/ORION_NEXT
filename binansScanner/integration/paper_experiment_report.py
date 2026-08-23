@@ -1,0 +1,63 @@
+"""Assembly boundary for deterministic paper A/B experiment reports."""
+from __future__ import annotations
+
+from dataclasses import dataclass
+from datetime import timedelta
+from pathlib import Path
+from typing import Any, Mapping
+
+from integration.paper_experiment import PaperExperimentConfig, PaperExperimentMetrics, PaperExperimentObservation, build_metrics
+from models.capital_management import CapitalMode
+
+
+@dataclass(frozen=True, slots=True)
+class PaperExperimentReport:
+    config: PaperExperimentConfig
+    metrics: PaperExperimentMetrics
+    recovery_verified: bool
+    no_live_execution: bool
+
+    def as_dict(self) -> dict[str, Any]:
+        payload = {
+            "experiment": {
+                "experiment_id": self.config.experiment_id,
+                "starting_capital": self.config.starting_capital,
+                "capital_mode": self.config.capital_mode.value,
+                "allocation_rate": self.config.allocation_rate,
+                "fixed_allocation": self.config.fixed_allocation,
+                "broad_pool_size": self.config.broad_pool_size,
+                "active_top_n": self.config.active_top_n,
+                "run_duration_seconds": self.config.run_duration.total_seconds(),
+                "universe_mode": self.config.universe_mode,
+                "output_dir": str(self.config.output_dir),
+            },
+            "metrics": self.metrics.as_dict(),
+            "verification": {
+                "recovery_verified": self.recovery_verified,
+                "no_live_execution": self.no_live_execution,
+            },
+        }
+        return payload
+
+
+def report_from_runner(*, config: PaperExperimentConfig, runner_report: Mapping[str, Any], observation: PaperExperimentObservation, recovery_verified: bool, no_live_execution: bool) -> PaperExperimentReport:
+    """Build an experiment report from canonical runner/accounting output.
+
+    The adapter deliberately consumes runner output instead of recalculating
+    accounting state, preserving PaperLedger and CapitalManager authority.
+    """
+    account = {
+        "starting_equity": runner_report["starting_equity"],
+        "ending_equity": runner_report["ending_equity"],
+        "realized_pnl": runner_report["realized_pnl"],
+        "unrealized_pnl": runner_report["unrealized_pnl"],
+        "fees": runner_report["fees"],
+        "slippage": runner_report["slippage"],
+        "maximum_drawdown": runner_report.get("maximum_drawdown", runner_report.get("max_drawdown", 0.0)),
+        "fills": runner_report.get("fills", 0),
+    }
+    metrics = build_metrics(account=account, observation=observation)
+    return PaperExperimentReport(config=config, metrics=metrics, recovery_verified=recovery_verified, no_live_execution=no_live_execution)
+
+
+__all__ = ["PaperExperimentReport", "report_from_runner"]
