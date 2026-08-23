@@ -274,10 +274,9 @@ class Paper8HRunner:
             price = self.last_prices.get(candidate.symbol)
             if price is None or price <= 0: continue
             active_position = self.supervisor.runtime.positions.active_for_symbol(candidate.symbol)
-            if active_position is not None and not trace.entry_allowed:
-                exit_order_id = self.supervisor.runtime.exit_position(symbol=candidate.symbol, price=price, now=event.event_timestamp); self.capital.ledger = self.supervisor.runtime.ledger; self.capital.on_exit_symbol(candidate.symbol); self.log.write("order_lifecycle", action="EXIT_SELL", order_id=exit_order_id, symbol=candidate.symbol, price=price, quantity=active_position.quantity, exit_trigger="D1_ENTRY_NOT_ALLOWED"); continue
             if active_position is not None:
-                self.log.write("allocation_rejected", symbol=candidate.symbol, reason="DUPLICATE_ALLOCATION", existing_position=True); continue
+                self.log.write("allocation_rejected", symbol=candidate.symbol, reason="DUPLICATE_ALLOCATION", existing_position=True, entry_allowed=trace.entry_allowed, entry_state=candidate.entry_state)
+                continue
             if not trace.entry_allowed or candidate.entry_state not in {"A", "A+"}:
                 self.log.write("entry_rejected", symbol=candidate.symbol, entry_state=candidate.entry_state, entry_allowed=trace.entry_allowed, rejection_reasons=tuple(r.value for r in trace.rejection_reasons)); continue
             snapshot, audit = self._allocation_snapshot(candidate, {"decision": "BUY"}, price, self.previous_signals.get(candidate.symbol))
