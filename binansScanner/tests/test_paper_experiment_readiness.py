@@ -194,6 +194,51 @@ class TestPaperExperimentContract(unittest.TestCase):
         self.assertTrue(comparison.structurally_equal())
         self.assertAlmostEqual(comparison.delta("ending_equity"), 0.0)
 
+    def test_ab_profit_factor_delta_finite_vs_finite_is_improved_minus_baseline(self):
+        observation_baseline = PaperExperimentObservation(closed_trade_pnl=(2.0, -1.0))
+        observation_improved = PaperExperimentObservation(closed_trade_pnl=(4.0, -1.0))
+        account = {
+            "starting_equity": 50.0, "ending_equity": 50.0, "realized_pnl": 0.0,
+            "unrealized_pnl": 0.0, "fees": 0.0, "slippage": 0.0,
+            "maximum_drawdown": 0.0,
+        }
+        baseline = build_metrics(account=account, observation=observation_baseline)
+        improved = build_metrics(account=account, observation=observation_improved)
+        self.assertEqual(PaperABComparison(baseline, improved).delta("profit_factor"), 2.0)
+
+    def test_ab_profit_factor_delta_infinity_vs_finite_is_positive_infinity(self):
+        account = {
+            "starting_equity": 50.0, "ending_equity": 50.0, "realized_pnl": 0.0,
+            "unrealized_pnl": 0.0, "fees": 0.0, "slippage": 0.0,
+            "maximum_drawdown": 0.0,
+        }
+        baseline = build_metrics(account=account, observation=PaperExperimentObservation(closed_trade_pnl=(2.0,)))
+        improved = build_metrics(account=account, observation=PaperExperimentObservation(closed_trade_pnl=(2.0, -1.0)))
+        self.assertEqual(PaperABComparison(baseline, improved).delta("profit_factor"), float("inf"))
+
+    def test_ab_profit_factor_delta_finite_vs_infinity_is_positive_infinity(self):
+        account = {
+            "starting_equity": 50.0, "ending_equity": 50.0, "realized_pnl": 0.0,
+            "unrealized_pnl": 0.0, "fees": 0.0, "slippage": 0.0,
+            "maximum_drawdown": 0.0,
+        }
+        baseline = build_metrics(account=account, observation=PaperExperimentObservation(closed_trade_pnl=(2.0, -1.0)))
+        improved = build_metrics(account=account, observation=PaperExperimentObservation(closed_trade_pnl=(2.0,)))
+        self.assertEqual(PaperABComparison(baseline, improved).delta("profit_factor"), float("inf"))
+
+    def test_ab_profit_factor_delta_infinity_vs_infinity_is_deterministic_zero(self):
+        account = {
+            "starting_equity": 50.0, "ending_equity": 50.0, "realized_pnl": 0.0,
+            "unrealized_pnl": 0.0, "fees": 0.0, "slippage": 0.0,
+            "maximum_drawdown": 0.0,
+        }
+        metrics = build_metrics(account=account, observation=PaperExperimentObservation(closed_trade_pnl=(2.0,)))
+        comparison = PaperABComparison(metrics, metrics)
+        delta = comparison.delta("profit_factor")
+        self.assertEqual(delta, 0.0)
+        self.assertFalse(math.isnan(delta))
+        self.assertEqual(delta, comparison.delta("profit_factor"))
+
 
 class TestPaperCapitalCrashWindows(unittest.TestCase):
     def _new_bridge(self, journal: Path, ledger: PaperLedger | None = None):
