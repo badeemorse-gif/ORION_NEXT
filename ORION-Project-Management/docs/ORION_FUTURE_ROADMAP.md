@@ -1,6 +1,6 @@
 # ORION — FUTURE ROADMAP
 
-الإصدار: 1.2
+الإصدار: 1.3
 الحالة: ACTIVE — FUTURE PLANNING ONLY
 المشروع: ORION
 
@@ -188,6 +188,50 @@ Scale / Harvest
 مع إمكان الاستفادة من WebSocket مباشر وطبقات Micro-Structure / Acceleration / Volume Burst / Pullback Reclaim.
 
 السرعة هنا **نتيجة لتضييق نطاق الرصد والتخصص**، وليست مجرد خفض thresholds عشوائيًا.
+
+### Persistent State / Restart Continuity
+
+يجب ألا يتعامل Trend Harvester بعد إعادة التشغيل مع الرمز كما لو أنه يراه للمرة الأولى.
+
+التصميم المستهدف يحافظ على **Persistent Strategy State** منفصلًا عن بيانات الشموع الخام، بحيث يمكن بعد Restart استعادة:
+
+```text
+Last Processed Event / Candle
+Historical Context Required by the Strategy
+Active Regime State
+Core Position State
+Trading Inventory State
+Pending Strategy Intent
+Protected Profit / Trailing State
+```
+
+عند التشغيل الطبيعي:
+
+```text
+Load durable strategy state
+↓
+Load only the recent market history required to re-establish context
+↓
+Reconcile with live market stream
+↓
+Resume from the last durable event boundary
+```
+
+ولا يُفترض إعادة تحليل كامل السوق التاريخي من الصفر في كل Restart.
+
+في المقابل، إذا لم يوجد state محفوظ سابقًا، يبدأ النظام بمرحلة **initial context warm-up** قبل السماح بالـHarvesting الكامل.
+
+يجب أن تكون إعادة التشغيل:
+
+```text
+Idempotent
+Replay-safe
+No duplicate entry
+No duplicate harvest
+No duplicate release
+```
+
+ويجب أن يبقى Position / Core / Inventory state قابلًا للاستعادة حتى لو حدث توقف بين قرارات أو أوامر مرحلية.
 
 ### حدود المسؤولية
 
