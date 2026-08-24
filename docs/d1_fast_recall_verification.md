@@ -1,1 +1,0 @@
-Temporary canonical verification note.
