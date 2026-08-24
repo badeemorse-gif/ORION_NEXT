@@ -32,6 +32,8 @@ class RejectionReason(str, Enum):
     MARKET_DATA_FAILURE = "MARKET_DATA_FAILURE"
     DIRECTIONAL_CONFLICT = "DIRECTIONAL_CONFLICT"
     DIRECTIONAL_INSUFFICIENT = "DIRECTIONAL_INSUFFICIENT"
+    CLASSIFICATION_INSUFFICIENT = "CLASSIFICATION_INSUFFICIENT"
+    ENTRY_STATE_CONFLICT = "ENTRY_STATE_CONFLICT"
 
 
 @dataclass(frozen=True, slots=True)
@@ -92,6 +94,8 @@ class ScalpingCandidateSet:
     broad_pool: OpportunityCandidateSet
     active_set: OpportunityCandidateSet
     refreshed: bool
+    recall_provenance: tuple[tuple[str, tuple[str, ...]], ...] = ()
+    recall_counts: tuple[tuple[str, int], ...] = ()
 
     @property
     def candidates(self) -> tuple[OpportunityCandidate, ...]:
@@ -206,4 +210,5 @@ def enrich_candidate(
         risk_reward,
         timeframe_evidence,
         decision_trace,
+        candidate.recall_lanes,
     )
