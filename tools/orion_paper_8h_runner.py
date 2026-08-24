@@ -20,6 +20,7 @@ if str(_BINANS_SCANNER) not in sys.path:
 from enums import Timeframe
 from integration.paper_capital_runner_bridge import PaperRunnerCapitalBridge
 from integration.paper_realtime_lifecycle import PaperRealtimeLifecycle
+from integration.paper_recovery_verification import verify_recovery
 from integration.paper_runtime_supervisor import PaperRuntimeSupervisor
 from integration.trading_control import TradingState
 from models.capital_management import AllocationConfig, CapitalMode
@@ -135,7 +136,7 @@ class JsonlRunLog:
         self._handle.write(json.dumps({"timestamp": datetime.now(UTC).isoformat(), "event_type": record_type, **payload}, sort_keys=True, default=str) + "\n")
         self._handle.flush()
 
-    def close(self) ->None:
+    def close(self) -> None:
         if self._handle is not None:
             self._handle.close()
             self._handle = None
@@ -297,11 +298,27 @@ class Paper8HRunner:
 
     def _finalize(self, runner: MarketStreamRunner) -> dict[str, Any]:
         assert self.capital is not None
-        state = self._account_state(); original = self.supervisor.replay_state(); recovered = self.supervisor.recover(); recovered_again = recovered.recover()
-        replay_equal = original == recovered.replay_state(); repeat_equal = recovered.replay_state() == recovered_again.replay_state(); capital_original = self.capital.audit_state(); capital_recovered = self.capital.recover(recovered.runtime.ledger).audit_state(); capital_recovered_again = self.capital.recover(recovered.runtime.ledger).recover(recovered_again.runtime.ledger).audit_state(); capital_replay_equal = capital_original == capital_recovered == capital_recovered_again; health = self.supervisor.health
-        if not replay_equal or not repeat_equal or not capital_replay_equal: raise RuntimeError("recovery/replay verification failed")
-        if not health.paper_only: raise RuntimeError("paper-only safety contract failed")
-        return {"starting_equity": state.starting_equity, "ending_equity": self._marked_equity(state), "realized_pnl": state.realized_pnl, "unrealized_pnl": state.unrealized_pnl, "fees": state.cumulative_fees, "slippage": state.cumulative_slippage, "max_drawdown": self.maximum_drawdown, "orders": len(self.supervisor.runtime.orders.events), "fills": sum(1 for e in self.supervisor.runtime.orders.events if e.event_type == "ORDER_FILLED"), "cancelled_replaced_orders": sum(1 for e in self.supervisor.runtime.orders.events if e.event_type in {"ORDER_CANCELLED", "ORDER_REPLACED"}), "open_position_at_end": [p.symbol for p in state.positions if p.quantity > 0], "reconnect_count": runner.stats.reconnects, "duplicate_event_count": runner.stats.duplicates, "runtime_health": health.healthy, "paper_only": health.paper_only, "runtime_failure": self.runtime_failure, "replay_equal_after_recovery": replay_equal, "replay_equal_after_repeated_recovery": repeat_equal, "capital_replay_equal": capital_replay_equal, "capital_state": capital_original, "last_market_event_id": health.last_market_event_id}
+        state = self._account_state()
+        original = self.supervisor.replay_state()
+        recovered = self.supervisor.recover()
+        recovered_again = recovered.recover()
+        capital_original = self.capital.audit_state()
+        capital_recovered = self.capital.recover(recovered.runtime.ledger).audit_state()
+        capital_recovered_again = self.capital.recover(recovered.runtime.ledger).recover(recovered_again.runtime.ledger).audit_state()
+        verification = verify_recovery(
+            canonical_runtime=original,
+            recovered_runtime=recovered.replay_state(),
+            repeated_runtime=recovered_again.replay_state(),
+            canonical_capital=capital_original,
+            recovered_capital=capital_recovered,
+            repeated_capital=capital_recovered_again,
+            paper_only=self.supervisor.health.paper_only,
+        )
+        if not verification.passed:
+            self.log.write("recovery_verification_failed", **verification.as_dict())
+            raise RuntimeError("recovery/replay verification failed: " + "; ".join(verification.failure_reasons))
+        health = self.supervisor.health
+        return {"starting_equity": state.starting_equity, "ending_equity": self._marked_equity(state), "realized_pnl": state.realized_pnl, "unrealized_pnl": state.unrealized_pnl, "fees": state.cumulative_fees, "slippage": state.cumulative_slippage, "max_drawdown": self.maximum_drawdown, "orders": len(self.supervisor.runtime.orders.events), "fills": sum(1 for e in self.supervisor.runtime.orders.events if e.event_type == "ORDER_FILLED"), "cancelled_replaced_orders": sum(1 for e in self.supervisor.runtime.orders.events if e.event_type in {"ORDER_CANCELLED", "ORDER_REPLACED"}), "open_position_at_end": [p.symbol for p in state.positions if p.quantity > 0], "reconnect_count": runner.stats.reconnects, "duplicate_event_count": runner.stats.duplicates, "runtime_health": health.healthy, "paper_only": health.paper_only, "runtime_failure": self.runtime_failure, "runtime_replay_equal": verification.runtime_replay_equal, "runtime_repeat_recovery_equal": verification.runtime_repeat_recovery_equal, "capital_replay_equal": verification.capital_replay_equal, "paper_only_verification": verification.paper_only, "recovery_failure_reasons": verification.failure_reasons, "capital_state": capital_original, "last_market_event_id": health.last_market_event_id}
 
 
 def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
