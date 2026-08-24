@@ -3,8 +3,14 @@ from __future__ import annotations
 import unittest
 
 from models.opportunity import MarketMetrics, OpportunityCandidate
-from models.scalping_opportunity import DecisionTrace, EntryState, OpportunityClass, RejectionReason
-from services.scalping_opportunity import ScalpingConfig
+from models.scalping_opportunity import (
+    DecisionTrace,
+    EntryState,
+    OpportunityClass,
+    RejectionReason,
+    TimeframeEvidence,
+)
+from services.scalping_opportunity import ScalpingConfig, ScalpingDecisionEngine
 from services.scalping_pipeline import FastRecall, ScalpingOpportunityPipeline
 
 
@@ -96,19 +102,43 @@ class FastRecallTests(unittest.TestCase):
 class ClassificationIntegrityTests(unittest.TestCase):
     def setUp(self) -> None:
         self.pipeline = ScalpingOpportunityPipeline.__new__(ScalpingOpportunityPipeline)
-        self.pipeline.decision_engine = type("Engine", (), {"config": ScalpingConfig()})()
+        self.pipeline.decision_engine = ScalpingDecisionEngine(ScalpingConfig())
 
     @staticmethod
+    def _evidence(**overrides) -> tuple[TimeframeEvidence, ...]:
+        defaults = {
+            "1d": dict(regime_score=0.20, trend_score=0.20, trend_direction=0.10, momentum_score=0.20,
+                       momentum_direction=0.10, acceleration_score=0.10, volume_expansion=0.10,
+                       range_expansion=0.10, structure_score=0.20, supertrend_evidence=0.0, atr=1.0),
+            "4h": dict(regime_score=0.20, trend_score=0.20, trend_direction=0.10, momentum_score=0.20,
+                       momentum_direction=0.10, acceleration_score=0.10, volume_expansion=0.10,
+                       range_expansion=0.10, structure_score=0.20, supertrend_evidence=0.0, atr=1.0),
+            "1h": dict(regime_score=0.20, trend_score=0.20, trend_direction=0.10, momentum_score=0.20,
+                       momentum_direction=0.10, acceleration_score=0.10, volume_expansion=0.10,
+                       range_expansion=0.10, structure_score=0.20, supertrend_evidence=0.0, atr=1.0),
+            "15m": dict(regime_score=0.20, trend_score=0.20, trend_direction=0.10, momentum_score=0.20,
+                        momentum_direction=0.10, acceleration_score=0.10, volume_expansion=0.10,
+                        range_expansion=0.10, structure_score=0.20, supertrend_evidence=0.0, atr=1.0),
+        }
+        for timeframe, changes in overrides.items():
+            defaults[timeframe] = {**defaults[timeframe], **changes}
+        return tuple(
+            TimeframeEvidence(timeframe, **defaults[timeframe])
+            for timeframe in ("1d", "4h", "1h", "15m")
+        )
+
+    @classmethod
     def _candidate(
+        cls,
         state: EntryState,
         allowed: bool,
         *,
         score: float = 75.0,
         readiness: float = 0.70,
         directional: float = 0.30,
-        evidence_count: int = 4,
+        evidence: tuple[TimeframeEvidence, ...] | None = None,
     ) -> OpportunityCandidate:
-        evidence = tuple(object() for _ in range(evidence_count))
+        evidence = cls._evidence() if evidence is None else evidence
         trace = DecisionTrace(
             True,
             True,
@@ -137,6 +167,49 @@ class ClassificationIntegrityTests(unittest.TestCase):
             trace,
         )
 
+    def test_classifiable_trend_continuation_is_recovered_from_exact_predicates(self):
+        evidence = self._evidence(
+            **{
+                "1d": {"regime_score": 0.60},
+                "4h": {"trend_score": 0.60},
+                "1h": {"trend_score": 0.60, "momentum_score": 0.50},
+            }
+        )
+        result = self.pipeline._classification_integrity(self._candidate(EntryState.A, False, evidence=evidence))
+        self.assertEqual(result.opportunity_class, OpportunityClass.TREND_CONTINUATION.value)
+        self.assertNotIn("classification_fallback_trend_continuation", result.decision_trace.reasons)
+        self.assertIn("classification_revalidated_from_class_specific_evidence", result.decision_trace.reasons)
+
+    def test_classifiable_breakout_is_recovered_from_exact_predicates(self):
+        evidence = self._evidence(
+            **{
+                "1h": {"acceleration_score": 0.50},
+                "15m": {"volume_expansion": 0.60, "range_expansion": 0.60},
+            }
+        )
+        result = self.pipeline._classification_integrity(self._candidate(EntryState.A, False, evidence=evidence))
+        self.assertEqual(result.opportunity_class, OpportunityClass.BREAKOUT_ACCELERATION.value)
+
+    def test_classifiable_pullback_is_recovered_from_exact_predicates(self):
+        evidence = self._evidence(
+            **{
+                "1h": {"trend_score": 0.60},
+                "15m": {"momentum_score": 0.40, "structure_score": 0.50, "acceleration_score": 0.30},
+            }
+        )
+        result = self.pipeline._classification_integrity(self._candidate(EntryState.A, False, evidence=evidence))
+        self.assertEqual(result.opportunity_class, OpportunityClass.PULLBACK_CONTINUATION.value)
+
+    def test_high_quality_but_non_classifiable_is_unclassified_with_explicit_reason(self):
+        result = self.pipeline._classification_integrity(
+            self._candidate(EntryState.A, False, score=95.0, readiness=0.95, directional=0.50)
+        )
+        self.assertEqual(result.opportunity_class, OpportunityClass.UNCLASSIFIED.value)
+        self.assertEqual(result.entry_state, EntryState.C.value)
+        self.assertFalse(result.decision_trace.entry_allowed)
+        self.assertIn(RejectionReason.CLASSIFICATION_INSUFFICIENT, result.decision_trace.rejection_reasons)
+        self.assertIn("classification_insufficient_evidence", result.decision_trace.reasons)
+
     def test_c_never_produces_entry_allowed_true(self):
         result = self.pipeline._classification_integrity(self._candidate(EntryState.C, True))
         self.assertFalse(result.decision_trace.entry_allowed)
@@ -147,20 +220,12 @@ class ClassificationIntegrityTests(unittest.TestCase):
         self.assertFalse(result.decision_trace.entry_allowed)
         self.assertIn(RejectionReason.ENTRY_STATE_CONFLICT, result.decision_trace.rejection_reasons)
 
-    def test_high_quality_opportunity_is_not_silently_left_unclassified(self):
-        result = self.pipeline._classification_integrity(self._candidate(EntryState.A, False))
-        self.assertNotEqual(result.opportunity_class, OpportunityClass.UNCLASSIFIED.value)
-        self.assertIn("classification_fallback_trend_continuation", result.decision_trace.reasons)
-
-    def test_insufficient_classification_is_explicit_and_deterministic(self):
-        candidate = self._candidate(EntryState.C, False, score=20.0, readiness=0.10, evidence_count=0, directional=0.0)
+    def test_repeated_classification_is_deterministic(self):
+        candidate = self._candidate(EntryState.A, False)
         first = self.pipeline._classification_integrity(candidate)
         second = self.pipeline._classification_integrity(candidate)
-        self.assertEqual(first.opportunity_class, OpportunityClass.UNCLASSIFIED.value)
-        self.assertEqual(first.entry_state, EntryState.C.value)
-        self.assertFalse(first.decision_trace.entry_allowed)
-        self.assertIn(RejectionReason.CLASSIFICATION_INSUFFICIENT, first.decision_trace.rejection_reasons)
-        self.assertEqual(first.decision_trace.reasons, second.decision_trace.reasons)
+        self.assertEqual(first, second)
+        self.assertEqual(first.decision_trace, second.decision_trace)
 
 
 if __name__ == "__main__":
