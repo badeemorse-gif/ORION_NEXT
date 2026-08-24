@@ -32,6 +32,8 @@ class RejectionReason(str, Enum):
     MARKET_DATA_FAILURE = "MARKET_DATA_FAILURE"
     DIRECTIONAL_CONFLICT = "DIRECTIONAL_CONFLICT"
     DIRECTIONAL_INSUFFICIENT = "DIRECTIONAL_INSUFFICIENT"
+    CLASSIFICATION_INSUFFICIENT = "CLASSIFICATION_INSUFFICIENT"
+    ENTRY_STATE_CONFLICT = "ENTRY_STATE_CONFLICT"
 
 
 @dataclass(frozen=True, slots=True)
@@ -92,6 +94,8 @@ class ScalpingCandidateSet:
     broad_pool: OpportunityCandidateSet
     active_set: OpportunityCandidateSet
     refreshed: bool
+    recall_provenance: tuple[tuple[str, tuple[str, ...]], ...] = ()
+    recall_counts: tuple[tuple[str, int], ...] = ()
 
     @property
     def candidates(self) -> tuple[OpportunityCandidate, ...]:
@@ -100,17 +104,7 @@ class ScalpingCandidateSet:
 
 @dataclass(frozen=True, slots=True)
 class ReplayEvent:
-    """One replay observation with explicit metric semantics.
-
-    ``opportunity_captured`` means the opportunity survived discovery/evaluation.
-    ``entry_accepted`` means the entry was actually accepted from that captured opportunity.
-    ``hold_time_hours`` is the realized/observed holding duration for an accepted trade.
-    ``fees_slippage_pct`` is the explicit cost burden attributable to that trade.
-    ``capital_utilization_pct`` is capital committed divided by available capital for
-    the observation window, expressed as a percentage in [0, 100].
-    ``profitable_opportunity`` marks ground-truth opportunities that would have been
-    profitable when evaluated forward; it is used only to measure false negatives.
-    """
+    """One replay observation with explicit metric semantics."""
 
     opportunity_captured: bool
     return_pct: float
@@ -206,4 +200,5 @@ def enrich_candidate(
         risk_reward,
         timeframe_evidence,
         decision_trace,
+        candidate.recall_lanes,
     )
