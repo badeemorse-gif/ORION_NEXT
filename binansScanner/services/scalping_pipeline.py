@@ -74,7 +74,6 @@ class FastRecall:
 
     def recall(self, candidates: Sequence[OpportunityCandidate], *, broad_limit: int) -> RecallResult:
         by_symbol = {candidate.symbol: candidate for candidate in candidates}
-        ordered = tuple(sorted(by_symbol.values(), key=lambda item: (-item.opportunity_score, item.symbol)))
         lane_members: dict[str, tuple[str, ...]] = {}
         for lane in self.LANES:
             limit = self.composite_top_n if lane == "composite_opportunity" else self.lane_top_n
@@ -159,6 +158,18 @@ class ScalpingOpportunityPipeline:
             candidate.recall_lanes,
         )
 
+    def _classify_from_evidence(self, candidate: OpportunityCandidate) -> OpportunityClass:
+        evidence = {}
+        for item in candidate.timeframe_evidence:
+            timeframe = getattr(item, "timeframe", None)
+            if timeframe is None:
+                raise ValueError("classification evidence missing timeframe")
+            evidence[timeframe] = item
+        required = ("1d", "4h", "1h", "15m")
+        if tuple(sorted(evidence)) != tuple(sorted(required)):
+            raise ValueError("classification evidence is incomplete")
+        return self.decision_engine.features._classify(evidence)
+
     def _classification_integrity(self, candidate: OpportunityCandidate) -> OpportunityCandidate:
         trace = candidate.decision_trace
         if not isinstance(trace, DecisionTrace):
@@ -174,24 +185,26 @@ class ScalpingOpportunityPipeline:
             )
             trace = candidate.decision_trace
 
+        # Preserve a valid class returned by the evidence engine. Classification
+        # integrity only repairs candidates that explicitly arrived UNCLASSIFIED.
         if candidate.opportunity_class != OpportunityClass.UNCLASSIFIED.value:
             return candidate
 
-        sufficiently_evidenced = (
-            len(candidate.timeframe_evidence) >= 4
-            and candidate.opportunity_score >= self.decision_engine.config.b_score
-            and candidate.entry_readiness >= self.decision_engine.config.a_readiness
-            and abs(candidate.directional_evidence) >= self.decision_engine.config.directional_long_min
-        )
-        if sufficiently_evidenced:
-            # A sufficiently evidenced but unclassified candidate is conservatively
-            # classified as trend continuation. Entry Readiness/risk/direction remain
-            # unchanged and authoritative.
+        # Re-evaluate the actual class predicates from the immutable evidence already
+        # attached to the candidate. Generic score/readiness thresholds never create a
+        # strategy label.
+        try:
+            classified = self._classify_from_evidence(candidate)
+        except (ValueError, KeyError, TypeError, AttributeError):
+            classified = OpportunityClass.UNCLASSIFIED
+
+        if classified != OpportunityClass.UNCLASSIFIED:
             return self._rebuild(
                 candidate,
-                opportunity_class=OpportunityClass.TREND_CONTINUATION.value,
-                extra_reasons=("classification_fallback_trend_continuation",),
+                opportunity_class=classified.value,
+                extra_reasons=("classification_revalidated_from_class_specific_evidence",),
             )
+
         return self._rebuild(
             candidate,
             entry_state=EntryState.C.value,
