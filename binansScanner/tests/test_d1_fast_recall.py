@@ -138,7 +138,9 @@ class ClassificationIntegrityTests(unittest.TestCase):
         directional: float = 0.30,
         evidence: tuple[TimeframeEvidence, ...] | None = None,
     ) -> OpportunityCandidate:
-        evidence = cls._evidence() if evidence is None else evidence
+        evidence = cls._evidence() if evidence is not None else evidence
+        if evidence is None:
+            evidence = cls._evidence()
         trace = DecisionTrace(
             True,
             True,
