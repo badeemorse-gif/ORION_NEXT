@@ -135,3 +135,5 @@ class D1ThroughputEvidenceBandTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+# D1 throughput verification revision.
