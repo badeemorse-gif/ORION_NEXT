@@ -76,6 +76,45 @@ class ScalpingFeatures:
     supertrend_enabled: bool
 
 
+@dataclass(frozen=True, slots=True)
+class OpportunityThroughputMetrics:
+    """Deterministic discovery/authorization throughput evidence, not execution policy."""
+
+    opportunity_recall_rate: float
+    actionable_opportunity_rate: float
+    false_negative_rate: float
+    entries_per_market_regime: tuple[tuple[str, int], ...]
+
+
+def measure_opportunity_throughput(
+    candidates: Sequence[OpportunityCandidate],
+    *,
+    expected_strong_symbols: Sequence[str] = (),
+    market_regimes: Mapping[str, str] | None = None,
+) -> OpportunityThroughputMetrics:
+    """Measure recall and actionability without imposing any trade quota."""
+    expected = tuple(dict.fromkeys(expected_strong_symbols))
+    by_symbol = {candidate.symbol: candidate for candidate in candidates}
+    recalled = sum(1 for symbol in expected if symbol in by_symbol)
+    actionable = sum(1 for candidate in candidates if isinstance(candidate.decision_trace, DecisionTrace) and candidate.decision_trace.entry_allowed)
+    recall_rate = recalled / len(expected) if expected else 0.0
+    actionable_rate = actionable / len(candidates) if candidates else 0.0
+    false_negative_rate = (len(expected) - sum(1 for symbol in expected if symbol in by_symbol and isinstance(by_symbol[symbol].decision_trace, DecisionTrace) and by_symbol[symbol].decision_trace.entry_allowed)) / len(expected) if expected else 0.0
+    regimes = market_regimes or {}
+    counts: dict[str, int] = {}
+    for candidate in candidates:
+        trace = candidate.decision_trace
+        if isinstance(trace, DecisionTrace) and trace.entry_allowed:
+            regime = regimes.get(candidate.symbol, "unspecified")
+            counts[regime] = counts.get(regime, 0) + 1
+    return OpportunityThroughputMetrics(
+        round(recall_rate, 8),
+        round(actionable_rate, 8),
+        round(false_negative_rate, 8),
+        tuple(sorted(counts.items())),
+    )
+
+
 class ScalpingEvidenceEngine:
     """Pure multi-timeframe feature engine."""
 
@@ -188,6 +227,55 @@ class ScalpingEvidenceEngine:
         reward = abs(target - entry)
         return RiskReward(entry, stop, target, risk, reward, reward / risk if risk else 0.0, risk > 0 and reward > 0)
 
+    @staticmethod
+    def _class_score(evidence: Mapping[str, TimeframeEvidence], cls: OpportunityClass, directional: float) -> float:
+        """Score class-specific evidence coherently; discovery score is never substituted."""
+        e1d, e4h, e1h, e15 = evidence["1d"], evidence["4h"], evidence["1h"], evidence["15m"]
+        direction = max(0.0, directional)
+        if cls == OpportunityClass.BREAKOUT_ACCELERATION:
+            value = (
+                0.25 * e15.range_expansion
+                + 0.25 * e15.volume_expansion
+                + 0.22 * e1h.acceleration_score
+                + 0.12 * e1h.momentum_score
+                + 0.08 * e15.structure_score
+                + 0.08 * direction
+            )
+        elif cls == OpportunityClass.TREND_CONTINUATION:
+            value = (
+                0.30 * e4h.trend_score
+                + 0.28 * e1h.trend_score
+                + 0.18 * e1h.momentum_score
+                + 0.10 * e1h.acceleration_score
+                + 0.06 * e1d.regime_score
+                + 0.08 * direction
+            )
+        elif cls == OpportunityClass.PULLBACK_CONTINUATION:
+            value = (
+                0.24 * e4h.trend_score
+                + 0.24 * e1h.trend_score
+                + 0.20 * e15.structure_score
+                + 0.14 * e15.momentum_score
+                + 0.10 * e15.acceleration_score
+                + 0.08 * direction
+            )
+        else:
+            value = 0.0
+        return round(ScalpingEvidenceEngine._clamp(value, 0.0, 1.0) * 100.0, 8)
+
+    @staticmethod
+    def _class_entry_timing(evidence: Mapping[str, TimeframeEvidence], cls: OpportunityClass) -> float:
+        e1h, e15 = evidence["1h"], evidence["15m"]
+        if cls == OpportunityClass.BREAKOUT_ACCELERATION:
+            value = 0.35 * e15.range_expansion + 0.30 * e15.volume_expansion + 0.20 * e1h.acceleration_score + 0.15 * e15.momentum_score
+        elif cls == OpportunityClass.TREND_CONTINUATION:
+            value = 0.35 * e15.momentum_score + 0.25 * e15.acceleration_score + 0.20 * e15.structure_score + 0.20 * e1h.momentum_score
+        elif cls == OpportunityClass.PULLBACK_CONTINUATION:
+            value = 0.35 * e15.structure_score + 0.30 * e15.momentum_score + 0.20 * e15.acceleration_score + 0.15 * e1h.trend_score
+        else:
+            value = 0.0
+        return round(ScalpingEvidenceEngine._clamp(value, 0.0, 1.0), 8)
+
     def compute(self, candle_map: Mapping[str, Sequence[Candle]], *, use_supertrend: bool = False) -> ScalpingFeatures:
         required = ("1d", "4h", "1h", "15m")
         if any(tf not in candle_map for tf in required):
@@ -202,32 +290,15 @@ class ScalpingEvidenceEngine:
             1.0,
         )
         cls = self._classify(evidence)
-        score = (
-            0.10 * evidence["1d"].regime_score
-            + 0.20 * evidence["4h"].trend_score
-            + 0.18 * evidence["1h"].trend_score
-            + 0.15 * evidence["1h"].momentum_score
-            + 0.12 * evidence["1h"].acceleration_score
-            + 0.10 * evidence["15m"].volume_expansion
-            + 0.08 * evidence["15m"].range_expansion
-            + 0.07 * evidence["1h"].structure_score
-        )
+        score = self._class_score(evidence, cls, directional)
         if use_supertrend:
-            score += self.config.supertrend_weight * max(0.0, directional * evidence["15m"].supertrend_evidence)
-        score = round(self._clamp(score, 0.0, 1.0) * 100.0, 8)
-        entry_timing = self._clamp(
-            0.35 * evidence["15m"].momentum_score
-            + 0.25 * evidence["15m"].acceleration_score
-            + 0.20 * evidence["15m"].volume_expansion
-            + 0.20 * evidence["15m"].range_expansion,
-            0.0,
-            1.0,
-        )
+            score = self._clamp(score + self.config.supertrend_weight * max(0.0, directional * evidence["15m"].supertrend_evidence) * 100.0, 0.0, 100.0)
+        entry_timing = self._class_entry_timing(evidence, cls)
         return ScalpingFeatures(
             tuple(evidence[tf] for tf in required),
             round(directional, 8),
             cls,
-            score,
+            round(score, 8),
             entry_timing,
             self._risk_reward(evidence, candle_map["15m"], directional),
             use_supertrend,
@@ -294,8 +365,6 @@ class ScalpingDecisionEngine:
             rejection.append(RejectionReason.CAPITAL)
             reasons.append("insufficient_capital")
 
-        # D1 owns long-entry approval only. Direction is evaluated explicitly before
-        # any actionable state can be produced; it is never silently overridden.
         if features.directional_evidence < -self.config.directional_long_min:
             allowed = False
             rejection.append(RejectionReason.DIRECTIONAL_CONFLICT)
@@ -311,10 +380,7 @@ class ScalpingDecisionEngine:
             rejection.append(RejectionReason.RISK)
             reasons.append("risk_reward_below_threshold")
 
-        actionable_direction = (
-            RejectionReason.DIRECTIONAL_CONFLICT not in rejection
-            and RejectionReason.DIRECTIONAL_INSUFFICIENT not in rejection
-        )
+        actionable_direction = RejectionReason.DIRECTIONAL_CONFLICT not in rejection and RejectionReason.DIRECTIONAL_INSUFFICIENT not in rejection
         if (
             features.opportunity_score >= self.config.a_plus_score
             and features.entry_timing >= self.config.a_plus_readiness
@@ -350,6 +416,17 @@ class ScalpingDecisionEngine:
         else:
             state = EntryState.C
 
+        reasons.append(f"class_evidence_band:{features.opportunity_class.value.lower()}")
+        reasons.append(f"scalping_entry_score:{features.opportunity_score:.2f}")
+        reasons.append(f"entry_timing:{features.entry_timing:.3f}")
+        if candidate.opportunity_score >= 80.0 and features.opportunity_score < self.config.b_score:
+            reasons.append("discovery_quality_does_not_authorize_entry")
+        if features.opportunity_class == OpportunityClass.UNCLASSIFIED:
+            state = EntryState.C
+            allowed = False
+            rejection.append(RejectionReason.CLASSIFICATION_INSUFFICIENT)
+            reasons.append("classification_insufficient_evidence")
+
         trace = DecisionTrace(
             True,
             eligible,
@@ -363,6 +440,9 @@ class ScalpingDecisionEngine:
                 "structure",
                 "directional_evidence",
                 "supertrend_evidence",
+                "class_evidence_band",
+                "scalping_entry_score",
+                "entry_timing",
             ),
             features.opportunity_class,
             features.opportunity_score,
