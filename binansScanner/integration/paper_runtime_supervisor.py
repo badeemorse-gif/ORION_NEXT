@@ -13,6 +13,7 @@ from typing import Callable, Iterable, Optional
 from integration.paper_realtime_lifecycle import PaperRealtimeLifecycle
 from models.market_event import MarketEvent
 from models.order_position_lifecycle import OrderState
+from models.paper_capital import PaperLedger
 from models.signal_snapshot import SignalSnapshot
 from tools.pending_order_revalidation import PendingOrder, RevalidationAction
 from integration.trading_control import TradingControlStore, TradingState
@@ -160,7 +161,11 @@ class PaperRuntimeSupervisor:
         """Rebuild canonical aggregate state without treating recovery as a new entry."""
         assert self.control is not None
         recovered_control = TradingControlStore(self.control.path)
-        recovered = PaperRuntimeSupervisor(runtime=PaperRealtimeLifecycle(revalidation_policy=self.runtime.revalidation_policy), control=recovered_control)
+        # The model default is a convenience for standalone PaperLedger use, not
+        # the authoritative baseline of a live experiment. Recovery must carry
+        # forward the durable run's configured starting equity exactly.
+        recovered_ledger = PaperLedger(starting_equity=self.runtime.ledger.starting_equity)
+        recovered = PaperRuntimeSupervisor(runtime=PaperRealtimeLifecycle(ledger=recovered_ledger, revalidation_policy=self.runtime.revalidation_policy), control=recovered_control)
         for operation in self._operations:
             if operation[0] == "submit":
                 _, snapshot, now, timeframe, market_regime, intent_id, order_id = operation
