@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import shutil
 import sys
 import time
 import unittest
@@ -37,6 +38,13 @@ class _FailingPipeline:
 class PaperRunnerStartupTests(unittest.TestCase):
     def _config(self, directory: Path) -> runner.Paper8HConfig:
         return runner.Paper8HConfig(output_dir=directory, starting_capital=50.0, top_n=10)
+
+    @classmethod
+    def tearDownClass(cls):
+        # Existing runner integration tests may use the historical default output path.
+        # Remove only test-created runtime artifacts; never touch tracked files.
+        shutil.rmtree(_REPO_ROOT / "binansScanner" / "runs", ignore_errors=True)
+        super().tearDownClass()
 
     def test_output_directory_and_run_start_exist_before_discovery(self):
         with TemporaryDirectory() as tmp:
@@ -105,7 +113,7 @@ class PaperRunnerStartupTests(unittest.TestCase):
         with TemporaryDirectory() as tmp:
             config = self._config(Path(tmp) / "run")
             with patch.object(runner, "ScalpingOpportunityPipeline", _FakePipeline):
-                with patch.object(runner._legacy.Paper8HRunner, "__post_init__", lambda self: None):
+                with patch.object(runner.Paper8HRunner, "__post_init__", lambda self: None):
                     result = runner.Paper8HRunner.create(config)
             lines = [json.loads(line) for line in (Path(tmp) / "run" / "events.jsonl").read_text(encoding="utf-8").splitlines()]
             phases = [line.get("startup_phase") for line in lines if line["event_type"] == "startup_phase"]
