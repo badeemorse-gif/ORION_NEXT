@@ -86,6 +86,25 @@ class DecisionTrace:
     rejection_reasons: tuple[RejectionReason, ...]
     reasons: tuple[str, ...]
 
+    def __post_init__(self) -> None:
+        """Enforce the terminal entry-state invariant at the decision contract boundary.
+
+        C and D are categorically non-actionable. This is intentionally enforced
+        by the immutable decision contract itself so every producer, including the
+        D1 decision engine, cannot emit a contradictory trace. Classification
+        integrity remains a secondary safety-net for already-built candidates.
+        """
+        if self.entry_state in (EntryState.C, EntryState.D) and self.entry_allowed:
+            object.__setattr__(self, "entry_allowed", False)
+            if RejectionReason.ENTRY_STATE_CONFLICT not in self.rejection_reasons:
+                object.__setattr__(
+                    self,
+                    "rejection_reasons",
+                    self.rejection_reasons + (RejectionReason.ENTRY_STATE_CONFLICT,),
+                )
+            if "entry_state_conflict_blocked" not in self.reasons:
+                object.__setattr__(self, "reasons", self.reasons + ("entry_state_conflict_blocked",))
+
 
 @dataclass(frozen=True, slots=True)
 class ScalpingCandidateSet:
