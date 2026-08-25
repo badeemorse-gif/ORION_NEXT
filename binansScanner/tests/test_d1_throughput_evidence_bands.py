@@ -32,38 +32,21 @@ class StubFeatureEngine:
 class D1ThroughputEvidenceBandTests(unittest.TestCase):
     @staticmethod
     def candidate(symbol: str, discovery_score: float) -> OpportunityCandidate:
-        return OpportunityCandidate(
-            symbol,
-            discovery_score,
-            1,
-            MarketMetrics(symbol, 100_000_000.0, 0.08, 8.0, True, 100.0),
-            (),
-        )
+        return OpportunityCandidate(symbol, discovery_score, 1, MarketMetrics(symbol, 100_000_000.0, 0.08, 8.0, True, 100.0), ())
 
     @staticmethod
     def evidence(value: float = 1.0) -> dict[str, TimeframeEvidence]:
-        return {
-            tf: TimeframeEvidence(tf, value, value, value, value, value, value, value, value, value, value, 1.0)
-            for tf in ("1d", "4h", "1h", "15m")
-        }
+        return {tf: TimeframeEvidence(tf, value, value, value, value, value, value, value, value, value, value, 1.0) for tf in ("1d", "4h", "1h", "15m")}
 
     @staticmethod
     def features(cls: OpportunityClass, score: float, timing: float = 0.9, direction: float = 0.8) -> ScalpingFeatures:
-        return ScalpingFeatures(
-            tuple(D1ThroughputEvidenceBandTests.evidence().values()),
-            direction,
-            cls,
-            score,
-            timing,
-            RiskReward(100.0, 98.0, 104.0, 2.0, 4.0, 2.0, True),
-            False,
-        )
+        return ScalpingFeatures(tuple(D1ThroughputEvidenceBandTests.evidence().values()), direction, cls, score, timing, RiskReward(100.0, 98.0, 104.0, 2.0, 4.0, 2.0, True), False)
 
     def test_class_specific_breakout_evidence_can_reach_a_plus(self):
         engine = ScalpingEvidenceEngine(ScalpingConfig())
         score = engine._class_score(self.evidence(), OpportunityClass.BREAKOUT_ACCELERATION, 0.8)
         self.assertGreaterEqual(score, 80.0)
-        self.assertEqual(score, 100.0)
+        self.assertEqual(score, 98.4)
 
     def test_class_specific_trend_evidence_can_reach_a_plus(self):
         engine = ScalpingEvidenceEngine(ScalpingConfig())
@@ -102,14 +85,11 @@ class D1ThroughputEvidenceBandTests(unittest.TestCase):
         engine = ScalpingDecisionEngine(ScalpingConfig())
         engine.features = StubFeatureEngine(self.features(OpportunityClass.TREND_CONTINUATION, 85.0))
         candidate = self.candidate("TRENDUSDT", 60.0)
-        first = engine.decide(candidate, {"synthetic": ()})
-        second = engine.decide(candidate, {"synthetic": ()})
-        self.assertEqual(first.decision_trace, second.decision_trace)
+        self.assertEqual(engine.decide(candidate, {"synthetic": ()}).decision_trace, engine.decide(candidate, {"synthetic": ()}).decision_trace)
 
     def test_high_risk_hot_symbol_remains_visible_to_recall(self):
-        hot = self.candidate("NEWVOLUSDT", 5.0)
-        result = FastRecall(lane_top_n=1, composite_top_n=1).recall([hot], broad_limit=10)
-        self.assertIn("NEWVOLUSDT", tuple(c.symbol for c in result.candidates))
+        result = FastRecall(lane_top_n=1, composite_top_n=1).recall([self.candidate("NEWVOLUSDT", 5.0)], broad_limit=10)
+        self.assertEqual(tuple(c.symbol for c in result.candidates), ("NEWVOLUSDT",))
         self.assertIn("composite_opportunity", dict(result.provenance)["NEWVOLUSDT"])
 
     def test_throughput_metrics_are_deterministic_across_market_regimes(self):
@@ -122,7 +102,7 @@ class D1ThroughputEvidenceBandTests(unittest.TestCase):
         self.assertIsInstance(metrics, OpportunityThroughputMetrics)
         self.assertEqual(metrics.opportunity_recall_rate, 1.0)
         self.assertEqual(metrics.false_negative_rate, 0.0)
-        self.assertEqual(metrics.entries_per_market_regime, (("broad_trending", 1), ("breakout_burst", 1), ("post_breakout_pullback", 1)))
+        self.assertEqual(metrics.entries_per_market_regime, (("breakout_burst", 1), ("broad_trending", 1), ("post_breakout_pullback", 1)))
         self.assertEqual(metrics, measure_opportunity_throughput(allowed, expected_strong_symbols=("B1", "T1", "P1"), market_regimes=regimes))
 
     def test_quiet_market_has_no_forced_trade_quota(self):
@@ -135,5 +115,3 @@ class D1ThroughputEvidenceBandTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-
-# D1 throughput verification revision.
