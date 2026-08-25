@@ -5,6 +5,7 @@ import asyncio
 import json
 import sys
 import time
+import urllib.request
 from pathlib import Path
 from typing import Any
 
@@ -37,6 +38,33 @@ class _BoundedBinanceSpotOpportunitySource(_legacy.BinanceSpotOpportunitySource)
             return super()._get_json(path, params)
         finally:
             self.timeout_seconds = original
+
+
+class _BoundedPublicBinanceKlineProvider(_legacy._PublicBinanceKlineProvider):
+    """Keep D1 candle requests inside the same startup deadline."""
+
+    def __init__(self, deadline: float) -> None:
+        self._startup_deadline = deadline
+
+    def klines(self, symbol: str, timeframe, limit: int):  # type: ignore[no-untyped-def]
+        remaining = self._startup_deadline - time.monotonic()
+        if remaining <= 0:
+            raise TimeoutError("paper startup discovery deadline exceeded")
+        interval = {self._legacy_timeframe.D1: "1d", self._legacy_timeframe.H4: "4h", self._legacy_timeframe.H1: "1h", self._legacy_timeframe.M15: "15m"}[timeframe]
+        request = urllib.request.Request(
+            f"https://api.binance.com/api/v3/klines?symbol={symbol.upper()}&interval={interval}&limit={int(limit)}",
+            headers={"User-Agent": "ORION-paper-runner/1.0"},
+            method="GET",
+        )
+        with urllib.request.urlopen(request, timeout=remaining) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+        if not isinstance(payload, list) or not payload:
+            raise RuntimeError(f"No public candle data for {symbol} {interval}")
+        return payload
+
+    @property
+    def _legacy_timeframe(self):
+        return _legacy.Timeframe
 
 
 def _startup_log(config: Paper8HConfig) -> JsonlRunLog:
@@ -88,7 +116,7 @@ def _create(cls, config: Paper8HConfig) -> _legacy.Paper8HRunner:
         scalping_config = _legacy.ScalpingConfig(active_top_n=config.top_n, broad_pool_top_n=broad_top_n)
         pipeline = _legacy.ScalpingOpportunityPipeline(
             discovery,
-            _legacy.BinanceScalpingCandleSource(_legacy._PublicBinanceKlineProvider()),
+            _legacy.BinanceScalpingCandleSource(_BoundedPublicBinanceKlineProvider(deadline)),
             decision_engine=_legacy.ScalpingDecisionEngine(scalping_config),
             pool_manager=_legacy.ScalpingCandidatePoolManager(scalping_config),
         )
