@@ -11,6 +11,7 @@ from models.scalping_opportunity import (
     OpportunityClass,
     RejectionReason,
     RiskReward,
+    ScalpingCandidateSet,
     TimeframeEvidence,
 )
 from services.scalping_opportunity import ScalpingConfig, ScalpingDecisionEngine, ScalpingFeatures
