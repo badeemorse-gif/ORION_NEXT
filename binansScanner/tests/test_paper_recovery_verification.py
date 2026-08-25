@@ -7,6 +7,7 @@ from types import SimpleNamespace
 import unittest
 
 from integration.paper_recovery_verification import verify_recovery
+from integration.paper_realtime_lifecycle import PaperRealtimeLifecycle
 from integration.paper_runtime_supervisor import PaperRuntimeSupervisor
 from tools.orion_paper_8h_runner import JsonlRunLog, Paper8HConfig, Paper8HRunner
 from models.capital_management import CapitalMode
@@ -55,6 +56,52 @@ class TestPaperRecoveryVerification(unittest.TestCase):
             self.assertTrue(result["capital_replay_equal"])
             self.assertTrue(result["paper_only_verification"])
             self.assertEqual(result["recovery_failure_reasons"], ())
+
+    def test_recovery_preserves_arbitrary_starting_capital(self) -> None:
+        for starting_equity in (50.0, 200.0, 1000.0):
+            with self.subTest(starting_equity=starting_equity), TemporaryDirectory() as tmp:
+                supervisor = PaperRuntimeSupervisor(
+                    runtime=PaperRealtimeLifecycle(ledger=PaperLedger(starting_equity=starting_equity)),
+                    control_path=Path(tmp) / "control.json",
+                )
+                for index in range(25):
+                    supervisor.process_market_event(market(index))
+
+                original = supervisor.replay_state()
+                recovered = supervisor.recover()
+                repeated = recovered.recover()
+
+                self.assertEqual(original, recovered.replay_state())
+                self.assertEqual(recovered.replay_state(), repeated.replay_state())
+                self.assertEqual(recovered.runtime.replay_account().starting_equity, starting_equity)
+                self.assertEqual(repeated.runtime.replay_account().starting_equity, starting_equity)
+                self.assertTrue(recovered.runtime.no_live_execution())
+
+    def test_position_recovery_preserves_starting_capital(self) -> None:
+        with TemporaryDirectory() as tmp:
+            starting_equity = 50.0
+            now = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
+            supervisor = PaperRuntimeSupervisor(
+                runtime=PaperRealtimeLifecycle(ledger=PaperLedger(starting_equity=starting_equity)),
+                control_path=Path(tmp) / "control.json",
+            )
+            pending = supervisor.submit_signal(snapshot(now), now=now, order_id="ORDER-BTC-1")
+            self.assertEqual(pending.order_id, "ORDER-BTC-1")
+            filled = supervisor.process_market_event(market(0))
+            self.assertEqual(filled, ("ORDER-BTC-1",))
+            self.assertEqual(len(supervisor.active_positions), 1)
+
+            original = supervisor.replay_state()
+            recovered = supervisor.recover()
+            repeated = recovered.recover()
+
+            self.assertEqual(original, recovered.replay_state())
+            self.assertEqual(recovered.replay_state(), repeated.replay_state())
+            self.assertEqual(recovered.runtime.replay_account().starting_equity, starting_equity)
+            self.assertEqual(recovered.runtime.replay_account().wallet.cash, 0.0)
+            self.assertEqual(len(recovered.active_positions), 1)
+            self.assertEqual(recovered.active_positions[0].symbol, "BTCUSDT")
+            self.assertTrue(recovered.runtime.no_live_execution())
 
     def test_recovery_verifier_identifies_runtime_mismatch_independently(self) -> None:
         result = verify_recovery(
