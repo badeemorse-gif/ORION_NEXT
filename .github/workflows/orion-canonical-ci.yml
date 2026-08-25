@@ -4,11 +4,15 @@ on:
   push:
     branches:
       - main
+      - 'developer*/**'
       - 'developer5/**'
+      - 'integration/**'
       - 'verification/**'
   pull_request:
     branches:
       - main
+      - 'integration/**'
+      - 'verification/**'
   workflow_dispatch:
 
 permissions:
