@@ -16,7 +16,6 @@ Paper8HConfig = _legacy.Paper8HConfig
 JsonlRunLog = _legacy.JsonlRunLog
 DynamicMarketStream = _legacy.DynamicMarketStream
 FixedUniverseSource = _legacy.FixedUniverseSource
-Paper8HRunner = _legacy.Paper8HRunner
 parse_args = _legacy.parse_args
 UTC = _legacy.UTC
 BinanceSpotOpportunitySource = _legacy.BinanceSpotOpportunitySource
@@ -41,6 +40,10 @@ STARTUP_DISCOVERY_TIMEOUT_SECONDS = 90.0
 # decision.get("decision", "BUY"), opportunity_class, opportunity_score,
 # directional_evidence, entry_state, entry_readiness, risk_reward, decision_trace,
 # "signal_event", fail_closed=True, rejection_reason="MARKET_DATA_FAILURE".
+
+
+class Paper8HRunner(_legacy.Paper8HRunner):
+    """Compatibility subclass isolating the startup gate from the legacy class object."""
 
 
 class _BoundedBinanceSpotOpportunitySource(_legacy.BinanceSpotOpportunitySource):
@@ -113,7 +116,7 @@ def _startup_log(config: Paper8HConfig) -> JsonlRunLog:
 
 
 @classmethod
-def _create(cls, config: Paper8HConfig) -> _legacy.Paper8HRunner:
+def _create(cls, config: Paper8HConfig) -> Paper8HRunner:
     log = _startup_log(config)
     deadline = time.monotonic() + STARTUP_DISCOVERY_TIMEOUT_SECONDS
     try:
