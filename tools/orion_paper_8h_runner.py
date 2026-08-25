@@ -36,7 +36,7 @@ STARTUP_DISCOVERY_TIMEOUT_SECONDS = 90.0
 # Existing contract surface intentionally remains in this module:
 # ScalpingOpportunityPipeline, ScalpingDecisionEngine, ScalpingCandidatePoolManager,
 # BinanceScalpingCandleSource, PaperRunnerCapitalBridge, self.capital.allocation_for,
-# journal_path=self.config.output_dir / "capital_allocations.jsonl",
+# required_symbol_minimum, journal_path=self.config.output_dir / "capital_allocations.jsonl",
 # if not trace.entry_allowed or candidate.entry_state not in {"A", "A+"},
 # decision.get("decision", "BUY"), opportunity_class, opportunity_score,
 # directional_evidence, entry_state, entry_readiness, risk_reward, decision_trace,

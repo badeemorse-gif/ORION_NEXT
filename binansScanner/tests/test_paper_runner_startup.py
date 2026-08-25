@@ -1,13 +1,21 @@
 from __future__ import annotations
 
+import importlib.util
 import json
+import sys
 import time
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
-import tools.orion_paper_8h_runner as runner
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+_RUNNER_PATH = _REPO_ROOT / "tools" / "orion_paper_8h_runner.py"
+_SPEC = importlib.util.spec_from_file_location("orion_paper_8h_runner_startup_tests", _RUNNER_PATH)
+assert _SPEC is not None and _SPEC.loader is not None
+runner = importlib.util.module_from_spec(_SPEC)
+sys.modules[_SPEC.name] = runner
+_SPEC.loader.exec_module(runner)
 
 
 class _FakePipeline:
