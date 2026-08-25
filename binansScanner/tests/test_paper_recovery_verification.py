@@ -35,7 +35,7 @@ def snapshot(now: datetime) -> SignalSnapshot:
         direction="BUY",
         decision="FAVORABLE",
         confidence=80.0,
-        entry_plan={"entry_price": 100.0, "quantity": 1.0},
+        entry_plan={"entry_price": 100.0, "quantity": 0.4},
         generated_at=now,
         valid_until=now + timedelta(minutes=15),
         quality=90.0,
@@ -98,7 +98,7 @@ class TestPaperRecoveryVerification(unittest.TestCase):
             self.assertEqual(original, recovered.replay_state())
             self.assertEqual(recovered.replay_state(), repeated.replay_state())
             self.assertEqual(recovered.runtime.replay_account().starting_equity, starting_equity)
-            self.assertEqual(recovered.runtime.replay_account().wallet.cash, 0.0)
+            self.assertEqual(recovered.runtime.replay_account().wallet.cash, 10.0)
             self.assertEqual(len(recovered.active_positions), 1)
             self.assertEqual(recovered.active_positions[0].symbol, "BTCUSDT")
             self.assertTrue(recovered.runtime.no_live_execution())
