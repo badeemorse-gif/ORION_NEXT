@@ -188,20 +188,7 @@ class ScalpingEvidenceEngine:
         returns = [math.log(closes[i] / closes[i - 1]) for i in range(max(1, len(closes) - 21), len(closes)) if closes[i] > 0 and closes[i - 1] > 0]
         volatility = pstdev(returns) if len(returns) > 1 else 0.0
         regime_score = self._clamp(1.0 - abs(volatility - 0.01) / 0.03, 0.0, 1.0)
-        return TimeframeEvidence(
-            timeframe,
-            regime_score,
-            trend_score,
-            trend_direction,
-            momentum_score,
-            momentum_direction,
-            abs(acceleration),
-            volume_expansion,
-            range_expansion,
-            structure_score,
-            self._supertrend_direction(candles),
-            atr,
-        )
+        return TimeframeEvidence(timeframe, regime_score, trend_score, trend_direction, momentum_score, momentum_direction, abs(acceleration), volume_expansion, range_expansion, structure_score, self._supertrend_direction(candles), atr)
 
     def _classify(self, evidence: Mapping[str, TimeframeEvidence]) -> OpportunityClass:
         e1d, e4h, e1h, e15 = evidence["1d"], evidence["4h"], evidence["1h"], evidence["15m"]
@@ -233,76 +220,27 @@ class ScalpingEvidenceEngine:
         e1d, e4h, e1h, e15 = evidence["1d"], evidence["4h"], evidence["1h"], evidence["15m"]
         direction = max(0.0, directional)
         if cls == OpportunityClass.BREAKOUT_ACCELERATION:
-            value = (
-                0.25 * e15.range_expansion
-                + 0.25 * e15.volume_expansion
-                + 0.22 * e1h.acceleration_score
-                + 0.12 * e1h.momentum_score
-                + 0.08 * e15.structure_score
-                + 0.08 * direction
-            )
+            value = 0.25 * e15.range_expansion + 0.25 * e15.volume_expansion + 0.22 * e1h.acceleration_score + 0.12 * e1h.momentum_score + 0.08 * e15.structure_score + 0.08 * direction
         elif cls == OpportunityClass.TREND_CONTINUATION:
-            value = (
-                0.30 * e4h.trend_score
-                + 0.28 * e1h.trend_score
-                + 0.18 * e1h.momentum_score
-                + 0.10 * e1h.acceleration_score
-                + 0.06 * e1d.regime_score
-                + 0.08 * direction
-            )
+            value = 0.30 * e4h.trend_score + 0.28 * e1h.trend_score + 0.18 * e1h.momentum_score + 0.10 * e1h.acceleration_score + 0.06 * e1d.regime_score + 0.08 * direction
         elif cls == OpportunityClass.PULLBACK_CONTINUATION:
-            value = (
-                0.24 * e4h.trend_score
-                + 0.24 * e1h.trend_score
-                + 0.20 * e15.structure_score
-                + 0.14 * e15.momentum_score
-                + 0.10 * e15.acceleration_score
-                + 0.08 * direction
-            )
+            value = 0.24 * e4h.trend_score + 0.24 * e1h.trend_score + 0.20 * e15.structure_score + 0.14 * e15.momentum_score + 0.10 * e15.acceleration_score + 0.08 * direction
         else:
             value = 0.0
         return round(ScalpingEvidenceEngine._clamp(value, 0.0, 1.0) * 100.0, 8)
-
-    @staticmethod
-    def _class_entry_timing(evidence: Mapping[str, TimeframeEvidence], cls: OpportunityClass) -> float:
-        e1h, e15 = evidence["1h"], evidence["15m"]
-        if cls == OpportunityClass.BREAKOUT_ACCELERATION:
-            value = 0.35 * e15.range_expansion + 0.30 * e15.volume_expansion + 0.20 * e1h.acceleration_score + 0.15 * e15.momentum_score
-        elif cls == OpportunityClass.TREND_CONTINUATION:
-            value = 0.35 * e15.momentum_score + 0.25 * e15.acceleration_score + 0.20 * e15.structure_score + 0.20 * e1h.momentum_score
-        elif cls == OpportunityClass.PULLBACK_CONTINUATION:
-            value = 0.35 * e15.structure_score + 0.30 * e15.momentum_score + 0.20 * e15.acceleration_score + 0.15 * e1h.trend_score
-        else:
-            value = 0.0
-        return round(ScalpingEvidenceEngine._clamp(value, 0.0, 1.0), 8)
 
     def compute(self, candle_map: Mapping[str, Sequence[Candle]], *, use_supertrend: bool = False) -> ScalpingFeatures:
         required = ("1d", "4h", "1h", "15m")
         if any(tf not in candle_map for tf in required):
             raise ValueError("all four scalping timeframes are required")
         evidence = {tf: self._one_timeframe(tf, candle_map[tf]) for tf in required}
-        directional = self._clamp(
-            0.25 * evidence["4h"].trend_direction
-            + 0.30 * evidence["1h"].trend_direction
-            + 0.30 * evidence["1h"].momentum_direction
-            + 0.15 * evidence["15m"].momentum_direction,
-            -1.0,
-            1.0,
-        )
+        directional = self._clamp(0.25 * evidence["4h"].trend_direction + 0.30 * evidence["1h"].trend_direction + 0.30 * evidence["1h"].momentum_direction + 0.15 * evidence["15m"].momentum_direction, -1.0, 1.0)
         cls = self._classify(evidence)
         score = self._class_score(evidence, cls, directional)
         if use_supertrend:
             score = self._clamp(score + self.config.supertrend_weight * max(0.0, directional * evidence["15m"].supertrend_evidence) * 100.0, 0.0, 100.0)
-        entry_timing = self._class_entry_timing(evidence, cls)
-        return ScalpingFeatures(
-            tuple(evidence[tf] for tf in required),
-            round(directional, 8),
-            cls,
-            round(score, 8),
-            entry_timing,
-            self._risk_reward(evidence, candle_map["15m"], directional),
-            use_supertrend,
-        )
+        entry_timing = self._clamp(0.35 * evidence["15m"].momentum_score + 0.25 * evidence["15m"].acceleration_score + 0.20 * evidence["15m"].volume_expansion + 0.20 * evidence["15m"].range_expansion, 0.0, 1.0)
+        return ScalpingFeatures(tuple(evidence[tf] for tf in required), round(directional, 8), cls, round(score, 8), round(entry_timing, 8), self._risk_reward(evidence, candle_map["15m"], directional), use_supertrend)
 
 
 class ScalpingDecisionEngine:
@@ -310,326 +248,101 @@ class ScalpingDecisionEngine:
         self.config = config or ScalpingConfig()
         self.features = ScalpingEvidenceEngine(self.config)
 
-    def decide(
-        self,
-        candidate: OpportunityCandidate,
-        candle_map: Mapping[str, Sequence[Candle]],
-        *,
-        capital_manager: CapitalManager | None = None,
-        pause: bool = False,
-        active_symbols: Iterable[str] = (),
-        use_supertrend: bool = False,
-    ) -> OpportunityCandidate:
+    def decide(self, candidate: OpportunityCandidate, candle_map: Mapping[str, Sequence[Candle]], *, capital_manager: CapitalManager | None = None, pause: bool = False, active_symbols: Iterable[str] = (), use_supertrend: bool = False) -> OpportunityCandidate:
         eligible = not candidate.eligibility_reasons
         try:
             features = self.features.compute(candle_map, use_supertrend=use_supertrend)
         except (ValueError, ZeroDivisionError, KeyError):
-            trace = DecisionTrace(
-                False,
-                False,
-                (),
-                OpportunityClass.UNCLASSIFIED,
-                0.0,
-                0.0,
-                EntryState.D,
-                False,
-                (RejectionReason.MARKET_DATA_FAILURE,),
-                ("market_data_failure",),
-            )
-            return enrich_candidate(
-                candidate,
-                opportunity_class=OpportunityClass.UNCLASSIFIED,
-                entry_state=EntryState.D,
-                entry_readiness=0.0,
-                risk_reward=None,
-                timeframe_evidence=(),
-                decision_trace=trace,
-            )
+            trace = DecisionTrace(False, False, (), OpportunityClass.UNCLASSIFIED, 0.0, 0.0, EntryState.D, False, (RejectionReason.MARKET_DATA_FAILURE,), ("market_data_failure",))
+            return enrich_candidate(candidate, opportunity_class=OpportunityClass.UNCLASSIFIED, entry_state=EntryState.D, entry_readiness=0.0, risk_reward=None, timeframe_evidence=(), decision_trace=trace)
         reasons: list[str] = []
         rejection: list[RejectionReason] = []
         allowed = True
         if not eligible:
-            allowed = False
-            rejection.append(RejectionReason.STRATEGY)
-            reasons.append("ineligible_opportunity")
+            allowed = False; rejection.append(RejectionReason.STRATEGY); reasons.append("ineligible_opportunity")
         if pause:
-            allowed = False
-            rejection.append(RejectionReason.PAUSE)
-            reasons.append("trading_paused")
+            allowed = False; rejection.append(RejectionReason.PAUSE); reasons.append("trading_paused")
         if candidate.symbol in set(active_symbols):
-            allowed = False
-            rejection.append(RejectionReason.DUPLICATE_POSITION)
-            reasons.append("duplicate_position")
+            allowed = False; rejection.append(RejectionReason.DUPLICATE_POSITION); reasons.append("duplicate_position")
         if capital_manager is not None and capital_manager.desired_allocation() > capital_manager.available_capital + 1e-9:
-            allowed = False
-            rejection.append(RejectionReason.CAPITAL)
-            reasons.append("insufficient_capital")
-
+            allowed = False; rejection.append(RejectionReason.CAPITAL); reasons.append("insufficient_capital")
         if features.directional_evidence < -self.config.directional_long_min:
-            allowed = False
-            rejection.append(RejectionReason.DIRECTIONAL_CONFLICT)
-            reasons.append("directional_conflict_long_entry_blocked")
+            allowed = False; rejection.append(RejectionReason.DIRECTIONAL_CONFLICT); reasons.append("directional_conflict_long_entry_blocked")
         elif abs(features.directional_evidence) < self.config.directional_long_min:
-            allowed = False
-            rejection.append(RejectionReason.DIRECTIONAL_INSUFFICIENT)
-            reasons.append("directional_evidence_insufficient_for_long_entry")
-
+            allowed = False; rejection.append(RejectionReason.DIRECTIONAL_INSUFFICIENT); reasons.append("directional_evidence_insufficient_for_long_entry")
         rr_ok = features.risk_reward is not None and features.risk_reward.valid and features.risk_reward.ratio >= self.config.entry_rr_min
         if not rr_ok:
-            allowed = False
-            rejection.append(RejectionReason.RISK)
-            reasons.append("risk_reward_below_threshold")
-
+            allowed = False; rejection.append(RejectionReason.RISK); reasons.append("risk_reward_below_threshold")
         actionable_direction = RejectionReason.DIRECTIONAL_CONFLICT not in rejection and RejectionReason.DIRECTIONAL_INSUFFICIENT not in rejection
-        if (
-            features.opportunity_score >= self.config.a_plus_score
-            and features.entry_timing >= self.config.a_plus_readiness
-            and features.risk_reward
-            and features.risk_reward.ratio >= self.config.a_plus_rr
-            and allowed
-            and actionable_direction
-        ):
+        if features.opportunity_score >= self.config.a_plus_score and features.entry_timing >= self.config.a_plus_readiness and features.risk_reward and features.risk_reward.ratio >= self.config.a_plus_rr and allowed and actionable_direction:
             state = EntryState.A_PLUS
-        elif (
-            features.opportunity_score >= self.config.a_score
-            and features.entry_timing >= self.config.a_readiness
-            and rr_ok
-            and allowed
-            and actionable_direction
-        ):
+        elif features.opportunity_score >= self.config.a_score and features.entry_timing >= self.config.a_readiness and rr_ok and allowed and actionable_direction:
             state = EntryState.A
-        elif (
-            features.opportunity_score >= self.config.b_score
-            and RejectionReason.CAPITAL not in rejection
-            and RejectionReason.MARKET_DATA_FAILURE not in rejection
-            and RejectionReason.DIRECTIONAL_CONFLICT not in rejection
-            and RejectionReason.DIRECTIONAL_INSUFFICIENT not in rejection
-        ):
-            state = EntryState.B
-            allowed = False
-            reasons.append("opportunity_good_entry_timing_not_ready")
+        elif features.opportunity_score >= self.config.b_score and RejectionReason.CAPITAL not in rejection and RejectionReason.MARKET_DATA_FAILURE not in rejection and RejectionReason.DIRECTIONAL_CONFLICT not in rejection and RejectionReason.DIRECTIONAL_INSUFFICIENT not in rejection:
+            state = EntryState.B; allowed = False; reasons.append("opportunity_good_entry_timing_not_ready")
         elif RejectionReason.DIRECTIONAL_CONFLICT in rejection or RejectionReason.DIRECTIONAL_INSUFFICIENT in rejection:
-            state = EntryState.C
-            allowed = False
+            state = EntryState.C; allowed = False
         elif rejection and not allowed:
             state = EntryState.D if RejectionReason.RISK in rejection or RejectionReason.CAPITAL in rejection else EntryState.C
         else:
             state = EntryState.C
-
         reasons.append(f"class_evidence_band:{features.opportunity_class.value.lower()}")
         reasons.append(f"scalping_entry_score:{features.opportunity_score:.2f}")
         reasons.append(f"entry_timing:{features.entry_timing:.3f}")
         if candidate.opportunity_score >= 80.0 and features.opportunity_score < self.config.b_score:
             reasons.append("discovery_quality_does_not_authorize_entry")
         if features.opportunity_class == OpportunityClass.UNCLASSIFIED:
-            state = EntryState.C
-            allowed = False
-            rejection.append(RejectionReason.CLASSIFICATION_INSUFFICIENT)
-            reasons.append("classification_insufficient_evidence")
-
-        trace = DecisionTrace(
-            True,
-            eligible,
-            (
-                "regime",
-                "trend",
-                "momentum",
-                "acceleration",
-                "volume_expansion",
-                "range_expansion",
-                "structure",
-                "directional_evidence",
-                "supertrend_evidence",
-                "class_evidence_band",
-                "scalping_entry_score",
-                "entry_timing",
-            ),
-            features.opportunity_class,
-            features.opportunity_score,
-            features.directional_evidence,
-            state,
-            allowed,
-            tuple(dict.fromkeys(rejection)),
-            tuple(dict.fromkeys(reasons + [features.opportunity_class.value.lower()])),
-        )
-        return enrich_candidate(
-            candidate,
-            opportunity_class=features.opportunity_class,
-            entry_state=state,
-            entry_readiness=features.entry_timing,
-            risk_reward=features.risk_reward,
-            timeframe_evidence=features.evidence,
-            decision_trace=trace,
-        )
+            state = EntryState.C; allowed = False; rejection.append(RejectionReason.CLASSIFICATION_INSUFFICIENT); reasons.append("classification_insufficient_evidence")
+        trace = DecisionTrace(True, eligible, ("regime", "trend", "momentum", "acceleration", "volume_expansion", "range_expansion", "structure", "directional_evidence", "supertrend_evidence", "class_evidence_band", "scalping_entry_score", "entry_timing"), features.opportunity_class, features.opportunity_score, features.directional_evidence, state, allowed, tuple(dict.fromkeys(rejection)), tuple(dict.fromkeys(reasons + [features.opportunity_class.value.lower()])))
+        return enrich_candidate(candidate, opportunity_class=features.opportunity_class, entry_state=state, entry_readiness=features.entry_timing, risk_reward=features.risk_reward, timeframe_evidence=features.evidence, decision_trace=trace)
 
 
 class ScalpingCandidatePoolManager:
     """Maintains a broad evaluated pool and a smaller hysteresis-stable active set."""
-
     def __init__(self, config: ScalpingConfig | None = None) -> None:
-        self.config = config or ScalpingConfig()
-        self._previous_active: dict[str, float] = {}
-
+        self.config = config or ScalpingConfig(); self._previous_active: dict[str, float] = {}
     def select(self, broad_pool: OpportunityCandidateSet, enriched: Sequence[OpportunityCandidate]) -> ScalpingCandidateSet:
-        if broad_pool.top_n <= self.config.active_top_n:
-            raise ValueError("broad pool must be larger than active set")
-        ordered = sorted(enriched, key=lambda item: (-item.opportunity_score, item.symbol))
-        selected = ordered[: self.config.active_top_n]
-        by_symbol = {item.symbol: item for item in ordered}
+        if broad_pool.top_n <= self.config.active_top_n: raise ValueError("broad pool must be larger than active set")
+        ordered = sorted(enriched, key=lambda item: (-item.opportunity_score, item.symbol)); selected = ordered[: self.config.active_top_n]; by_symbol = {item.symbol: item for item in ordered}
         for symbol, previous_score in self._previous_active.items():
             incumbent = by_symbol.get(symbol)
             if incumbent and incumbent not in selected and incumbent.opportunity_score >= previous_score - self.config.hysteresis_score_delta and selected:
                 worst = min(selected, key=lambda item: (item.opportunity_score, item.symbol))
-                if incumbent.opportunity_score >= worst.opportunity_score - self.config.hysteresis_score_delta:
-                    selected = [item for item in selected if item.symbol != worst.symbol] + [incumbent]
+                if incumbent.opportunity_score >= worst.opportunity_score - self.config.hysteresis_score_delta: selected = [item for item in selected if item.symbol != worst.symbol] + [incumbent]
         selected.sort(key=lambda item: (-item.opportunity_score, item.symbol))
-        active = tuple(
-            OpportunityCandidate(
-                item.symbol,
-                item.opportunity_score,
-                i,
-                item.metrics,
-                item.eligibility_reasons,
-                item.score_components,
-                item.directional_evidence,
-                item.opportunity_class,
-                item.entry_state,
-                item.entry_readiness,
-                item.risk_reward,
-                item.timeframe_evidence,
-                item.decision_trace,
-            )
-            for i, item in enumerate(selected[: self.config.active_top_n], 1)
-        )
+        active = tuple(OpportunityCandidate(item.symbol, item.opportunity_score, i, item.metrics, item.eligibility_reasons, item.score_components, item.directional_evidence, item.opportunity_class, item.entry_state, item.entry_readiness, item.risk_reward, item.timeframe_evidence, item.decision_trace) for i, item in enumerate(selected[: self.config.active_top_n], 1))
         self._previous_active = {item.symbol: item.opportunity_score for item in active}
-        broad = OpportunityCandidateSet(
-            tuple(
-                OpportunityCandidate(
-                    item.symbol,
-                    item.opportunity_score,
-                    i,
-                    item.metrics,
-                    item.eligibility_reasons,
-                    item.score_components,
-                    item.directional_evidence,
-                    item.opportunity_class,
-                    item.entry_state,
-                    item.entry_readiness,
-                    item.risk_reward,
-                    item.timeframe_evidence,
-                    item.decision_trace,
-                )
-                for i, item in enumerate(ordered, 1)
-            ),
-            len(ordered),
-            broad_pool.snapshot_timestamp,
-        )
+        broad = OpportunityCandidateSet(tuple(OpportunityCandidate(item.symbol, item.opportunity_score, i, item.metrics, item.eligibility_reasons, item.score_components, item.directional_evidence, item.opportunity_class, item.entry_state, item.entry_readiness, item.risk_reward, item.timeframe_evidence, item.decision_trace) for i, item in enumerate(ordered, 1)), len(ordered), broad_pool.snapshot_timestamp)
         return ScalpingCandidateSet(broad, OpportunityCandidateSet(active, len(active), broad_pool.snapshot_timestamp), True)
 
 
 class ScalpingReplayEvaluator:
     """Deterministic replay metrics with explicit event semantics and time basis."""
-
     @staticmethod
     def _coerce_evaluation(results: ReplayEvaluation | Sequence[ReplayEvent], evaluation_days: float | None) -> ReplayEvaluation:
         if isinstance(results, ReplayEvaluation):
-            if evaluation_days is not None:
-                return ReplayEvaluation(results.events, evaluation_days)
-            return results
+            return ReplayEvaluation(results.events, evaluation_days) if evaluation_days is not None else results
         events = tuple(results)
-        if evaluation_days is None:
-            raise ValueError("evaluation_days must be explicitly supplied when passing events")
+        if evaluation_days is None: raise ValueError("evaluation_days must be explicitly supplied when passing events")
         return ReplayEvaluation(events, evaluation_days)
-
     @staticmethod
     def metrics(results: ReplayEvaluation | Sequence[ReplayEvent], evaluation_days: float | None = None) -> PerformanceMetrics:
-        evaluation = ScalpingReplayEvaluator._coerce_evaluation(results, evaluation_days)
-        events = evaluation.events
-        if not events:
-            return PerformanceMetrics(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
-
-        captured = [event for event in events if event.opportunity_captured]
-        accepted = [event for event in captured if event.entry_accepted]
-        returns = [event.return_pct for event in accepted]
-        wins = [value for value in returns if value > 0]
-        losses = [value for value in returns if value < 0]
-        gross_profit = sum(wins)
-        gross_loss = abs(sum(losses))
-        if gross_loss:
-            profit_factor = gross_profit / gross_loss
-        elif gross_profit:
-            profit_factor = float("inf")
-        else:
-            profit_factor = 0.0
-
+        evaluation = ScalpingReplayEvaluator._coerce_evaluation(results, evaluation_days); events = evaluation.events
+        if not events: return PerformanceMetrics(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+        captured = [event for event in events if event.opportunity_captured]; accepted = [event for event in captured if event.entry_accepted]; returns = [event.return_pct for event in accepted]; wins = [value for value in returns if value > 0]; losses = [value for value in returns if value < 0]; gross_profit = sum(wins); gross_loss = abs(sum(losses)); profit_factor = gross_profit / gross_loss if gross_loss else float("inf") if gross_profit else 0.0
         equity = peak = drawdown = 0.0
-        for value in returns:
-            equity += value
-            peak = max(peak, equity)
-            drawdown = max(drawdown, peak - equity)
-
-        profitable = [event for event in events if event.profitable_opportunity]
-        missed_profitable = [event for event in profitable if not event.entry_accepted]
-        entry_acceptance_rate = len(accepted) / len(captured) if captured else 0.0
-        false_negative_rate = len(missed_profitable) / len(profitable) if profitable else 0.0
-
-        return PerformanceMetrics(
-            opportunity_capture_rate=len(captured) / len(events),
-            entry_acceptance_rate=entry_acceptance_rate,
-            trades_per_day=len(accepted) / evaluation.evaluation_days,
-            win_rate=len(wins) / len(returns) if returns else 0.0,
-            expectancy=mean(returns) if returns else 0.0,
-            profit_factor=profit_factor,
-            maximum_drawdown=drawdown,
-            capital_utilization=mean(event.capital_utilization_pct for event in events),
-            average_hold_time=mean(event.hold_time_hours for event in accepted) if accepted else 0.0,
-            fees_slippage_impact=mean(event.fees_slippage_pct for event in accepted) if accepted else 0.0,
-            false_negative_rate=false_negative_rate,
-        )
-
+        for value in returns: equity += value; peak = max(peak, equity); drawdown = max(drawdown, peak - equity)
+        profitable = [event for event in events if event.profitable_opportunity]; missed_profitable = [event for event in profitable if not event.entry_accepted]; entry_acceptance_rate = len(accepted) / len(captured) if captured else 0.0; false_negative_rate = len(missed_profitable) / len(profitable) if profitable else 0.0
+        return PerformanceMetrics(len(captured) / len(events), entry_acceptance_rate, len(accepted) / evaluation.evaluation_days, len(wins) / len(returns) if returns else 0.0, mean(returns) if returns else 0.0, profit_factor, drawdown, mean(event.capital_utilization_pct for event in events), mean(event.hold_time_hours for event in accepted) if accepted else 0.0, mean(event.fees_slippage_pct for event in accepted) if accepted else 0.0, false_negative_rate)
     @staticmethod
     def _delta(new: float, old: float) -> float:
-        if math.isinf(new) and math.isinf(old):
-            return 0.0 if new == old else (float("inf") if new > old else float("-inf"))
+        if math.isinf(new) and math.isinf(old): return 0.0 if new == old else (float("inf") if new > old else float("-inf"))
         return new - old
-
     @staticmethod
-    def compare(
-        baseline_results: ReplayEvaluation | Sequence[ReplayEvent],
-        improved_results: ReplayEvaluation | Sequence[ReplayEvent],
-        *,
-        baseline_evaluation_days: float | None = None,
-        improved_evaluation_days: float | None = None,
-    ) -> ABComparison:
-        baseline = ScalpingReplayEvaluator.metrics(baseline_results, baseline_evaluation_days)
-        improved = ScalpingReplayEvaluator.metrics(improved_results, improved_evaluation_days)
-        return ABComparison(
-            baseline,
-            improved,
-            improved.opportunity_capture_rate - baseline.opportunity_capture_rate,
-            improved.entry_acceptance_rate - baseline.entry_acceptance_rate,
-            improved.expectancy - baseline.expectancy,
-            improved.maximum_drawdown - baseline.maximum_drawdown,
-            ScalpingReplayEvaluator._delta(improved.profit_factor, baseline.profit_factor),
-            improved.false_negative_rate - baseline.false_negative_rate,
-        )
-
+    def compare(baseline_results: ReplayEvaluation | Sequence[ReplayEvent], improved_results: ReplayEvaluation | Sequence[ReplayEvent], *, baseline_evaluation_days: float | None = None, improved_evaluation_days: float | None = None) -> ABComparison:
+        baseline = ScalpingReplayEvaluator.metrics(baseline_results, baseline_evaluation_days); improved = ScalpingReplayEvaluator.metrics(improved_results, improved_evaluation_days)
+        return ABComparison(baseline, improved, improved.opportunity_capture_rate - baseline.opportunity_capture_rate, improved.entry_acceptance_rate - baseline.entry_acceptance_rate, improved.expectancy - baseline.expectancy, improved.maximum_drawdown - baseline.maximum_drawdown, ScalpingReplayEvaluator._delta(improved.profit_factor, baseline.profit_factor), improved.false_negative_rate - baseline.false_negative_rate)
     @staticmethod
-    def compare_supertrend(
-        baseline_results: ReplayEvaluation | Sequence[ReplayEvent],
-        supertrend_results: ReplayEvaluation | Sequence[ReplayEvent],
-        *,
-        baseline_evaluation_days: float | None = None,
-        supertrend_evaluation_days: float | None = None,
-    ) -> SupertrendABResult:
-        baseline = ScalpingReplayEvaluator.metrics(baseline_results, baseline_evaluation_days)
-        with_supertrend = ScalpingReplayEvaluator.metrics(supertrend_results, supertrend_evaluation_days)
-        return SupertrendABResult(
-            baseline,
-            with_supertrend,
-            with_supertrend.opportunity_capture_rate - baseline.opportunity_capture_rate,
-            with_supertrend.expectancy - baseline.expectancy,
-            ScalpingReplayEvaluator._delta(with_supertrend.profit_factor, baseline.profit_factor),
-            with_supertrend.maximum_drawdown - baseline.maximum_drawdown,
-            with_supertrend.false_negative_rate - baseline.false_negative_rate,
-        )
+    def compare_supertrend(baseline_results: ReplayEvaluation | Sequence[ReplayEvent], supertrend_results: ReplayEvaluation | Sequence[ReplayEvent], *, baseline_evaluation_days: float | None = None, supertrend_evaluation_days: float | None = None) -> SupertrendABResult:
+        baseline = ScalpingReplayEvaluator.metrics(baseline_results, baseline_evaluation_days); with_supertrend = ScalpingReplayEvaluator.metrics(supertrend_results, supertrend_evaluation_days)
+        return SupertrendABResult(baseline, with_supertrend, with_supertrend.opportunity_capture_rate - baseline.opportunity_capture_rate, with_supertrend.expectancy - baseline.expectancy, ScalpingReplayEvaluator._delta(with_supertrend.profit_factor, baseline.profit_factor), with_supertrend.maximum_drawdown - baseline.maximum_drawdown, with_supertrend.false_negative_rate - baseline.false_negative_rate)
