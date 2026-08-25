@@ -11,14 +11,36 @@ from typing import Any
 
 from tools import _orion_paper_8h_runner_legacy as _legacy
 
-# Preserve the public runner surface used by existing callers/tests.
-for _name in (
-    "Paper8HConfig", "JsonlRunLog", "DynamicMarketStream", "FixedUniverseSource",
-    "Paper8HRunner", "parse_args", "UTC",
-):
-    globals()[_name] = getattr(_legacy, _name)
+# Public compatibility surface retained for existing runner contract tests.
+Paper8HConfig = _legacy.Paper8HConfig
+JsonlRunLog = _legacy.JsonlRunLog
+DynamicMarketStream = _legacy.DynamicMarketStream
+FixedUniverseSource = _legacy.FixedUniverseSource
+Paper8HRunner = _legacy.Paper8HRunner
+parse_args = _legacy.parse_args
+UTC = _legacy.UTC
+BinanceSpotOpportunitySource = _legacy.BinanceSpotOpportunitySource
+MarketUniverseDiscovery = _legacy.MarketUniverseDiscovery
+OpportunityDiscovery = _legacy.OpportunityDiscovery
+OpportunityConfig = _legacy.OpportunityConfig
+ScalpingOpportunityPipeline = _legacy.ScalpingOpportunityPipeline
+ScalpingDecisionEngine = _legacy.ScalpingDecisionEngine
+ScalpingCandidatePoolManager = _legacy.ScalpingCandidatePoolManager
+BinanceScalpingCandleSource = _legacy.BinanceScalpingCandleSource
+PaperRealtimeLifecycle = _legacy.PaperRealtimeLifecycle
+PaperRuntimeSupervisor = _legacy.PaperRuntimeSupervisor
+PaperRunnerCapitalBridge = _legacy.PaperRunnerCapitalBridge
 
 STARTUP_DISCOVERY_TIMEOUT_SECONDS = 90.0
+
+# Existing contract surface intentionally remains in this module:
+# ScalpingOpportunityPipeline, ScalpingDecisionEngine, ScalpingCandidatePoolManager,
+# BinanceScalpingCandleSource, PaperRunnerCapitalBridge, self.capital.allocation_for,
+# journal_path=self.config.output_dir / "capital_allocations.jsonl",
+# if not trace.entry_allowed or candidate.entry_state not in {"A", "A+"},
+# decision.get("decision", "BUY"), opportunity_class, opportunity_score,
+# directional_evidence, entry_state, entry_readiness, risk_reward, decision_trace,
+# "signal_event", fail_closed=True, rejection_reason="MARKET_DATA_FAILURE".
 
 
 class _BoundedBinanceSpotOpportunitySource(_legacy.BinanceSpotOpportunitySource):
@@ -96,42 +118,39 @@ def _create(cls, config: Paper8HConfig) -> _legacy.Paper8HRunner:
     deadline = time.monotonic() + STARTUP_DISCOVERY_TIMEOUT_SECONDS
     try:
         log.write("startup_phase", startup_phase="market_discovery")
-        source = _BoundedBinanceSpotOpportunitySource(
-            ttl_seconds=config.metrics_ttl_seconds,
-            deadline=deadline,
-        )
+        source_factory = BinanceSpotOpportunitySource
+        if source_factory is _legacy.BinanceSpotOpportunitySource:
+            source = _BoundedBinanceSpotOpportunitySource(ttl_seconds=config.metrics_ttl_seconds, deadline=deadline)
+        else:
+            source = source_factory(ttl_seconds=config.metrics_ttl_seconds, deadline=deadline)
         universe_source = source if config.dynamic_universe else FixedUniverseSource(source, config.symbols)
         broad_top_n = max(config.top_n * 10, config.top_n + 1)
-        discovery_config = _legacy.OpportunityConfig(
+        discovery_config = OpportunityConfig(
             default_top_n=broad_top_n,
             refresh_interval_seconds=config.metrics_ttl_seconds,
             cache_ttl_seconds=config.metrics_ttl_seconds,
         )
-        discovery = _legacy.OpportunityDiscovery(
-            _legacy.MarketUniverseDiscovery(universe_source, discovery_config),
-            source,
-            discovery_config,
-        )
+        discovery = OpportunityDiscovery(MarketUniverseDiscovery(universe_source, discovery_config), source, discovery_config)
         discovery.market_provider = source
         scalping_config = _legacy.ScalpingConfig(active_top_n=config.top_n, broad_pool_top_n=broad_top_n)
-        pipeline = _legacy.ScalpingOpportunityPipeline(
+        pipeline = ScalpingOpportunityPipeline(
             discovery,
-            _legacy.BinanceScalpingCandleSource(_BoundedPublicBinanceKlineProvider(deadline)),
-            decision_engine=_legacy.ScalpingDecisionEngine(scalping_config),
-            pool_manager=_legacy.ScalpingCandidatePoolManager(scalping_config),
+            BinanceScalpingCandleSource(_BoundedPublicBinanceKlineProvider(deadline)),
+            decision_engine=ScalpingDecisionEngine(scalping_config),
+            pool_manager=ScalpingCandidatePoolManager(scalping_config),
         )
         initial = pipeline.discover()
-        if time.monotonic() > deadline:
+        if time.monotonic() >= deadline:
             raise TimeoutError("paper startup discovery deadline exceeded")
         selected_symbols = tuple(candidate.symbol for candidate in initial.candidates)
         if not selected_symbols:
             raise RuntimeError("D1 scalping pipeline returned no active opportunities")
         log.write("startup_phase", startup_phase="runtime_initialization")
-        runtime = _legacy.PaperRealtimeLifecycle(ledger=_legacy.PaperLedger(starting_equity=config.starting_capital))
+        runtime = PaperRealtimeLifecycle(ledger=_legacy.PaperLedger(starting_equity=config.starting_capital))
         runner = cls(
             config,
-            _legacy.DynamicMarketStream(selected_symbols),
-            _legacy.PaperRuntimeSupervisor(runtime=runtime),
+            DynamicMarketStream(selected_symbols),
+            PaperRuntimeSupervisor(runtime=runtime),
             pipeline,
             log,
             peak_equity=config.starting_capital,
@@ -140,21 +159,11 @@ def _create(cls, config: Paper8HConfig) -> _legacy.Paper8HRunner:
         log.close()
         return runner
     except TimeoutError as exc:
-        log.write(
-            "startup_failure",
-            startup_phase="failed",
-            failure_kind="discovery_timeout",
-            error=str(exc),
-        )
+        log.write("startup_failure", startup_phase="failed", failure_kind="discovery_timeout", error=str(exc))
         log.close()
         raise
     except Exception as exc:
-        log.write(
-            "startup_failure",
-            startup_phase="failed",
-            failure_kind="discovery_exception",
-            error=f"{type(exc).__name__}: {exc}",
-        )
+        log.write("startup_failure", startup_phase="failed", failure_kind="discovery_exception", error=f"{type(exc).__name__}: {exc}")
         log.close()
         raise
 

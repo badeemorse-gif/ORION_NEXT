@@ -49,7 +49,7 @@ class PaperRunnerStartupTests(unittest.TestCase):
             source._get_json("exchangeInfo")
 
     def test_bounded_source_never_exceeds_remaining_deadline(self):
-        import binansScanner.providers.binance_opportunity_source as source_module
+        import providers.binance_opportunity_source as source_module
 
         observed = {}
 
@@ -74,7 +74,7 @@ class PaperRunnerStartupTests(unittest.TestCase):
     def test_discovery_exception_writes_startup_failure(self):
         with TemporaryDirectory() as tmp:
             config = self._config(Path(tmp) / "run")
-            with patch.object(runner._legacy, "ScalpingOpportunityPipeline", _FailingPipeline):
+            with patch.object(runner, "ScalpingOpportunityPipeline", _FailingPipeline):
                 with self.assertRaises(RuntimeError):
                     runner.Paper8HRunner.create(config)
             lines = [json.loads(line) for line in (Path(tmp) / "run" / "events.jsonl").read_text(encoding="utf-8").splitlines()]
@@ -86,8 +86,8 @@ class PaperRunnerStartupTests(unittest.TestCase):
     def test_deadline_timeout_writes_startup_failure(self):
         with TemporaryDirectory() as tmp:
             config = self._config(Path(tmp) / "run")
-            with patch.object(runner, "STARTUP_DISCOVERY_TIMEOUT_SECONDS", 0.0):
-                with patch.object(runner._legacy, "ScalpingOpportunityPipeline", _FakePipeline):
+            with patch.object(runner, "STARTUP_DISCOVERY_TIMEOUT_SECONDS", -1.0):
+                with patch.object(runner, "ScalpingOpportunityPipeline", _FakePipeline):
                     with self.assertRaises(TimeoutError):
                         runner.Paper8HRunner.create(config)
             lines = [json.loads(line) for line in (Path(tmp) / "run" / "events.jsonl").read_text(encoding="utf-8").splitlines()]
@@ -96,7 +96,7 @@ class PaperRunnerStartupTests(unittest.TestCase):
     def test_successful_discovery_records_runtime_phases(self):
         with TemporaryDirectory() as tmp:
             config = self._config(Path(tmp) / "run")
-            with patch.object(runner._legacy, "ScalpingOpportunityPipeline", _FakePipeline):
+            with patch.object(runner, "ScalpingOpportunityPipeline", _FakePipeline):
                 with patch.object(runner._legacy.Paper8HRunner, "__post_init__", lambda self: None):
                     result = runner.Paper8HRunner.create(config)
             lines = [json.loads(line) for line in (Path(tmp) / "run" / "events.jsonl").read_text(encoding="utf-8").splitlines()]
@@ -107,7 +107,7 @@ class PaperRunnerStartupTests(unittest.TestCase):
     def test_failed_discovery_does_not_initialize_stream_runtime(self):
         with TemporaryDirectory() as tmp:
             config = self._config(Path(tmp) / "run")
-            with patch.object(runner._legacy, "ScalpingOpportunityPipeline", _FailingPipeline), patch.object(runner._legacy, "PaperRealtimeLifecycle") as lifecycle:
+            with patch.object(runner, "ScalpingOpportunityPipeline", _FailingPipeline), patch.object(runner, "PaperRealtimeLifecycle") as lifecycle:
                 with self.assertRaises(RuntimeError):
                     runner.Paper8HRunner.create(config)
             lifecycle.assert_not_called()
@@ -116,7 +116,7 @@ class PaperRunnerStartupTests(unittest.TestCase):
         with TemporaryDirectory() as tmp:
             output = Path(tmp) / "failed-run"
             config = self._config(output)
-            with patch.object(runner._legacy, "ScalpingOpportunityPipeline", _FailingPipeline):
+            with patch.object(runner, "ScalpingOpportunityPipeline", _FailingPipeline):
                 with self.assertRaises(RuntimeError):
                     runner.Paper8HRunner.create(config)
             self.assertTrue(output.is_dir())
