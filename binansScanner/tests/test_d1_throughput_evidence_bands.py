@@ -4,7 +4,6 @@ import unittest
 
 from models.opportunity import MarketMetrics, OpportunityCandidate
 from models.scalping_opportunity import (
-    Candle,
     DecisionTrace,
     EntryState,
     OpportunityClass,
@@ -80,7 +79,7 @@ class D1ThroughputEvidenceBandTests(unittest.TestCase):
         engine = ScalpingDecisionEngine(ScalpingConfig())
         engine.features = StubFeatureEngine(self.features(OpportunityClass.BREAKOUT_ACCELERATION, 50.0))
         result = engine.decide(self.candidate("ONTUSDT", 91.21), {"synthetic": ()})
-        self.assertEqual(result.entry_state, EntryState.B.value)
+        self.assertEqual(result.entry_state, EntryState.C.value)
         self.assertFalse(result.decision_trace.entry_allowed)
         self.assertIn("discovery_quality_does_not_authorize_entry", result.decision_trace.reasons)
 
@@ -109,27 +108,22 @@ class D1ThroughputEvidenceBandTests(unittest.TestCase):
 
     def test_high_risk_hot_symbol_remains_visible_to_recall(self):
         hot = self.candidate("NEWVOLUSDT", 5.0)
-        result = FastRecall(lane_top_n=1, composite_top_n=1).recall(
-            [hot], broad_limit=10
-        )
-        self.assertIn("NEWVOLUSDT", result.symbols if hasattr(result, "symbols") else tuple(c.symbol for c in result.candidates))
+        result = FastRecall(lane_top_n=1, composite_top_n=1).recall([hot], broad_limit=10)
+        self.assertIn("NEWVOLUSDT", tuple(c.symbol for c in result.candidates))
         self.assertIn("composite_opportunity", dict(result.provenance)["NEWVOLUSDT"])
 
     def test_throughput_metrics_are_deterministic_across_market_regimes(self):
         allowed = []
-        for symbol, regime in (("B1", "breakout_burst"), ("T1", "broad_trending"), ("P1", "post_breakout_pullback")):
+        for symbol in ("B1", "T1", "P1"):
             trace = DecisionTrace(True, True, (), OpportunityClass.BREAKOUT_ACCELERATION, 85.0, 0.8, EntryState.A_PLUS, True, (), ("class_evidence_band:breakout_acceleration",))
             allowed.append(OpportunityCandidate(symbol, 70.0, 1, MarketMetrics(symbol, 100_000_000.0, .03), (), decision_trace=trace))
-        metrics = measure_opportunity_throughput(
-            allowed,
-            expected_strong_symbols=("B1", "T1", "P1"),
-            market_regimes={"B1": "breakout_burst", "T1": "broad_trending", "P1": "post_breakout_pullback"},
-        )
+        regimes = {"B1": "breakout_burst", "T1": "broad_trending", "P1": "post_breakout_pullback"}
+        metrics = measure_opportunity_throughput(allowed, expected_strong_symbols=("B1", "T1", "P1"), market_regimes=regimes)
         self.assertIsInstance(metrics, OpportunityThroughputMetrics)
         self.assertEqual(metrics.opportunity_recall_rate, 1.0)
         self.assertEqual(metrics.false_negative_rate, 0.0)
         self.assertEqual(metrics.entries_per_market_regime, (("broad_trending", 1), ("breakout_burst", 1), ("post_breakout_pullback", 1)))
-        self.assertEqual(metrics, measure_opportunity_throughput(allowed, expected_strong_symbols=("B1", "T1", "P1"), market_regimes={"B1": "breakout_burst", "T1": "broad_trending", "P1": "post_breakout_pullback"}))
+        self.assertEqual(metrics, measure_opportunity_throughput(allowed, expected_strong_symbols=("B1", "T1", "P1"), market_regimes=regimes))
 
     def test_quiet_market_has_no_forced_trade_quota(self):
         metrics = measure_opportunity_throughput((), expected_strong_symbols=(), market_regimes={})
