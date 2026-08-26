@@ -140,11 +140,11 @@ class BinanceSpotOpportunitySource:
     @classmethod
     def _needs_history(cls, ticker: Mapping[str, Any] | None, book: Mapping[str, Any] | None) -> bool:
         if ticker is None:
-            return False
+            return True
         try:
             quote_volume = float(ticker["quoteVolume"])
         except (KeyError, TypeError, ValueError):
-            return False
+            return True
         if not math.isfinite(quote_volume) or quote_volume < cls.EARLY_MIN_QUOTE_VOLUME_24H:
             return False
         if book is None:
@@ -158,6 +158,58 @@ class BinanceSpotOpportunitySource:
             return True
         spread_bps = ((ask - bid) / ((ask + bid) / 2.0)) * 10_000.0
         return not math.isfinite(spread_bps) or spread_bps <= cls.EARLY_MAX_SPREAD_BPS
+
+    @classmethod
+    def _metadata_only_metric(cls, symbol: str, ticker: Mapping[str, Any] | None, book: Mapping[str, Any] | None) -> MarketMetrics | None:
+        if ticker is None:
+            return None
+        try:
+            quote_volume = float(ticker["quoteVolume"])
+        except (KeyError, TypeError, ValueError):
+            return None
+        change_pct = None
+        weighted_avg = None
+        last_price = None
+        try:
+            change_pct = float(ticker["priceChangePercent"])
+        except (KeyError, TypeError, ValueError):
+            pass
+        try:
+            weighted_avg = float(ticker["weightedAvgPrice"])
+        except (KeyError, TypeError, ValueError):
+            pass
+        try:
+            last_price = float(ticker["lastPrice"])
+        except (KeyError, TypeError, ValueError):
+            pass
+        spread_bps = None
+        if book is not None:
+            try:
+                bid = float(book["bidPrice"])
+                ask = float(book["askPrice"])
+                if bid > 0 and ask >= bid:
+                    spread_bps = ((ask - bid) / ((ask + bid) / 2.0)) * 10_000.0
+            except (KeyError, TypeError, ValueError, ZeroDivisionError):
+                pass
+        safe_volume = quote_volume if math.isfinite(quote_volume) else 0.0
+        volume_quality = min(math.log1p(max(safe_volume, 0.0)) / math.log1p(100_000_000.0), 1.0)
+        return MarketMetrics(
+            symbol=symbol,
+            quote_volume_24h=quote_volume,
+            volatility=0.0,
+            spread_bps=spread_bps,
+            tradable=True,
+            last_price=last_price,
+            volume_quality=volume_quality,
+            trend_quality=None,
+            momentum_quality=None,
+            structure_quality=None,
+            price_change_pct_24h=change_pct,
+            weighted_avg_price_24h=weighted_avg,
+            trend_direction=None,
+            trend_persistence=None,
+            momentum_direction=None,
+        )
 
     def metrics_bulk(self, symbols: Sequence[str]) -> Mapping[str, MarketMetrics]:
         wanted = tuple(sorted({s.upper() for s in symbols}))
@@ -198,6 +250,12 @@ class BinanceSpotOpportunitySource:
         reusable_daily: dict[str, tuple[Sequence[Any], ...]] = {}
         for symbol in wanted:
             ticker = ticker_by_symbol.get(symbol)
+            if not self._needs_history(ticker, book_by_symbol.get(symbol)):
+                metadata_metric = self._metadata_only_metric(symbol, ticker, book_by_symbol.get(symbol))
+                if metadata_metric is None:
+                    continue
+                result[symbol] = metadata_metric
+                continue
             history = histories.get(symbol)
             if ticker is None or history is None:
                 continue
