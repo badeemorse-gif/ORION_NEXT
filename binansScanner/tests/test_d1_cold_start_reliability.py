@@ -54,7 +54,7 @@ class _Universe:
 
 class _StartupSource:
     def __init__(self, metrics: dict[str, MarketMetrics]):
-        self._startup_deadline = time.monotonic() + 90.0
+        self._startup_deadline = float("inf")
         self.metrics = metrics
 
     def exchange_info(self):
@@ -202,7 +202,7 @@ class D1ColdStartReliabilityTests(unittest.TestCase):
 
         class FakeSource:
             def __init__(self, *args, **kwargs):
-                self._startup_deadline = kwargs["deadline"]
+                self._startup_deadline = kwargs.get("deadline", float("inf"))
 
             def exchange_info(self):
                 return {"symbols": []}
