@@ -7,6 +7,7 @@ from types import SimpleNamespace
 
 from models.opportunity import MarketMetrics
 from providers.binance_opportunity_source import BinanceSpotOpportunitySource, DailyCandleHandoff
+from services.opportunity_discovery import MarketUniverseDiscovery, OpportunityConfig, OpportunityDiscovery
 from services.scalping_pipeline import ScalpingOpportunityPipeline
 
 
@@ -82,26 +83,35 @@ class _TopologySource(BinanceSpotOpportunitySource):
 
 class D1ColdStartPerformanceEmergencyTests(unittest.TestCase):
     def test_metadata_requests_run_concurrently_with_finite_bound(self):
-        source = _TopologySource(delay=0.02)
+        source = _TopologySource(delay=0.05)
         started = time.monotonic()
         source.metrics_bulk((SYMBOLS[0], SYMBOLS[3]))
         elapsed = time.monotonic() - started
         self.assertEqual(source.max_metadata_active, 2)
-        self.assertLess(elapsed, 0.02 * 2 * 0.9)
+        self.assertLess(elapsed, 0.08)
 
     def test_known_ineligible_symbols_do_not_trigger_history_requests(self):
         source = _TopologySource(delay=0.0)
         result = source.metrics_bulk(SYMBOLS)
         self.assertEqual(sorted(source.history_calls), sorted((SYMBOLS[0], SYMBOLS[3], SYMBOLS[4], SYMBOLS[5])))
-        self.assertEqual(tuple(result), (SYMBOLS[0], SYMBOLS[3], SYMBOLS[4], SYMBOLS[5]))
+        self.assertEqual(tuple(result), SYMBOLS)
 
     def test_prefilter_preserves_semantic_survivors(self):
         source = _TopologySource(delay=0.0)
-        baseline = {SYMBOLS[0], SYMBOLS[3], SYMBOLS[4], SYMBOLS[5]}
         result = source.metrics_bulk(SYMBOLS)
-        self.assertEqual(set(result), baseline)
-        self.assertNotIn(SYMBOLS[1], result)
-        self.assertNotIn(SYMBOLS[2], result)
+        self.assertEqual(set(result), set(SYMBOLS))
+
+        discovery = OpportunityDiscovery(
+            MarketUniverseDiscovery(SimpleNamespace(exchange_info=lambda: {"symbols": []})),
+            source,
+            OpportunityConfig(),
+        )
+        discovery._universe = SimpleNamespace(discover=lambda: tuple(
+            type("Candidate", (), {"symbol": symbol, "base_asset": symbol[:-4], "quote_asset": "USDT"})()
+            for symbol in SYMBOLS
+        ))
+        ranked = discovery.discover(top_n=6)
+        self.assertEqual(tuple(item.symbol for item in ranked.candidates), (SYMBOLS[0], SYMBOLS[3], SYMBOLS[4], SYMBOLS[5]))
 
     def test_daily_handoff_removes_equivalent_deep_1d_request(self):
         source = _TopologySource(delay=0.0)
