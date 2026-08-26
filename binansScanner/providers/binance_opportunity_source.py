@@ -115,13 +115,22 @@ class BinanceSpotOpportunitySource:
         return volatility, trend_quality, trend_direction, trend_persistence, momentum_quality, momentum_direction
 
     def _fetch_history(self, symbol: str) -> tuple[Sequence[Any], ...]:
-        history = self._cached(
-            f"klines_{symbol}",
-            lambda symbol=symbol: self._get_json(
-                "klines",
-                {"symbol": symbol, "interval": self.HISTORY_INTERVAL, "limit": self.HISTORY_LIMIT},
-            ),
-        )
+        def loader():
+            deadline = getattr(self, "_startup_deadline", None)
+            if deadline is None:
+                return self._get_json(
+                    "klines",
+                    {"symbol": symbol, "interval": self.HISTORY_INTERVAL, "limit": self.HISTORY_LIMIT},
+                )
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError("paper startup discovery deadline exceeded")
+            query = urlencode({"symbol": symbol, "interval": self.HISTORY_INTERVAL, "limit": self.HISTORY_LIMIT})
+            request = Request(f"{self.BASE_URL}/klines?{query}", headers={"Accept": "application/json"})
+            with urlopen(request, timeout=min(self.timeout_seconds, remaining)) as response:
+                return json.load(response)
+
+        history = self._cached(f"klines_{symbol}", loader)
         if not isinstance(history, list):
             raise ValueError("invalid price history payload")
         return tuple(history)
@@ -132,17 +141,8 @@ class BinanceSpotOpportunitySource:
         if not wanted:
             return {}
 
-        with ThreadPoolExecutor(max_workers=min(2, self.DISCOVERY_CONCURRENCY), thread_name_prefix="orion-discovery-meta") as executor:
-            futures = {
-                executor.submit(self._cached, "ticker_24h", lambda: self._get_json("ticker/24hr")): "ticker_24h",
-                executor.submit(self._cached, "book_ticker", lambda: self._get_json("ticker/bookTicker")): "book_ticker",
-            }
-            metadata: dict[str, Any] = {}
-            for future in as_completed(futures):
-                metadata[futures[future]] = future.result()
-
-        tickers = metadata["ticker_24h"]
-        books = metadata["book_ticker"]
+        tickers = self._cached("ticker_24h", lambda: self._get_json("ticker/24hr"))
+        books = self._cached("book_ticker", lambda: self._get_json("ticker/bookTicker"))
         ticker_by_symbol = {str(row.get("symbol", "")).upper(): row for row in tickers if isinstance(row, Mapping)}
         book_by_symbol = {str(row.get("symbol", "")).upper(): row for row in books if isinstance(row, Mapping)}
 
@@ -153,6 +153,10 @@ class BinanceSpotOpportunitySource:
                 symbol = future_to_symbol[future]
                 try:
                     histories[symbol] = future.result()
+                except TimeoutError:
+                    for pending in future_to_symbol:
+                        pending.cancel()
+                    raise
                 except Exception:
                     continue
 
