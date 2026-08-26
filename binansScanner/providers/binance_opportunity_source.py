@@ -4,11 +4,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 import json
 import math
+import socket
 import statistics
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any, Mapping, Sequence
+from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
@@ -38,8 +40,16 @@ class BinanceSpotOpportunitySource:
     METRICS_HISTORY_WINDOW = 31
     MIN_HISTORY_CANDLES = 22
     DISCOVERY_CONCURRENCY = 4
+    METADATA_CONCURRENCY = 2
     EARLY_MIN_QUOTE_VOLUME_24H = 1_000_000.0
     EARLY_MAX_SPREAD_BPS = 50.0
+    RETRY_MAX_ATTEMPTS = 4
+    RETRY_INITIAL_BACKOFF_SECONDS = 0.5
+    RETRY_BACKOFF_MULTIPLIER = 2.0
+    RETRY_MAX_BACKOFF_SECONDS = 2.0
+    RETRY_JITTER_SECONDS = 0.0
+    RETRY_SERVER_BACKOFF_MAX_SECONDS = 10.0
+    RETRYABLE_HTTP_STATUSES = frozenset({429, 500, 502, 503, 504})
 
     def __init__(self, ttl_seconds: float = 30.0, timeout_seconds: float = 10.0, clock=time.monotonic) -> None:
         if ttl_seconds < 0 or timeout_seconds <= 0:
@@ -49,13 +59,163 @@ class BinanceSpotOpportunitySource:
         self._clock = clock
         self._cache: dict[str, _CacheEntry] = {}
         self._cache_lock = threading.Lock()
+        self._request_lock = threading.Lock()
+        self._next_request_id = 0
+        self._request_events: list[dict[str, Any]] = []
         self._last_daily_candle_handoff: DailyCandleHandoff | None = None
 
-    def _get_json(self, path: str, params: Mapping[str, Any] | None = None) -> Any:
+    @property
+    def request_events(self) -> tuple[dict[str, Any], ...]:
+        """Return immutable-observer access to the most recent request attempts."""
+        with self._request_lock:
+            return tuple(dict(event) for event in self._request_events)
+
+    def _new_request_id(self) -> int:
+        with self._request_lock:
+            self._next_request_id += 1
+            return self._next_request_id
+
+    @staticmethod
+    def _request_stage(path: str) -> str:
+        if path == "exchangeInfo":
+            return "universe"
+        if path == "ticker/24hr":
+            return "metadata"
+        if path == "ticker/bookTicker":
+            return "metadata"
+        if path == "klines":
+            return "history"
+        return "public_market_data"
+
+    @classmethod
+    def _retry_failure(cls, exc: BaseException) -> tuple[bool, str]:
+        if isinstance(exc, HTTPError):
+            return exc.code in cls.RETRYABLE_HTTP_STATUSES, f"http_{exc.code}"
+        if isinstance(exc, (TimeoutError, socket.timeout)):
+            return True, "read_or_transport_timeout"
+        if isinstance(exc, (ConnectionError, URLError)):
+            return True, "transport_error"
+        return False, "non_retryable"
+
+    @classmethod
+    def _server_backoff(cls, exc: BaseException) -> float | None:
+        if not isinstance(exc, HTTPError):
+            return None
+        value = exc.headers.get("Retry-After") if exc.headers is not None else None
+        if value is None:
+            return None
+        try:
+            return min(max(float(value), 0.0), cls.RETRY_SERVER_BACKOFF_MAX_SECONDS)
+        except (TypeError, ValueError):
+            return None
+
+    @classmethod
+    def _backoff_for_attempt(cls, attempt: int, exc: BaseException) -> float:
+        server_backoff = cls._server_backoff(exc)
+        if server_backoff is not None:
+            return server_backoff
+        base = cls.RETRY_INITIAL_BACKOFF_SECONDS * (cls.RETRY_BACKOFF_MULTIPLIER ** max(attempt - 1, 0))
+        bounded = min(base, cls.RETRY_MAX_BACKOFF_SECONDS)
+        return bounded + cls.RETRY_JITTER_SECONDS
+
+    def _record_request_event(
+        self,
+        *,
+        request_id: int,
+        endpoint: str,
+        stage: str,
+        symbol: str | None,
+        attempt: int,
+        timeout_requested: float,
+        timeout_effective: float,
+        start_timestamp: float,
+        end_timestamp: float,
+        exception_type: str | None,
+        failure_category: str | None,
+        backoff: float,
+        outcome: str,
+    ) -> None:
+        event = {
+            "request_id": request_id,
+            "endpoint": endpoint,
+            "stage": stage,
+            "symbol": symbol,
+            "attempt": attempt,
+            "timeout_requested": timeout_requested,
+            "timeout_effective": timeout_effective,
+            "start_timestamp": start_timestamp,
+            "end_timestamp": end_timestamp,
+            "exception_type": exception_type,
+            "failure_category": failure_category,
+            "backoff": backoff,
+            "elapsed_seconds": end_timestamp - start_timestamp,
+            "outcome": outcome,
+        }
+        with self._request_lock:
+            self._request_events.append(event)
+            if len(self._request_events) > 512:
+                del self._request_events[:-512]
+
+    def _request_json(self, path: str, params: Mapping[str, Any] | None = None) -> Any:
         query = f"?{urlencode(params or {})}" if params else ""
-        request = Request(f"{self.BASE_URL}/{path}{query}", headers={"Accept": "application/json"})
-        with urlopen(request, timeout=self.timeout_seconds) as response:
-            return json.load(response)
+        request_id = self._new_request_id()
+        endpoint = f"{self.BASE_URL}/{path}"
+        stage = self._request_stage(path)
+        symbol = str(params.get("symbol")).upper() if params and params.get("symbol") is not None else None
+        timeout_requested = float(self.timeout_seconds)
+
+        for attempt in range(1, self.RETRY_MAX_ATTEMPTS + 1):
+            start_timestamp = time.monotonic()
+            timeout_effective = timeout_requested
+            try:
+                request = Request(f"{endpoint}{query}", headers={"Accept": "application/json"})
+                with urlopen(request, timeout=timeout_effective) as response:
+                    payload = json.load(response)
+                end_timestamp = time.monotonic()
+                self._record_request_event(
+                    request_id=request_id,
+                    endpoint=endpoint,
+                    stage=stage,
+                    symbol=symbol,
+                    attempt=attempt,
+                    timeout_requested=timeout_requested,
+                    timeout_effective=timeout_effective,
+                    start_timestamp=start_timestamp,
+                    end_timestamp=end_timestamp,
+                    exception_type=None,
+                    failure_category=None,
+                    backoff=0.0,
+                    outcome="success",
+                )
+                return payload
+            except Exception as exc:
+                end_timestamp = time.monotonic()
+                retryable, category = self._retry_failure(exc)
+                can_retry = retryable and attempt < self.RETRY_MAX_ATTEMPTS
+                backoff = self._backoff_for_attempt(attempt, exc) if can_retry else 0.0
+                self._record_request_event(
+                    request_id=request_id,
+                    endpoint=endpoint,
+                    stage=stage,
+                    symbol=symbol,
+                    attempt=attempt,
+                    timeout_requested=timeout_requested,
+                    timeout_effective=timeout_effective,
+                    start_timestamp=start_timestamp,
+                    end_timestamp=end_timestamp,
+                    exception_type=type(exc).__name__,
+                    failure_category=category,
+                    backoff=backoff,
+                    outcome="retrying" if can_retry else "failed",
+                )
+                if not can_retry:
+                    raise
+                time.sleep(backoff)
+
+        raise RuntimeError("request retry loop exhausted unexpectedly")
+
+    def _get_json(self, path: str, params: Mapping[str, Any] | None = None) -> Any:
+        return self._request_json(path, params)
 
     def _cached(self, key: str, loader):
         now = self._clock()
@@ -117,22 +277,13 @@ class BinanceSpotOpportunitySource:
         return volatility, trend_quality, trend_direction, trend_persistence, momentum_quality, momentum_direction
 
     def _fetch_history(self, symbol: str) -> tuple[Sequence[Any], ...]:
-        def loader():
-            deadline = getattr(self, "_startup_deadline", None)
-            if deadline is None:
-                return self._get_json(
-                    "klines",
-                    {"symbol": symbol, "interval": self.HISTORY_INTERVAL, "limit": self.HISTORY_LIMIT},
-                )
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                raise TimeoutError("paper startup discovery deadline exceeded")
-            query = urlencode({"symbol": symbol, "interval": self.HISTORY_INTERVAL, "limit": self.HISTORY_LIMIT})
-            request = Request(f"{self.BASE_URL}/klines?{query}", headers={"Accept": "application/json"})
-            with urlopen(request, timeout=min(self.timeout_seconds, remaining)) as response:
-                return json.load(response)
-
-        history = self._cached(f"klines_{symbol}", loader)
+        history = self._cached(
+            f"klines_{symbol}",
+            lambda: self._get_json(
+                "klines",
+                {"symbol": symbol, "interval": self.HISTORY_INTERVAL, "limit": self.HISTORY_LIMIT},
+            ),
+        )
         if not isinstance(history, list):
             raise ValueError("invalid price history payload")
         return tuple(history)
@@ -207,7 +358,8 @@ class BinanceSpotOpportunitySource:
         if not wanted:
             return {}
 
-        with ThreadPoolExecutor(max_workers=2, thread_name_prefix="orion-discovery-metadata") as executor:
+        self._request_events.clear()
+        with ThreadPoolExecutor(max_workers=self.METADATA_CONCURRENCY, thread_name_prefix="orion-discovery-metadata") as executor:
             ticker_future = executor.submit(self._cached, "ticker_24h", lambda: self._get_json("ticker/24hr"))
             book_future = executor.submit(self._cached, "book_ticker", lambda: self._get_json("ticker/bookTicker"))
             tickers = ticker_future.result()
