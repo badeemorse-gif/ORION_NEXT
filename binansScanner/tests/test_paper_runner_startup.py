@@ -40,7 +40,7 @@ class _TimeoutPipeline:
         pass
 
     def discover(self):
-        raise TimeoutError("paper startup discovery deadline exceeded")
+        raise TimeoutError("paper startup discovery timeout")
 
 
 class PaperRunnerStartupTests(unittest.TestCase):
@@ -49,8 +49,6 @@ class PaperRunnerStartupTests(unittest.TestCase):
 
     @classmethod
     def tearDownClass(cls):
-        # Existing runner integration tests may use the historical default output path.
-        # Remove only test-created runtime artifacts; never touch tracked files.
         shutil.rmtree(_REPO_ROOT / "binansScanner" / "runs", ignore_errors=True)
         super().tearDownClass()
 
@@ -67,12 +65,17 @@ class PaperRunnerStartupTests(unittest.TestCase):
             self.assertFalse(first["live_execution"])
             log.close()
 
-    def test_bounded_source_rejects_expired_deadline_without_network(self):
+    def test_bounded_source_accepts_legacy_deadline_argument_without_enforcing_it(self):
         source = runner._BoundedBinanceSpotOpportunitySource(deadline=time.monotonic() - 1)
-        with self.assertRaises(TimeoutError):
-            source._get_json("exchangeInfo")
+        self.assertEqual(source._startup_deadline, float("inf"))
+        with patch("providers.binance_opportunity_source.urlopen", return_value=type("Response", (), {
+            "__enter__": lambda self: self,
+            "__exit__": lambda self, *args: False,
+            "read": lambda self: b"{}",
+        })()):
+            self.assertEqual(source._get_json("exchangeInfo"), {})
 
-    def test_bounded_source_never_exceeds_remaining_deadline(self):
+    def test_bounded_source_uses_transport_timeout_not_remaining_startup_deadline(self):
         import providers.binance_opportunity_source as source_module
 
         observed = {}
@@ -80,8 +83,10 @@ class PaperRunnerStartupTests(unittest.TestCase):
         class Response:
             def __enter__(self):
                 return self
+
             def __exit__(self, *args):
                 return False
+
             def read(self):
                 return b"{}"
 
@@ -92,8 +97,7 @@ class PaperRunnerStartupTests(unittest.TestCase):
         source = runner._BoundedBinanceSpotOpportunitySource(deadline=time.monotonic() + 0.5)
         with patch.object(source_module, "urlopen", fake_urlopen):
             source._get_json("exchangeInfo")
-        self.assertGreater(observed["timeout"], 0)
-        self.assertLessEqual(observed["timeout"], 0.5)
+        self.assertEqual(observed["timeout"], 10.0)
 
     def test_discovery_exception_writes_startup_failure(self):
         with TemporaryDirectory() as tmp:
@@ -119,15 +123,17 @@ class PaperRunnerStartupTests(unittest.TestCase):
             self.assertEqual(failure["startup_phase"], "failed")
             self.assertEqual(failure["failure_kind"], "discovery_timeout")
 
-    def test_deadline_timeout_writes_startup_failure(self):
+    def test_90_second_constant_does_not_terminate_valid_discovery(self):
         with TemporaryDirectory() as tmp:
             config = self._config(Path(tmp) / "run")
-            with patch.object(runner, "STARTUP_DISCOVERY_TIMEOUT_SECONDS", -1.0):
-                with patch.object(runner, "ScalpingOpportunityPipeline", _FakePipeline):
-                    with self.assertRaises(TimeoutError):
-                        runner.Paper8HRunner.create(config)
+            with patch.object(runner, "STARTUP_DISCOVERY_TIMEOUT_SECONDS", -1.0), patch.object(
+                runner, "ScalpingOpportunityPipeline", _FakePipeline
+            ), patch.object(runner.Paper8HRunner, "__post_init__", lambda self: None):
+                result = runner.Paper8HRunner.create(config)
+            self.assertEqual(result.config.output_dir, Path(tmp) / "run")
             lines = [json.loads(line) for line in (Path(tmp) / "run" / "events.jsonl").read_text(encoding="utf-8").splitlines()]
-            self.assertEqual(lines[-1]["failure_kind"], "discovery_timeout")
+            phases = [line.get("startup_phase") for line in lines if line["event_type"] == "startup_phase"]
+            self.assertEqual(phases, ["market_discovery", "runtime_initialization", "running"])
 
     def test_successful_discovery_records_runtime_phases(self):
         with TemporaryDirectory() as tmp:
