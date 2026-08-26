@@ -66,7 +66,7 @@ class BinanceSpotOpportunitySource:
 
     @property
     def request_events(self) -> tuple[dict[str, Any], ...]:
-        """Return immutable-observer access to the most recent request attempts."""
+        """Return immutable-observer access to recorded public request attempts."""
         with self._request_lock:
             return tuple(dict(event) for event in self._request_events)
 
@@ -79,9 +79,7 @@ class BinanceSpotOpportunitySource:
     def _request_stage(path: str) -> str:
         if path == "exchangeInfo":
             return "universe"
-        if path == "ticker/24hr":
-            return "metadata"
-        if path == "ticker/bookTicker":
+        if path in {"ticker/24hr", "ticker/bookTicker"}:
             return "metadata"
         if path == "klines":
             return "history"
@@ -115,8 +113,7 @@ class BinanceSpotOpportunitySource:
         if server_backoff is not None:
             return server_backoff
         base = cls.RETRY_INITIAL_BACKOFF_SECONDS * (cls.RETRY_BACKOFF_MULTIPLIER ** max(attempt - 1, 0))
-        bounded = min(base, cls.RETRY_MAX_BACKOFF_SECONDS)
-        return bounded + cls.RETRY_JITTER_SECONDS
+        return min(base, cls.RETRY_MAX_BACKOFF_SECONDS) + cls.RETRY_JITTER_SECONDS
 
     def _record_request_event(
         self,
@@ -358,7 +355,6 @@ class BinanceSpotOpportunitySource:
         if not wanted:
             return {}
 
-        self._request_events.clear()
         with ThreadPoolExecutor(max_workers=self.METADATA_CONCURRENCY, thread_name_prefix="orion-discovery-metadata") as executor:
             ticker_future = executor.submit(self._cached, "ticker_24h", lambda: self._get_json("ticker/24hr"))
             book_future = executor.submit(self._cached, "book_ticker", lambda: self._get_json("ticker/bookTicker"))
