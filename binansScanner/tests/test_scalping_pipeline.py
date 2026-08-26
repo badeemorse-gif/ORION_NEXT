@@ -105,6 +105,7 @@ class ScalpingPipelineTests(unittest.TestCase):
         result = pipeline.discover()
         self.assertEqual(len(result.broad_pool.candidates), 6)
         self.assertEqual(len(result.active_set.candidates), 2)
+        self.assertTrue(all(item.entry_state in {EntryState.C.value, EntryState.D.value} for item in result.broad_pool.candidates))
         self.assertTrue(all(item.entry_allowed is False for item in result.broad_pool.candidates if hasattr(item, "entry_allowed")))
 
 
