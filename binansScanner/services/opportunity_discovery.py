@@ -311,6 +311,11 @@ class OpportunityDiscovery:
         if self._cached_output is not None and now - self._cached_at < self._config.refresh_interval_seconds and self._cached_output.top_n == requested_top_n:
             return self._cached_output
         metrics = self._collect_metrics(candidates)
+        startup_deadline = getattr(self._metrics_source, "_startup_deadline", None)
+        if startup_deadline is not None and len(metrics) != len(candidates):
+            raise RuntimeError(
+                f"fresh discovery bootstrap incomplete: {len(metrics)}/{len(candidates)} symbols"
+            )
         output = self._ranker.rank(candidates, metrics, requested_top_n)
         self._cached_output = output
         self._cached_at = now
