@@ -3,7 +3,6 @@ from __future__ import annotations
 import json
 import socket
 import unittest
-from pathlib import Path
 from unittest.mock import Mock, patch
 from urllib.error import HTTPError
 
@@ -89,6 +88,9 @@ class ResilientBootstrapTests(unittest.TestCase):
         self.assertEqual(result, {"ok": True})
         self.assertEqual(sleeps, [0.5])
         self.assertEqual(len(source.request_events), 2)
+        self.assertEqual(source.request_events[0]["request_id"], source.request_events[1]["request_id"])
+        for key in ("endpoint", "stage", "symbol", "attempt", "timeout_requested", "timeout_effective", "start_timestamp", "end_timestamp", "exception_type", "elapsed_seconds"):
+            self.assertIn(key, source.request_events[0])
         self.assertEqual(source.request_events[0]["attempt"], 1)
         self.assertEqual(source.request_events[0]["exception_type"], "TimeoutError")
         self.assertEqual(source.request_events[0]["failure_category"], "read_or_transport_timeout")
@@ -164,7 +166,7 @@ class ResilientBootstrapTests(unittest.TestCase):
         class Source(BinanceSpotOpportunitySource):
             def __init__(self):
                 super().__init__(ttl_seconds=0.0, timeout_seconds=10.0)
-                self.fail_once = True
+                self.history_fail_once = True
 
             def _get_json(self, path, params=None):
                 if path == "ticker/24hr":
@@ -172,20 +174,22 @@ class ResilientBootstrapTests(unittest.TestCase):
                 if path == "ticker/bookTicker":
                     return [{"symbol": SYMBOL, "bidPrice": "99.99", "askPrice": "100.01"}]
                 if path == "klines":
-                    if self.fail_once:
-                        self.fail_once = False
-                        raise TimeoutError("read timed out")
-                    return [[index, "1", "2", "0", str(100 + index), "10"] for index in range(32)]
+                    return super()._get_json(path, params)
                 raise AssertionError(path)
 
         source = Source()
-        with patch("providers.binance_opportunity_source.time.sleep") as sleep:
+        with patch(
+            "providers.binance_opportunity_source.urlopen",
+            side_effect=[socket.timeout("read timed out"), _Response([[index, "1", "2", "0", str(100 + index), "10"] for index in range(32)])],
+        ), patch("providers.binance_opportunity_source.time.sleep") as sleep:
             metrics = source.metrics_bulk((SYMBOL,))
         self.assertIn(SYMBOL, metrics)
         self.assertEqual(sleep.call_count, 1)
+        history_events = [event for event in source.request_events if event["stage"] == "history"]
+        self.assertEqual([event["outcome"] for event in history_events], ["retrying", "success"])
 
     def test_survivor_timeout_after_retry_exhaustion_fails_closed(self):
-        source = _StartupSource(failure=TimeoutError("paper startup discovery deadline exceeded"))
+        source = _StartupSource(failure=TimeoutError("paper startup discovery timeout"))
         discovery = OpportunityDiscovery(MarketUniverseDiscovery(_Universe()), source, OpportunityConfig())
         discovery._ranker.rank = Mock()
         with self.assertRaises(TimeoutError):
@@ -199,6 +203,32 @@ class ResilientBootstrapTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "fresh discovery bootstrap incomplete"):
             discovery.discover(top_n=1)
         discovery._ranker.rank.assert_not_called()
+
+    def test_startup_source_does_not_use_90_second_deadline_as_transport_gate(self):
+        import tools.orion_paper_8h_runner as runner_module
+
+        source = runner_module._BoundedBinanceSpotOpportunitySource(ttl_seconds=0.0, deadline=1.0)
+        self.assertEqual(runner_module.STARTUP_DISCOVERY_TIMEOUT_SECONDS, 90.0)
+        self.assertTrue(source._startup_deadline == float("inf"))
+        with patch("providers.binance_opportunity_source.urlopen", return_value=_Response({"ok": True})) as open_mock:
+            self.assertEqual(source._get_json("exchangeInfo"), {"ok": True})
+        self.assertEqual(open_mock.call_args.kwargs["timeout"], 10.0)
+
+    def test_deep_candidate_timeout_retries_with_transport_timeout(self):
+        import tools.orion_paper_8h_runner as runner_module
+        from enums import Timeframe
+
+        provider = runner_module._BoundedPublicBinanceKlineProvider()
+        payload = [[index, "1", "2", "0", str(100 + index), "10"] for index in range(8)]
+        with patch(
+            "tools.orion_paper_8h_runner.urllib.request.urlopen",
+            side_effect=[socket.timeout("read timed out"), _Response(payload)],
+        ), patch("tools.orion_paper_8h_runner.time.sleep") as sleep:
+            self.assertEqual(provider.klines(SYMBOL, Timeframe.H4, 8), payload)
+        self.assertEqual(sleep.call_count, 1)
+        self.assertEqual(provider.request_events[0]["failure_category"], "read_or_transport_timeout")
+        self.assertEqual(provider.request_events[-1]["outcome"], "success")
+        self.assertEqual(provider.request_events[0]["timeout_effective"], 10.0)
 
 
 if __name__ == "__main__":
