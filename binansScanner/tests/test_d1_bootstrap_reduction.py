@@ -72,6 +72,7 @@ class D1BootstrapReductionTests(unittest.TestCase):
         self.assertIn("GOODUSDT", source.history_calls)
         self.assertIn("BADBOOKUSDT", source.history_calls)
         self.assertIn("NANVOLUSDT", source.history_calls)
+        self.assertIn("MISSINGUSDT", source.history_calls)
         self.assertEqual(set(result), set(SYMBOLS) - {"MISSINGUSDT"})
 
     def test_missing_or_ambiguous_metadata_is_fail_open_to_history(self):
@@ -109,28 +110,22 @@ class D1BootstrapReductionTests(unittest.TestCase):
         ranked = discovery.discover(top_n=3)
         actual = tuple(item.symbol for item in ranked.candidates)
 
-        full_metrics = source.metrics_bulk(candidates=()) if False else {
-            "LOWUSDT": source._metadata_only_metric("LOWUSDT", _ticker("LOWUSDT", 500_000.0), _book("LOWUSDT")),
-            "WIDEUSDT": source._metadata_only_metric("WIDEUSDT", _ticker("WIDEUSDT"), _book("WIDEUSDT", 100.0)),
-            "GOODUSDT": source._metadata_only_metric("GOODUSDT", _ticker("GOODUSDT"), _book("GOODUSDT")),
-        }
+        full_metrics = source.metrics_bulk(tuple(candidate.symbol for candidate in candidates))
         eligibility = MarketEligibilityFilter(OpportunityConfig())
         expected_rejected = {
             symbol
-            for symbol in full_metrics
-            if not eligibility.evaluate(next(candidate for candidate in candidates if candidate.symbol == symbol), full_metrics[symbol]).eligible
+            for symbol, metric in full_metrics.items()
+            if not eligibility.evaluate(next(candidate for candidate in candidates if candidate.symbol == symbol), metric).eligible
         }
-        self.assertNotIn("GOODUSDT", expected_rejected)
-        self.assertNotIn("GOODUSDT", actual)
-        self.assertEqual(set(actual), {"GOODUSDT"})
         self.assertEqual(expected_rejected, {"LOWUSDT", "WIDEUSDT"})
+        self.assertEqual(set(actual), {"GOODUSDT"})
 
     def test_history_request_reduction_is_exact_for_mocked_universe(self):
         source = _BootstrapSource()
         source.metrics_bulk(SYMBOLS)
         self.assertEqual(len(SYMBOLS), 6)
-        self.assertEqual(len(source.history_calls), 3)
-        self.assertEqual(sorted(source.history_calls), ["BADBOOKUSDT", "GOODUSDT", "NANVOLUSDT"])
+        self.assertEqual(len(source.history_calls), 4)
+        self.assertEqual(sorted(source.history_calls), ["BADBOOKUSDT", "GOODUSDT", "MISSINGUSDT", "NANVOLUSDT"])
 
     def test_existing_constants_are_unchanged(self):
         self.assertEqual(BinanceSpotOpportunitySource.HISTORY_LIMIT, 32)
