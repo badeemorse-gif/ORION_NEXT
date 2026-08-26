@@ -145,7 +145,9 @@ class BinanceSpotOpportunitySource:
             quote_volume = float(ticker["quoteVolume"])
         except (KeyError, TypeError, ValueError):
             return True
-        if not math.isfinite(quote_volume) or quote_volume < cls.EARLY_MIN_QUOTE_VOLUME_24H:
+        if not math.isfinite(quote_volume):
+            return True
+        if quote_volume < cls.EARLY_MIN_QUOTE_VOLUME_24H:
             return False
         if book is None:
             return True
