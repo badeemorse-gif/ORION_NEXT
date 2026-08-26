@@ -324,7 +324,7 @@ class ScalpingOpportunityPipeline:
         active = tuple(self._with_recall_lanes(item, provenance) for item in result.active_set.candidates)
         return ScalpingCandidateSet(
             OpportunityCandidateSet(broad, len(broad), result.broad_pool.snapshot_timestamp),
-            OpportunityCandidateSet(active, len(active), result.refreshed if False else result.active_set.snapshot_timestamp),
+            OpportunityCandidateSet(active, len(active), result.active_set.snapshot_timestamp),
             result.refreshed,
             tuple((symbol, tuple(lanes)) for symbol, lanes in recall_result.provenance),
             recall_result.counts,
