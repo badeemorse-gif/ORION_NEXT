@@ -113,13 +113,17 @@ class D1DiscoveryScalabilityTests(unittest.TestCase):
         self.assertLessEqual(source.max_active, source.DISCOVERY_CONCURRENCY)
         self.assertEqual(sorted(source.calls), sorted(TARGET_SYMBOLS))
 
-    def test_expired_deadline_launches_no_history_network_request(self):
+    def test_legacy_deadline_marker_does_not_block_history_request(self):
         source = BinanceSpotOpportunitySource()
         source._startup_deadline = time.monotonic() - 1.0
-        with patch("providers.binance_opportunity_source.urlopen") as urlopen:
-            with self.assertRaises(TimeoutError):
-                source._fetch_history("AAAUSDT")
-        urlopen.assert_not_called()
+        history = _history()
+        with patch.object(source, "_get_json", return_value=history) as get_json:
+            result = source._fetch_history("AAAUSDT")
+        self.assertEqual(result, tuple(history))
+        get_json.assert_called_once_with(
+            "klines",
+            {"symbol": "AAAUSDT", "interval": "1d", "limit": source.HISTORY_LIMIT},
+        )
 
     def test_inflight_timeout_propagates(self):
         source = _InstrumentedSource()
