@@ -35,6 +35,14 @@ class _FailingPipeline:
         raise RuntimeError("discovery failed")
 
 
+class _TimeoutPipeline:
+    def __init__(self, *args, **kwargs):
+        pass
+
+    def discover(self):
+        raise TimeoutError("paper startup discovery deadline exceeded")
+
+
 class PaperRunnerStartupTests(unittest.TestCase):
     def _config(self, directory: Path) -> runner.Paper8HConfig:
         return runner.Paper8HConfig(output_dir=directory, starting_capital=50.0, top_n=10)
@@ -98,6 +106,18 @@ class PaperRunnerStartupTests(unittest.TestCase):
             self.assertEqual(failure["event_type"], "startup_failure")
             self.assertEqual(failure["startup_phase"], "failed")
             self.assertEqual(failure["failure_kind"], "discovery_exception")
+
+    def test_pipeline_timeout_reaches_create_startup_failure(self):
+        with TemporaryDirectory() as tmp:
+            config = self._config(Path(tmp) / "run")
+            with patch.object(runner, "ScalpingOpportunityPipeline", _TimeoutPipeline):
+                with self.assertRaises(TimeoutError):
+                    runner.Paper8HRunner.create(config)
+            lines = [json.loads(line) for line in (Path(tmp) / "run" / "events.jsonl").read_text(encoding="utf-8").splitlines()]
+            failure = lines[-1]
+            self.assertEqual(failure["event_type"], "startup_failure")
+            self.assertEqual(failure["startup_phase"], "failed")
+            self.assertEqual(failure["failure_kind"], "discovery_timeout")
 
     def test_deadline_timeout_writes_startup_failure(self):
         with TemporaryDirectory() as tmp:
