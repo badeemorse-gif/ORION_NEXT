@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import socket
+import threading
 import unittest
 from unittest.mock import Mock, patch
 from urllib.error import HTTPError
@@ -162,34 +163,59 @@ class ResilientBootstrapTests(unittest.TestCase):
         self.assertEqual([call.args[0] for call in sleep.call_args_list], [0.5, 1.0, 2.0])
         self.assertLessEqual(max(call.args[0] for call in sleep.call_args_list), source.RETRY_MAX_BACKOFF_SECONDS)
 
+    def test_metadata_concurrency_is_two_in_the_real_source(self):
+        source = BinanceSpotOpportunitySource(ttl_seconds=0.0, timeout_seconds=1.0)
+        active = 0
+        max_active = 0
+        lock = threading.Lock()
+
+        def fake_urlopen(request, timeout):
+            nonlocal active, max_active
+            with lock:
+                active += 1
+                max_active = max(max_active, active)
+            try:
+                if request.full_url.endswith("ticker/24hr"):
+                    return _Response([{"symbol": SYMBOL, "lastPrice": "100", "quoteVolume": "500000", "priceChangePercent": "1", "weightedAvgPrice": "100"}])
+                if request.full_url.endswith("ticker/bookTicker"):
+                    return _Response([{"symbol": SYMBOL, "bidPrice": "99.99", "askPrice": "100.01"}])
+                raise AssertionError(request.full_url)
+            finally:
+                with lock:
+                    active -= 1
+
+        with patch("providers.binance_opportunity_source.urlopen", side_effect=fake_urlopen), patch(
+            "providers.binance_opportunity_source.time.sleep"
+        ):
+            result = source.metrics_bulk((SYMBOL,))
+
+        self.assertIn(SYMBOL, result)
+        self.assertEqual(max_active, 2)
+        self.assertEqual(source.METADATA_CONCURRENCY, 2)
+        self.assertEqual(source.DISCOVERY_CONCURRENCY, 4)
+
     def test_transient_history_timeout_then_success_allows_bootstrap(self):
         class Source(BinanceSpotOpportunitySource):
-            def __init__(self):
-                super().__init__(ttl_seconds=0.0, timeout_seconds=10.0)
-                self.history_fail_once = True
-
             def _get_json(self, path, params=None):
-                if path == "ticker/24hr":
+                if path == "ticker/24h":
                     return [{"symbol": SYMBOL, "lastPrice": "100", "quoteVolume": "200000000", "priceChangePercent": "1", "weightedAvgPrice": "100"}]
                 if path == "ticker/bookTicker":
                     return [{"symbol": SYMBOL, "bidPrice": "99.99", "askPrice": "100.01"}]
-                if path == "klines":
-                    return super()._get_json(path, params)
-                raise AssertionError(path)
+                return super()._get_json(path, params)
 
-        source = Source()
-        with patch(
-            "providers.binance_opportunity_source.urlopen",
-            side_effect=[socket.timeout("read timed out"), _Response([[index, "1", "2", "0", str(100 + index), "10"] for index in range(32)])],
-        ), patch("providers.binance_opportunity_source.time.sleep") as sleep:
+        source = Source(ttl_seconds=0.0, timeout_seconds=10.0)
+        payload = [[index, "1", "2", "0", str(100 + index), "10"] for index in range(32)]
+        with patch("providers.binance_opportunity_source.urlopen", side_effect=[socket.timeout("read timed out"), _Response(payload)]), patch(
+            "providers.binance_opportunity_source.time.sleep"
+        ) as sleep:
             metrics = source.metrics_bulk((SYMBOL,))
         self.assertIn(SYMBOL, metrics)
-        self.assertEqual(sleep.call_count, 1)
+        sleep.assert_called_once_with(0.5)
         history_events = [event for event in source.request_events if event["stage"] == "history"]
         self.assertEqual([event["outcome"] for event in history_events], ["retrying", "success"])
 
     def test_survivor_timeout_after_retry_exhaustion_fails_closed(self):
-        source = _StartupSource(failure=TimeoutError("paper startup discovery timeout"))
+        source = _StartupSource(failure=TimeoutError("persistent startup timeout"))
         discovery = OpportunityDiscovery(MarketUniverseDiscovery(_Universe()), source, OpportunityConfig())
         discovery._ranker.rank = Mock()
         with self.assertRaises(TimeoutError):
@@ -209,7 +235,7 @@ class ResilientBootstrapTests(unittest.TestCase):
 
         source = runner_module._BoundedBinanceSpotOpportunitySource(ttl_seconds=0.0, deadline=1.0)
         self.assertEqual(runner_module.STARTUP_DISCOVERY_TIMEOUT_SECONDS, 90.0)
-        self.assertTrue(source._startup_deadline == float("inf"))
+        self.assertEqual(source._startup_deadline, float("inf"))
         with patch("providers.binance_opportunity_source.urlopen", return_value=_Response({"ok": True})) as open_mock:
             self.assertEqual(source._get_json("exchangeInfo"), {"ok": True})
         self.assertEqual(open_mock.call_args.kwargs["timeout"], 10.0)
