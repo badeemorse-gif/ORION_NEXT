@@ -168,6 +168,8 @@ class _BoundedPublicBinanceKlineProvider(_legacy._PublicBinanceKlineProvider):
                 )
                 with urllib.request.urlopen(request, timeout=timeout) as response:
                     payload = json.loads(response.read().decode("utf-8"))
+                if not isinstance(payload, list) or not payload:
+                    raise ValueError(f"No public candle data for {symbol} {interval}")
                 end_timestamp = time.monotonic()
                 self._record_event(
                     request_id=request_id,
@@ -183,8 +185,6 @@ class _BoundedPublicBinanceKlineProvider(_legacy._PublicBinanceKlineProvider):
                     backoff=0.0,
                     outcome="success",
                 )
-                if not isinstance(payload, list) or not payload:
-                    raise ValueError(f"No public candle data for {symbol} {interval}")
                 return payload
             except Exception as exc:
                 end_timestamp = time.monotonic()
