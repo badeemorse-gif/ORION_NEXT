@@ -274,23 +274,23 @@ class ScalpingOpportunityPipeline:
             lanes,
         )
 
-    def _evaluate_candidate(self, candidate: OpportunityCandidate, provenance: Mapping[str, tuple[str, ...]], daily_handoff=None) -> OpportunityCandidate:
+    def _evaluate_candidate(self, candidate: OpportunityCandidate, provenance: Mapping[str, tuple[str, ...]], daily_handoff=None, decision_kwargs: Mapping[str, object] | None = None) -> OpportunityCandidate:
         try:
             candle_map = self._candles_for(candidate.symbol, daily_handoff)
         except TimeoutError:
             raise
         except Exception:
             candle_map = {}
-        decided = self.decision_engine.decide(candidate, candle_map)
+        decided = self.decision_engine.decide(candidate, candle_map, **dict(decision_kwargs or {}))
         return self._with_recall_lanes(self._classification_integrity(decided), provenance)
 
-    def _evaluate_candidates(self, candidates: Sequence[OpportunityCandidate], provenance: Mapping[str, tuple[str, ...]], daily_handoff=None) -> tuple[OpportunityCandidate, ...]:
+    def _evaluate_candidates(self, candidates: Sequence[OpportunityCandidate], provenance: Mapping[str, tuple[str, ...]], daily_handoff=None, decision_kwargs: Mapping[str, object] | None = None) -> tuple[OpportunityCandidate, ...]:
         if not candidates:
             return ()
         indexed: list[OpportunityCandidate | None] = [None] * len(candidates)
         with ThreadPoolExecutor(max_workers=min(self.candle_fetch_concurrency, len(candidates)), thread_name_prefix="orion-scalping-candles") as executor:
             future_to_index = {
-                executor.submit(self._evaluate_candidate, candidate, provenance, daily_handoff): index
+                executor.submit(self._evaluate_candidate, candidate, provenance, daily_handoff, decision_kwargs): index
                 for index, candidate in enumerate(candidates)
             }
             try:
@@ -316,7 +316,7 @@ class ScalpingOpportunityPipeline:
             raise ValueError("fast recall did not produce a sufficiently broad candidate pool")
 
         provenance = dict(recall_result.provenance)
-        enriched = self._evaluate_candidates(recall_result.candidates, provenance, daily_handoff)
+        enriched = self._evaluate_candidates(recall_result.candidates, provenance, daily_handoff, decision_kwargs)
 
         broad_input = OpportunityCandidateSet(tuple(enriched), len(enriched), universe.snapshot_timestamp)
         result = self.pool_manager.select(broad_input, enriched)
@@ -324,7 +324,7 @@ class ScalpingOpportunityPipeline:
         active = tuple(self._with_recall_lanes(item, provenance) for item in result.active_set.candidates)
         return ScalpingCandidateSet(
             OpportunityCandidateSet(broad, len(broad), result.broad_pool.snapshot_timestamp),
-            OpportunityCandidateSet(active, len(active), result.active_set.snapshot_timestamp),
+            OpportunityCandidateSet(active, len(active), result.refreshed if False else result.active_set.snapshot_timestamp),
             result.refreshed,
             tuple((symbol, tuple(lanes)) for symbol, lanes in recall_result.provenance),
             recall_result.counts,
