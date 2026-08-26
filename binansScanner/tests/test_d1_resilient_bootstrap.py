@@ -176,6 +176,7 @@ class ResilientBootstrapTests(unittest.TestCase):
         active = 0
         max_active = 0
         lock = threading.Lock()
+        barrier = threading.Barrier(2)
 
         def fake_urlopen(request, timeout):
             nonlocal active, max_active
@@ -183,6 +184,7 @@ class ResilientBootstrapTests(unittest.TestCase):
                 active += 1
                 max_active = max(max_active, active)
             try:
+                barrier.wait(timeout=1.0)
                 if request.full_url.endswith("ticker/24hr"):
                     return _Response([{"symbol": SYMBOL, "lastPrice": "100", "quoteVolume": "500000", "priceChangePercent": "1", "weightedAvgPrice": "100"}])
                 if request.full_url.endswith("ticker/bookTicker"):
@@ -192,9 +194,7 @@ class ResilientBootstrapTests(unittest.TestCase):
                 with lock:
                     active -= 1
 
-        with patch("providers.binance_opportunity_source.urlopen", side_effect=fake_urlopen), patch(
-            "providers.binance_opportunity_source.time.sleep"
-        ):
+        with patch("providers.binance_opportunity_source.urlopen", side_effect=fake_urlopen):
             result = source.metrics_bulk((SYMBOL,))
 
         self.assertIn(SYMBOL, result)
@@ -205,7 +205,7 @@ class ResilientBootstrapTests(unittest.TestCase):
     def test_transient_history_timeout_then_success_allows_bootstrap(self):
         class Source(BinanceSpotOpportunitySource):
             def _get_json(self, path, params=None):
-                if path == "ticker/24h":
+                if path == "ticker/24hr":
                     return [{"symbol": SYMBOL, "lastPrice": "100", "quoteVolume": "200000000", "priceChangePercent": "1", "weightedAvgPrice": "100"}]
                 if path == "ticker/bookTicker":
                     return [{"symbol": SYMBOL, "bidPrice": "99.99", "askPrice": "100.01"}]
