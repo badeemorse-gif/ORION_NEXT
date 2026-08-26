@@ -5,7 +5,9 @@ from dataclasses import dataclass
 import json
 import math
 import statistics
+import threading
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any, Mapping, Sequence
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
@@ -19,13 +21,23 @@ class _CacheEntry:
     value: Any
 
 
+@dataclass(frozen=True, slots=True)
+class DailyCandleHandoff:
+    """Discovery-scoped daily candles available for equivalent deep evaluation."""
+
+    limit: int
+    candles: Mapping[str, tuple[Sequence[Any], ...]]
+
+
 class BinanceSpotOpportunitySource:
     """Discover spot symbols and derive distinct market-quality features."""
 
     BASE_URL = "https://api.binance.com/api/v3"
     HISTORY_INTERVAL = "1d"
-    HISTORY_LIMIT = 31
+    HISTORY_LIMIT = 32
+    METRICS_HISTORY_WINDOW = 31
     MIN_HISTORY_CANDLES = 22
+    DISCOVERY_CONCURRENCY = 4
 
     def __init__(self, ttl_seconds: float = 30.0, timeout_seconds: float = 10.0, clock=time.monotonic) -> None:
         if ttl_seconds < 0 or timeout_seconds <= 0:
@@ -34,6 +46,8 @@ class BinanceSpotOpportunitySource:
         self.timeout_seconds = timeout_seconds
         self._clock = clock
         self._cache: dict[str, _CacheEntry] = {}
+        self._cache_lock = threading.Lock()
+        self._last_daily_candle_handoff: DailyCandleHandoff | None = None
 
     def _get_json(self, path: str, params: Mapping[str, Any] | None = None) -> Any:
         query = f"?{urlencode(params or {})}" if params else ""
@@ -43,15 +57,26 @@ class BinanceSpotOpportunitySource:
 
     def _cached(self, key: str, loader):
         now = self._clock()
-        entry = self._cache.get(key)
-        if entry is not None and entry.expires_at > now:
-            return entry.value
+        with self._cache_lock:
+            entry = self._cache.get(key)
+            if entry is not None and entry.expires_at > now:
+                return entry.value
         value = loader()
-        self._cache[key] = _CacheEntry(now + self.ttl_seconds, value)
+        with self._cache_lock:
+            current = self._cache.get(key)
+            if current is not None and current.expires_at > now:
+                return current.value
+            self._cache[key] = _CacheEntry(now + self.ttl_seconds, value)
         return value
 
     def exchange_info(self) -> Mapping[str, Any]:
         return self._cached("exchange_info", lambda: self._get_json("exchangeInfo"))
+
+    def take_daily_candle_handoff(self) -> DailyCandleHandoff | None:
+        """Consume the latest discovery-scoped daily candle dataset exactly once."""
+        handoff = self._last_daily_candle_handoff
+        self._last_daily_candle_handoff = None
+        return handoff
 
     @staticmethod
     def _ema(values: Sequence[float], period: int) -> float:
@@ -89,18 +114,54 @@ class BinanceSpotOpportunitySource:
         momentum_quality = min(1.0, abs(momentum_direction))
         return volatility, trend_quality, trend_direction, trend_persistence, momentum_quality, momentum_direction
 
+    def _fetch_history(self, symbol: str) -> tuple[Sequence[Any], ...]:
+        history = self._cached(
+            f"klines_{symbol}",
+            lambda symbol=symbol: self._get_json(
+                "klines",
+                {"symbol": symbol, "interval": self.HISTORY_INTERVAL, "limit": self.HISTORY_LIMIT},
+            ),
+        )
+        if not isinstance(history, list):
+            raise ValueError("invalid price history payload")
+        return tuple(history)
+
     def metrics_bulk(self, symbols: Sequence[str]) -> Mapping[str, MarketMetrics]:
-        wanted = {s.upper() for s in symbols}
+        wanted = tuple(sorted({s.upper() for s in symbols}))
+        self._last_daily_candle_handoff = None
         if not wanted:
             return {}
-        tickers = self._cached("ticker_24h", lambda: self._get_json("ticker/24hr"))
-        books = self._cached("book_ticker", lambda: self._get_json("ticker/bookTicker"))
+
+        with ThreadPoolExecutor(max_workers=min(2, self.DISCOVERY_CONCURRENCY), thread_name_prefix="orion-discovery-meta") as executor:
+            futures = {
+                executor.submit(self._cached, "ticker_24h", lambda: self._get_json("ticker/24hr")): "ticker_24h",
+                executor.submit(self._cached, "book_ticker", lambda: self._get_json("ticker/bookTicker")): "book_ticker",
+            }
+            metadata: dict[str, Any] = {}
+            for future in as_completed(futures):
+                metadata[futures[future]] = future.result()
+
+        tickers = metadata["ticker_24h"]
+        books = metadata["book_ticker"]
         ticker_by_symbol = {str(row.get("symbol", "")).upper(): row for row in tickers if isinstance(row, Mapping)}
         book_by_symbol = {str(row.get("symbol", "")).upper(): row for row in books if isinstance(row, Mapping)}
+
+        histories: dict[str, tuple[Sequence[Any], ...]] = {}
+        with ThreadPoolExecutor(max_workers=self.DISCOVERY_CONCURRENCY, thread_name_prefix="orion-discovery-history") as executor:
+            future_to_symbol = {executor.submit(self._fetch_history, symbol): symbol for symbol in wanted}
+            for future in as_completed(future_to_symbol):
+                symbol = future_to_symbol[future]
+                try:
+                    histories[symbol] = future.result()
+                except Exception:
+                    continue
+
         result: dict[str, MarketMetrics] = {}
-        for symbol in sorted(wanted):
+        reusable_daily: dict[str, tuple[Sequence[Any], ...]] = {}
+        for symbol in wanted:
             ticker = ticker_by_symbol.get(symbol)
-            if ticker is None:
+            history = histories.get(symbol)
+            if ticker is None or history is None:
                 continue
             try:
                 last_price = float(ticker["lastPrice"])
@@ -115,14 +176,8 @@ class BinanceSpotOpportunitySource:
                     if bid > 0 and ask >= bid:
                         spread_bps = ((ask - bid) / ((ask + bid) / 2.0)) * 10_000.0
 
-                history = self._cached(
-                    f"klines_{symbol}",
-                    lambda symbol=symbol: self._get_json(
-                        "klines",
-                        {"symbol": symbol, "interval": self.HISTORY_INTERVAL, "limit": self.HISTORY_LIMIT},
-                    ),
-                )
-                volatility, trend_quality, trend_direction, trend_persistence, momentum_quality, momentum_direction = self._history_features(history)
+                metric_history = history[-self.METRICS_HISTORY_WINDOW:]
+                volatility, trend_quality, trend_direction, trend_persistence, momentum_quality, momentum_direction = self._history_features(metric_history)
                 structure_deviation = abs(last_price / weighted_avg - 1.0) if weighted_avg > 0 else math.inf
                 structure_quality = max(0.0, 1.0 - min(structure_deviation / 0.05, 1.0)) if math.isfinite(structure_deviation) else 0.0
                 volume_quality = min(math.log1p(max(quote_volume, 0.0)) / math.log1p(100_000_000.0), 1.0)
@@ -144,6 +199,13 @@ class BinanceSpotOpportunitySource:
                     trend_persistence=trend_persistence,
                     momentum_direction=momentum_direction,
                 )
+                if len(history) == self.HISTORY_LIMIT:
+                    reusable_daily[symbol] = history
             except (KeyError, TypeError, ValueError, statistics.StatisticsError, ZeroDivisionError):
                 continue
+
+        self._last_daily_candle_handoff = DailyCandleHandoff(
+            limit=self.HISTORY_LIMIT,
+            candles=dict(reusable_daily),
+        )
         return result
