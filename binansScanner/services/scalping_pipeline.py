@@ -247,6 +247,8 @@ class ScalpingOpportunityPipeline:
         for candidate in recall_result.candidates:
             try:
                 candle_map = self._candles_for(candidate.symbol)
+            except TimeoutError:
+                raise
             except Exception:
                 candle_map = {}
             decided = self.decision_engine.decide(candidate, candle_map, **decision_kwargs)
