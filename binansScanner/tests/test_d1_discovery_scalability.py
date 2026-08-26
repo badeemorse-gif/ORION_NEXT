@@ -6,7 +6,7 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from models.opportunity import MarketMetrics, OpportunityCandidate, OpportunityCandidateSet, UniverseCandidate
+from models.opportunity import MarketMetrics, OpportunityCandidate
 from services.scalping_pipeline import ScalpingOpportunityPipeline
 from providers.binance_opportunity_source import BinanceSpotOpportunitySource, DailyCandleHandoff
 
@@ -114,7 +114,7 @@ class D1DiscoveryScalabilityTests(unittest.TestCase):
         self.assertEqual(sorted(source.calls), sorted(TARGET_SYMBOLS))
 
     def test_expired_deadline_launches_no_history_network_request(self):
-        source = _InstrumentedSource()
+        source = BinanceSpotOpportunitySource()
         source._startup_deadline = time.monotonic() - 1.0
         with patch("providers.binance_opportunity_source.urlopen") as urlopen:
             with self.assertRaises(TimeoutError):
