@@ -38,6 +38,8 @@ class BinanceSpotOpportunitySource:
     METRICS_HISTORY_WINDOW = 31
     MIN_HISTORY_CANDLES = 22
     DISCOVERY_CONCURRENCY = 4
+    EARLY_MIN_QUOTE_VOLUME_24H = 1_000_000.0
+    EARLY_MAX_SPREAD_BPS = 50.0
 
     def __init__(self, ttl_seconds: float = 30.0, timeout_seconds: float = 10.0, clock=time.monotonic) -> None:
         if ttl_seconds < 0 or timeout_seconds <= 0:
@@ -135,20 +137,52 @@ class BinanceSpotOpportunitySource:
             raise ValueError("invalid price history payload")
         return tuple(history)
 
+    @classmethod
+    def _needs_history(cls, ticker: Mapping[str, Any] | None, book: Mapping[str, Any] | None) -> bool:
+        if ticker is None:
+            return False
+        try:
+            quote_volume = float(ticker["quoteVolume"])
+        except (KeyError, TypeError, ValueError):
+            return False
+        if not math.isfinite(quote_volume) or quote_volume < cls.EARLY_MIN_QUOTE_VOLUME_24H:
+            return False
+        if book is None:
+            return True
+        try:
+            bid = float(book["bidPrice"])
+            ask = float(book["askPrice"])
+        except (KeyError, TypeError, ValueError):
+            return True
+        if bid <= 0 or ask < bid:
+            return True
+        spread_bps = ((ask - bid) / ((ask + bid) / 2.0)) * 10_000.0
+        return not math.isfinite(spread_bps) or spread_bps <= cls.EARLY_MAX_SPREAD_BPS
+
     def metrics_bulk(self, symbols: Sequence[str]) -> Mapping[str, MarketMetrics]:
         wanted = tuple(sorted({s.upper() for s in symbols}))
         self._last_daily_candle_handoff = None
         if not wanted:
             return {}
 
-        tickers = self._cached("ticker_24h", lambda: self._get_json("ticker/24hr"))
-        books = self._cached("book_ticker", lambda: self._get_json("ticker/bookTicker"))
+        with ThreadPoolExecutor(max_workers=2, thread_name_prefix="orion-discovery-metadata") as executor:
+            ticker_future = executor.submit(self._cached, "ticker_24h", lambda: self._get_json("ticker/24hr"))
+            book_future = executor.submit(self._cached, "book_ticker", lambda: self._get_json("ticker/bookTicker"))
+            tickers = ticker_future.result()
+            books = book_future.result()
         ticker_by_symbol = {str(row.get("symbol", "")).upper(): row for row in tickers if isinstance(row, Mapping)}
         book_by_symbol = {str(row.get("symbol", "")).upper(): row for row in books if isinstance(row, Mapping)}
+        history_symbols = tuple(
+            symbol for symbol in wanted
+            if self._needs_history(ticker_by_symbol.get(symbol), book_by_symbol.get(symbol))
+        )
 
         histories: dict[str, tuple[Sequence[Any], ...]] = {}
         with ThreadPoolExecutor(max_workers=self.DISCOVERY_CONCURRENCY, thread_name_prefix="orion-discovery-history") as executor:
-            future_to_symbol = {executor.submit(self._fetch_history, symbol): symbol for symbol in wanted}
+            future_to_symbol = {
+                executor.submit(self._fetch_history, symbol): symbol
+                for symbol in history_symbols
+            }
             for future in as_completed(future_to_symbol):
                 symbol = future_to_symbol[future]
                 try:
