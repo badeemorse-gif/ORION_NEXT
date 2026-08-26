@@ -15,7 +15,7 @@ SYMBOLS = tuple(f"S{index}USDT" for index in range(6))
 
 
 def _history(rows: int = 32):
-    return [[index, "1", "2", "0", str(100 + index), "10"] for index in range(rows)]
+    return [[index, "1", "2", "0", str(100 + (index % 2) * 5), "10"] for index in range(rows)]
 
 
 def _ticker(symbol: str, volume: float = 200_000_000.0):
@@ -84,6 +84,7 @@ class _TopologySource(BinanceSpotOpportunitySource):
 class D1ColdStartPerformanceEmergencyTests(unittest.TestCase):
     def test_metadata_requests_run_concurrently_with_finite_bound(self):
         source = _TopologySource(delay=0.05)
+        source._fetch_history = lambda symbol: tuple(_history())
         started = time.monotonic()
         source.metrics_bulk((SYMBOLS[0], SYMBOLS[3]))
         elapsed = time.monotonic() - started
@@ -101,15 +102,16 @@ class D1ColdStartPerformanceEmergencyTests(unittest.TestCase):
         result = source.metrics_bulk(SYMBOLS)
         self.assertEqual(set(result), set(SYMBOLS))
 
+        candidates = tuple(
+            type("Candidate", (), {"symbol": symbol, "base_asset": symbol[:-4], "quote_asset": "USDT"})()
+            for symbol in SYMBOLS
+        )
         discovery = OpportunityDiscovery(
             MarketUniverseDiscovery(SimpleNamespace(exchange_info=lambda: {"symbols": []})),
             source,
             OpportunityConfig(),
         )
-        discovery._universe = SimpleNamespace(discover=lambda: tuple(
-            type("Candidate", (), {"symbol": symbol, "base_asset": symbol[:-4], "quote_asset": "USDT"})()
-            for symbol in SYMBOLS
-        ))
+        discovery._universe = SimpleNamespace(discover=lambda: candidates)
         ranked = discovery.discover(top_n=6)
         self.assertEqual(tuple(item.symbol for item in ranked.candidates), (SYMBOLS[0], SYMBOLS[3], SYMBOLS[4], SYMBOLS[5]))
 
