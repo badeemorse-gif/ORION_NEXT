@@ -1,13 +1,16 @@
-"""Paper runtime startup gate with observable, bounded D1 discovery."""
+"""Paper runtime startup gate with observable, resilient D1 discovery."""
 from __future__ import annotations
 
 import asyncio
 import json
+import math
+import socket
 import sys
 import time
 import urllib.request
 from pathlib import Path
 from typing import Any
+from urllib.error import HTTPError, URLError
 
 from tools import _orion_paper_8h_runner_legacy as _legacy
 
@@ -30,6 +33,7 @@ PaperRealtimeLifecycle = _legacy.PaperRealtimeLifecycle
 PaperRuntimeSupervisor = _legacy.PaperRuntimeSupervisor
 PaperRunnerCapitalBridge = _legacy.PaperRunnerCapitalBridge
 
+# Retained for compatibility/audit reporting. It is no longer a startup termination gate.
 STARTUP_DISCOVERY_TIMEOUT_SECONDS = 90.0
 
 # Existing contract surface intentionally remains in this module:
@@ -47,45 +51,165 @@ class Paper8HRunner(_legacy.Paper8HRunner):
 
 
 class _BoundedBinanceSpotOpportunitySource(_legacy.BinanceSpotOpportunitySource):
-    """D1 source adapter that enforces one deadline across all discovery requests."""
+    """D1 source adapter with resilient, bounded public-request retries."""
 
-    def __init__(self, *args: Any, deadline: float, **kwargs: Any) -> None:
+    def __init__(self, *args: Any, deadline: float | None = None, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
-        self._startup_deadline = deadline
+        # Keep the startup marker for the strict completeness contract, but never use
+        # the legacy 90-second value as a termination or transport-timeout gate.
+        self._startup_deadline = math.inf
 
     def _get_json(self, path: str, params=None):  # type: ignore[no-untyped-def]
-        remaining = self._startup_deadline - time.monotonic()
-        if remaining <= 0:
-            raise TimeoutError("paper startup discovery deadline exceeded")
-        original = self.timeout_seconds
-        self.timeout_seconds = min(original, remaining)
-        try:
-            return super()._get_json(path, params)
-        finally:
-            self.timeout_seconds = original
+        return super()._get_json(path, params)
 
 
 class _BoundedPublicBinanceKlineProvider(_legacy._PublicBinanceKlineProvider):
-    """Keep D1 candle requests inside the same startup deadline."""
+    """Read-only public candle adapter with bounded retry, no startup deadline gate."""
 
-    def __init__(self, deadline: float) -> None:
-        self._startup_deadline = deadline
+    RETRY_MAX_ATTEMPTS = _legacy.BinanceSpotOpportunitySource.RETRY_MAX_ATTEMPTS
+    RETRY_INITIAL_BACKOFF_SECONDS = _legacy.BinanceSpotOpportunitySource.RETRY_INITIAL_BACKOFF_SECONDS
+    RETRY_BACKOFF_MULTIPLIER = _legacy.BinanceSpotOpportunitySource.RETRY_BACKOFF_MULTIPLIER
+    RETRY_MAX_BACKOFF_SECONDS = _legacy.BinanceSpotOpportunitySource.RETRY_MAX_BACKOFF_SECONDS
+    RETRY_JITTER_SECONDS = _legacy.BinanceSpotOpportunitySource.RETRY_JITTER_SECONDS
+    RETRY_SERVER_BACKOFF_MAX_SECONDS = _legacy.BinanceSpotOpportunitySource.RETRY_SERVER_BACKOFF_MAX_SECONDS
+    RETRYABLE_HTTP_STATUSES = _legacy.BinanceSpotOpportunitySource.RETRYABLE_HTTP_STATUSES
+
+    def __init__(self, deadline: float | None = None) -> None:
+        self._next_request_id = 0
+        self._request_events: list[dict[str, Any]] = []
+
+    @property
+    def request_events(self) -> tuple[dict[str, Any], ...]:
+        return tuple(dict(event) for event in self._request_events)
+
+    def _retry_failure(self, exc: BaseException) -> tuple[bool, str]:
+        if isinstance(exc, HTTPError):
+            return exc.code in self.RETRYABLE_HTTP_STATUSES, f"http_{exc.code}"
+        if isinstance(exc, (TimeoutError, socket.timeout)):
+            return True, "read_or_transport_timeout"
+        if isinstance(exc, (ConnectionError, URLError)):
+            return True, "transport_error"
+        return False, "non_retryable"
+
+    def _server_backoff(self, exc: BaseException) -> float | None:
+        if not isinstance(exc, HTTPError):
+            return None
+        value = exc.headers.get("Retry-After") if exc.headers is not None else None
+        if value is None:
+            return None
+        try:
+            return min(max(float(value), 0.0), self.RETRY_SERVER_BACKOFF_MAX_SECONDS)
+        except (TypeError, ValueError):
+            return None
+
+    def _backoff_for_attempt(self, attempt: int, exc: BaseException) -> float:
+        server_backoff = self._server_backoff(exc)
+        if server_backoff is not None:
+            return server_backoff
+        base = self.RETRY_INITIAL_BACKOFF_SECONDS * (self.RETRY_BACKOFF_MULTIPLIER ** max(attempt - 1, 0))
+        return min(base, self.RETRY_MAX_BACKOFF_SECONDS) + self.RETRY_JITTER_SECONDS
+
+    def _record_event(
+        self,
+        *,
+        request_id: int,
+        endpoint: str,
+        symbol: str,
+        interval: str,
+        attempt: int,
+        timeout_requested: float,
+        start_timestamp: float,
+        end_timestamp: float,
+        exception_type: str | None,
+        failure_category: str | None,
+        backoff: float,
+        outcome: str,
+    ) -> None:
+        self._request_events.append(
+            {
+                "request_id": request_id,
+                "endpoint": endpoint,
+                "stage": "deep_candidate",
+                "symbol": symbol,
+                "interval": interval,
+                "attempt": attempt,
+                "timeout_requested": timeout_requested,
+                "timeout_effective": timeout_requested,
+                "start_timestamp": start_timestamp,
+                "end_timestamp": end_timestamp,
+                "exception_type": exception_type,
+                "failure_category": failure_category,
+                "backoff": backoff,
+                "elapsed_seconds": end_timestamp - start_timestamp,
+                "outcome": outcome,
+            }
+        )
 
     def klines(self, symbol: str, timeframe, limit: int):  # type: ignore[no-untyped-def]
-        remaining = self._startup_deadline - time.monotonic()
-        if remaining <= 0:
-            raise TimeoutError("paper startup discovery deadline exceeded")
-        interval = {self._legacy_timeframe.D1: "1d", self._legacy_timeframe.H4: "4h", self._legacy_timeframe.H1: "1h", self._legacy_timeframe.M15: "15m"}[timeframe]
-        request = urllib.request.Request(
-            f"https://api.binance.com/api/v3/klines?symbol={symbol.upper()}&interval={interval}&limit={int(limit)}",
-            headers={"User-Agent": "ORION-paper-runner/1.0"},
-            method="GET",
-        )
-        with urllib.request.urlopen(request, timeout=remaining) as response:
-            payload = json.loads(response.read().decode("utf-8"))
-        if not isinstance(payload, list) or not payload:
-            raise RuntimeError(f"No public candle data for {symbol} {interval}")
-        return payload
+        interval = {
+            self._legacy_timeframe.D1: "1d",
+            self._legacy_timeframe.H4: "4h",
+            self._legacy_timeframe.H1: "1h",
+            self._legacy_timeframe.M15: "15m",
+        }[timeframe]
+        self._next_request_id += 1
+        request_id = self._next_request_id
+        timeout = float(_legacy.BinanceSpotOpportunitySource().timeout_seconds)
+        endpoint = "https://api.binance.com/api/v3/klines"
+        query = f"?symbol={symbol.upper()}&interval={interval}&limit={int(limit)}"
+
+        for attempt in range(1, self.RETRY_MAX_ATTEMPTS + 1):
+            start_timestamp = time.monotonic()
+            try:
+                request = urllib.request.Request(
+                    f"{endpoint}{query}",
+                    headers={"User-Agent": "ORION-paper-runner/1.0"},
+                    method="GET",
+                )
+                with urllib.request.urlopen(request, timeout=timeout) as response:
+                    payload = json.loads(response.read().decode("utf-8"))
+                end_timestamp = time.monotonic()
+                self._record_event(
+                    request_id=request_id,
+                    endpoint=endpoint,
+                    symbol=symbol,
+                    interval=interval,
+                    attempt=attempt,
+                    timeout_requested=timeout,
+                    start_timestamp=start_timestamp,
+                    end_timestamp=end_timestamp,
+                    exception_type=None,
+                    failure_category=None,
+                    backoff=0.0,
+                    outcome="success",
+                )
+                if not isinstance(payload, list) or not payload:
+                    raise ValueError(f"No public candle data for {symbol} {interval}")
+                return payload
+            except Exception as exc:
+                end_timestamp = time.monotonic()
+                retryable, category = self._retry_failure(exc)
+                can_retry = retryable and attempt < self.RETRY_MAX_ATTEMPTS
+                backoff = self._backoff_for_attempt(attempt, exc) if can_retry else 0.0
+                self._record_event(
+                    request_id=request_id,
+                    endpoint=endpoint,
+                    symbol=symbol,
+                    interval=interval,
+                    attempt=attempt,
+                    timeout_requested=timeout,
+                    start_timestamp=start_timestamp,
+                    end_timestamp=end_timestamp,
+                    exception_type=type(exc).__name__,
+                    failure_category=category,
+                    backoff=backoff,
+                    outcome="retrying" if can_retry else "failed",
+                )
+                if not can_retry:
+                    raise
+                time.sleep(backoff)
+
+        raise RuntimeError("candle retry loop exhausted unexpectedly")
 
     @property
     def _legacy_timeframe(self):
@@ -118,14 +242,13 @@ def _startup_log(config: Paper8HConfig) -> JsonlRunLog:
 @classmethod
 def _create(cls, config: Paper8HConfig) -> Paper8HRunner:
     log = _startup_log(config)
-    deadline = time.monotonic() + STARTUP_DISCOVERY_TIMEOUT_SECONDS
     try:
         log.write("startup_phase", startup_phase="market_discovery")
         source_factory = BinanceSpotOpportunitySource
         if source_factory is _legacy.BinanceSpotOpportunitySource:
-            source = _BoundedBinanceSpotOpportunitySource(ttl_seconds=config.metrics_ttl_seconds, deadline=deadline)
+            source = _BoundedBinanceSpotOpportunitySource(ttl_seconds=config.metrics_ttl_seconds)
         else:
-            source = source_factory(ttl_seconds=config.metrics_ttl_seconds, deadline=deadline)
+            source = source_factory(ttl_seconds=config.metrics_ttl_seconds)
         universe_source = source if config.dynamic_universe else FixedUniverseSource(source, config.symbols)
         broad_top_n = max(config.top_n * 10, config.top_n + 1)
         discovery_config = OpportunityConfig(
@@ -138,13 +261,11 @@ def _create(cls, config: Paper8HConfig) -> Paper8HRunner:
         scalping_config = _legacy.ScalpingConfig(active_top_n=config.top_n, broad_pool_top_n=broad_top_n)
         pipeline = ScalpingOpportunityPipeline(
             discovery,
-            BinanceScalpingCandleSource(_BoundedPublicBinanceKlineProvider(deadline)),
+            BinanceScalpingCandleSource(_BoundedPublicBinanceKlineProvider()),
             decision_engine=ScalpingDecisionEngine(scalping_config),
             pool_manager=ScalpingCandidatePoolManager(scalping_config),
         )
         initial = pipeline.discover()
-        if time.monotonic() >= deadline:
-            raise TimeoutError("paper startup discovery deadline exceeded")
         selected_symbols = tuple(candidate.symbol for candidate in initial.candidates)
         if not selected_symbols:
             raise RuntimeError("D1 scalping pipeline returned no active opportunities")
