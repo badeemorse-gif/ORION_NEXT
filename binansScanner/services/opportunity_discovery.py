@@ -27,6 +27,17 @@ class BulkMetricsSource(Protocol):
 
 
 @dataclass(frozen=True, slots=True)
+class DiscoveryBootstrapStatus:
+    """Observable completeness state for one fresh discovery acquisition."""
+
+    expected_symbols: tuple[str, ...]
+    received_symbols: tuple[str, ...]
+    missing_symbols: tuple[str, ...]
+    source_status: str
+    deadline_state: str
+
+
+@dataclass(frozen=True, slots=True)
 class OpportunityConfig:
     """Deterministic V3 eligibility and scoring configuration.
 
@@ -295,27 +306,70 @@ class OpportunityDiscovery:
         self._clock = clock
         self._cached_output: OpportunityCandidateSet | None = None
         self._cached_at = -math.inf
+        self._last_bootstrap: DiscoveryBootstrapStatus | None = None
+
+    @property
+    def last_bootstrap(self) -> DiscoveryBootstrapStatus | None:
+        return self._last_bootstrap
+
+    def _record_bootstrap(self, expected_symbols: tuple[str, ...], received_symbols: tuple[str, ...], source_status: str) -> None:
+        deadline = getattr(self._metrics_source, "_startup_deadline", None)
+        if deadline is None:
+            deadline_state = "not_configured"
+        else:
+            deadline_state = "expired" if deadline <= self._clock() else "active"
+        missing_symbols = tuple(symbol for symbol in expected_symbols if symbol not in received_symbols)
+        self._last_bootstrap = DiscoveryBootstrapStatus(
+            expected_symbols=expected_symbols,
+            received_symbols=received_symbols,
+            missing_symbols=missing_symbols,
+            source_status=source_status,
+            deadline_state=deadline_state,
+        )
 
     def _collect_metrics(self, candidates: tuple[UniverseCandidate, ...]) -> Mapping[str, MarketMetrics]:
         symbols = tuple(c.symbol for c in candidates)
+        startup_mode = getattr(self._metrics_source, "_startup_deadline", None) is not None
         bulk = getattr(self._metrics_source, "metrics_bulk", None)
-        if callable(bulk):
-            raw = bulk(symbols)
-            return {symbol: raw[symbol] for symbol in symbols if symbol in raw}
-        return {candidate.symbol: self._metrics_source.metrics(candidate.symbol) for candidate in candidates}
+        try:
+            if callable(bulk):
+                raw = bulk(symbols)
+                if not isinstance(raw, Mapping):
+                    raise TypeError("metrics source must return a mapping")
+                result = {symbol: raw[symbol] for symbol in symbols if symbol in raw}
+            else:
+                result = {candidate.symbol: self._metrics_source.metrics(candidate.symbol) for candidate in candidates}
+        except TimeoutError:
+            self._record_bootstrap(symbols, (), "timeout")
+            raise
+        except Exception:
+            self._record_bootstrap(symbols, (), "exception")
+            raise
+
+        received = tuple(symbol for symbol in symbols if symbol in result)
+        missing = tuple(symbol for symbol in symbols if symbol not in result)
+        source_status = "complete" if not missing else "incomplete"
+        self._record_bootstrap(symbols, received, source_status)
+        if startup_mode and missing:
+            raise RuntimeError(
+                f"fresh discovery bootstrap incomplete: expected={len(symbols)} "
+                f"received={len(received)} missing={','.join(missing)}"
+            )
+        return result
 
     def discover(self, top_n: int | None = None) -> OpportunityCandidateSet:
         candidates = self._universe.discover()
         now = self._clock()
         requested_top_n = top_n if top_n is not None else self._config.default_top_n
-        if self._cached_output is not None and now - self._cached_at < self._config.refresh_interval_seconds and self._cached_output.top_n == requested_top_n:
+        startup_mode = getattr(self._metrics_source, "_startup_deadline", None) is not None
+        if (
+            not startup_mode
+            and self._cached_output is not None
+            and now - self._cached_at < self._config.refresh_interval_seconds
+            and self._cached_output.top_n == requested_top_n
+        ):
             return self._cached_output
         metrics = self._collect_metrics(candidates)
-        startup_deadline = getattr(self._metrics_source, "_startup_deadline", None)
-        if startup_deadline is not None and len(metrics) != len(candidates):
-            raise RuntimeError(
-                f"fresh discovery bootstrap incomplete: {len(metrics)}/{len(candidates)} symbols"
-            )
         output = self._ranker.rank(candidates, metrics, requested_top_n)
         self._cached_output = output
         self._cached_at = now
