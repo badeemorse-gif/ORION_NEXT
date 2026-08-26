@@ -10,7 +10,6 @@ from unittest.mock import Mock, patch
 
 from providers.binance_opportunity_source import BinanceSpotOpportunitySource
 
-
 SYMBOL = "AAAUSDT"
 
 
@@ -43,15 +42,15 @@ class _FakePipeline:
         return SimpleNamespace(candidates=(SimpleNamespace(symbol=SYMBOL),))
 
 
+class _FakeSupervisor:
+    def __init__(self, runtime):
+        self.runtime = runtime
+
+
 class ResilientBootstrapRunnerIntegrationTests(unittest.TestCase):
     @staticmethod
     def _config(runner_module, path: Path):
-        return runner_module.Paper8HConfig(
-            output_dir=path,
-            starting_capital=50.0,
-            top_n=1,
-            dynamic_universe=True,
-        )
+        return runner_module.Paper8HConfig(output_dir=path, starting_capital=50.0, top_n=1, dynamic_universe=True)
 
     @staticmethod
     def _fake_urlopen(*, timeout_once: bool):
@@ -60,13 +59,7 @@ class ResilientBootstrapRunnerIntegrationTests(unittest.TestCase):
         def fake_urlopen(request, timeout):
             url = request.full_url
             if "ticker/24hr" in url:
-                return _Response([{
-                    "symbol": SYMBOL,
-                    "lastPrice": "100",
-                    "quoteVolume": "200000000",
-                    "priceChangePercent": "1",
-                    "weightedAvgPrice": "100",
-                }])
+                return _Response([{"symbol": SYMBOL, "lastPrice": "100", "quoteVolume": "200000000", "priceChangePercent": "1", "weightedAvgPrice": "100"}])
             if "ticker/bookTicker" in url:
                 return _Response([{"symbol": SYMBOL, "bidPrice": "99.99", "askPrice": "100.01"}])
             if "/klines?" in url:
@@ -86,13 +79,16 @@ class ResilientBootstrapRunnerIntegrationTests(unittest.TestCase):
         fake_urlopen, state = self._fake_urlopen(timeout_once=True)
         with tempfile.TemporaryDirectory() as tmp:
             config = self._config(runner_module, Path(tmp) / "run")
-            lifecycle = Mock(return_value=object())
+            runtime = SimpleNamespace(ledger=Mock())
+            lifecycle_factory = Mock(return_value=runtime)
+            stream_factory = Mock(return_value=object())
+            supervisor_factory = Mock(side_effect=lambda runtime: _FakeSupervisor(runtime))
             with patch("providers.binance_opportunity_source.urlopen", side_effect=fake_urlopen), patch(
                 "providers.binance_opportunity_source.time.sleep"
             ) as sleep, patch.object(runner_module, "ScalpingOpportunityPipeline", _FakePipeline), patch.object(
-                runner_module, "DynamicMarketStream", Mock(return_value=object())
-            ), patch.object(runner_module, "PaperRuntimeSupervisor", Mock(return_value=object())), patch.object(
-                runner_module, "PaperRealtimeLifecycle", lifecycle
+                runner_module, "DynamicMarketStream", stream_factory
+            ), patch.object(runner_module, "PaperRuntimeSupervisor", supervisor_factory), patch.object(
+                runner_module, "PaperRealtimeLifecycle", lifecycle_factory
             ):
                 result = runner_module.Paper8HRunner.create(config)
 
@@ -100,30 +96,29 @@ class ResilientBootstrapRunnerIntegrationTests(unittest.TestCase):
             self.assertEqual(state["history_attempts"], 2)
             sleep.assert_called_once_with(0.5)
             records = [json.loads(line) for line in (Path(tmp) / "run" / "events.jsonl").read_text(encoding="utf-8").splitlines()]
-            self.assertEqual(
-                [record["startup_phase"] for record in records if record["event_type"] == "startup_phase"],
-                ["market_discovery", "runtime_initialization", "running"],
-            )
-            lifecycle.assert_called_once()
+            phases = [record["startup_phase"] for record in records if record["event_type"] == "startup_phase"]
+            self.assertEqual(phases, ["market_discovery", "runtime_initialization", "running"])
+            lifecycle_factory.assert_called_once()
+            stream_factory.assert_called_once_with((SYMBOL,))
 
     def test_persistent_history_failure_exhausts_retry_and_blocks_runtime(self):
         import tools.orion_paper_8h_runner as runner_module
 
         fake_urlopen, state = self._fake_urlopen(timeout_once=False)
-        lifecycle = Mock()
+        lifecycle_factory = Mock()
         with tempfile.TemporaryDirectory() as tmp:
             config = self._config(runner_module, Path(tmp) / "run")
             with patch("providers.binance_opportunity_source.urlopen", side_effect=fake_urlopen), patch(
                 "providers.binance_opportunity_source.time.sleep"
             ) as sleep, patch.object(runner_module, "ScalpingOpportunityPipeline", _FakePipeline), patch.object(
-                runner_module, "PaperRealtimeLifecycle", lifecycle
+                runner_module, "PaperRealtimeLifecycle", lifecycle_factory
             ):
                 with self.assertRaises(TimeoutError):
                     runner_module.Paper8HRunner.create(config)
 
             self.assertEqual(state["history_attempts"], BinanceSpotOpportunitySource.RETRY_MAX_ATTEMPTS)
             self.assertEqual(sleep.call_count, BinanceSpotOpportunitySource.RETRY_MAX_ATTEMPTS - 1)
-            lifecycle.assert_not_called()
+            lifecycle_factory.assert_not_called()
             records = [json.loads(line) for line in (Path(tmp) / "run" / "events.jsonl").read_text(encoding="utf-8").splitlines()]
             failures = [record for record in records if record["event_type"] == "startup_failure"]
             self.assertEqual(len(failures), 1)
