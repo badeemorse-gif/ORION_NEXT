@@ -163,6 +163,14 @@ class ResilientBootstrapTests(unittest.TestCase):
         self.assertEqual([call.args[0] for call in sleep.call_args_list], [0.5, 1.0, 2.0])
         self.assertLessEqual(max(call.args[0] for call in sleep.call_args_list), source.RETRY_MAX_BACKOFF_SECONDS)
 
+    def test_retry_policy_is_explicit_and_finite(self):
+        self.assertEqual(BinanceSpotOpportunitySource.RETRY_MAX_ATTEMPTS, 4)
+        self.assertEqual(BinanceSpotOpportunitySource.RETRY_INITIAL_BACKOFF_SECONDS, 0.5)
+        self.assertEqual(BinanceSpotOpportunitySource.RETRY_BACKOFF_MULTIPLIER, 2.0)
+        self.assertEqual(BinanceSpotOpportunitySource.RETRY_MAX_BACKOFF_SECONDS, 2.0)
+        self.assertEqual(BinanceSpotOpportunitySource.RETRY_JITTER_SECONDS, 0.0)
+        self.assertEqual(BinanceSpotOpportunitySource.RETRY_SERVER_BACKOFF_MAX_SECONDS, 10.0)
+
     def test_metadata_concurrency_is_two_in_the_real_source(self):
         source = BinanceSpotOpportunitySource(ttl_seconds=0.0, timeout_seconds=1.0)
         active = 0
