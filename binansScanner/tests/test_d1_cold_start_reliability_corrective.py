@@ -48,7 +48,7 @@ class _StartupSource:
         self.metrics_data = dict(metrics)
         self.calls = 0
         if startup:
-            self._startup_deadline = 10**9
+            self._startup_deadline = float("inf")
 
     def metrics_bulk(self, symbols):
         self.calls += 1
@@ -154,7 +154,7 @@ class ColdStartCorrectiveContractTests(unittest.TestCase):
 
         class FakeSource:
             def __init__(self, *args, **kwargs):
-                self._startup_deadline = kwargs["deadline"]
+                self._startup_deadline = kwargs.get("deadline", float("inf"))
 
             def exchange_info(self):
                 return _Universe().exchange_info()
