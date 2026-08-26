@@ -165,23 +165,11 @@ class BinanceSpotOpportunitySource:
             return None
         try:
             quote_volume = float(ticker["quoteVolume"])
-        except (KeyError, TypeError, ValueError):
-            return None
-        change_pct = None
-        weighted_avg = None
-        last_price = None
-        try:
+            last_price = float(ticker["lastPrice"])
             change_pct = float(ticker["priceChangePercent"])
-        except (KeyError, TypeError, ValueError):
-            pass
-        try:
             weighted_avg = float(ticker["weightedAvgPrice"])
         except (KeyError, TypeError, ValueError):
-            pass
-        try:
-            last_price = float(ticker["lastPrice"])
-        except (KeyError, TypeError, ValueError):
-            pass
+            return None
         spread_bps = None
         if book is not None:
             try:
@@ -190,7 +178,7 @@ class BinanceSpotOpportunitySource:
                 if bid > 0 and ask >= bid:
                     spread_bps = ((ask - bid) / ((ask + bid) / 2.0)) * 10_000.0
             except (KeyError, TypeError, ValueError, ZeroDivisionError):
-                pass
+                return None
         safe_volume = quote_volume if math.isfinite(quote_volume) else 0.0
         volume_quality = min(math.log1p(max(safe_volume, 0.0)) / math.log1p(100_000_000.0), 1.0)
         return MarketMetrics(
@@ -252,10 +240,9 @@ class BinanceSpotOpportunitySource:
             ticker = ticker_by_symbol.get(symbol)
             if not self._needs_history(ticker, book_by_symbol.get(symbol)):
                 metadata_metric = self._metadata_only_metric(symbol, ticker, book_by_symbol.get(symbol))
-                if metadata_metric is None:
+                if metadata_metric is not None:
+                    result[symbol] = metadata_metric
                     continue
-                result[symbol] = metadata_metric
-                continue
             history = histories.get(symbol)
             if ticker is None or history is None:
                 continue
