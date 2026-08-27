@@ -1,13 +1,11 @@
 from __future__ import annotations
 
-import asyncio
 import json
 import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import Mock, patch
 
-from models.opportunity import MarketMetrics
 from providers.binance_opportunity_source import BinanceSpotOpportunitySource
 
 DJTB = "DJTBUSDT"
@@ -19,20 +17,19 @@ def _history_payload(rows: int = 32):
 
 
 def _exchange_info_rows():
-    rows = []
-    for symbol in EXPECTED_SYMBOLS:
-        base = symbol[:-4]
-        rows.append(
+    return {
+        "symbols": [
             {
                 "symbol": symbol,
                 "status": "TRADING",
-                "baseAsset": base,
+                "baseAsset": symbol[:-4],
                 "quoteAsset": "USDT",
                 "isSpotTradingAllowed": True,
                 "filters": [],
             }
-        )
-    return {"symbols": rows}
+            for symbol in EXPECTED_SYMBOLS
+        ]
+    }
 
 
 def _ticker(symbol: str, volume: float = 1_000_000.0):
@@ -62,9 +59,6 @@ class _Response:
     def read(self):
         return json.dumps(self._payload).encode("utf-8")
 
-    def __iter__(self):
-        return iter(())
-
 
 class _PaperNetwork:
     """Deterministic public-network mock for the actual Paper8HRunner composition."""
@@ -72,7 +66,7 @@ class _PaperNetwork:
     def __init__(self, *, persistent_missing: bool):
         self.persistent_missing = persistent_missing
         self.calls: list[dict[str, object]] = []
-        self.history_calls: list[str] = []
+        self.history_calls: list[tuple[str, str]] = []
         self.phase_trace: list[str] = []
 
     def __call__(self, request, timeout):
@@ -90,6 +84,7 @@ class _PaperNetwork:
                     return _Response([])
                 return _Response(_ticker(DJTB))
             self.phase_trace.append("bulk_ticker")
+            # Deliberately omit DJTBUSDT from both bulk metadata snapshots.
             return _Response([_ticker(symbol, 500_000.0) for symbol in EXPECTED_SYMBOLS[:-1]])
 
         if "ticker/bookTicker" in url:
@@ -102,11 +97,11 @@ class _PaperNetwork:
             return _Response([_book(symbol) for symbol in EXPECTED_SYMBOLS[:-1]])
 
         if "/klines?" in url:
-            params = dict(part.split("=", 1) for part in url.split("?", 1)[1].split("&"))
-            symbol = params["symbol"]
-            interval = params["interval"]
+            query = dict(part.split("=", 1) for part in url.split("?", 1)[1].split("&"))
+            symbol = query["symbol"]
+            interval = query["interval"]
             self.phase_trace.append(f"history:{symbol}:{interval}")
-            self.history_calls.append(symbol)
+            self.history_calls.append((symbol, interval))
             if self.persistent_missing:
                 raise AssertionError(f"first_divergence=unexpected history request for unresolved {DJTB}")
             return _Response(_history_payload())
@@ -142,41 +137,43 @@ class Paper8HStartupIntegrationTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmp:
             config = self._config(runner_module, Path(tmp) / "run")
-            with patch("providers.binance_opportunity_source.urlopen", side_effect=network), patch(
-                "tools.orion_paper_8h_runner.DynamicMarketStream", return_value=stream
-            ), patch("tools.orion_paper_8h_runner.PaperRealtimeLifecycle", return_value=lifecycle) as lifecycle_factory:
+            with patch("providers.binance_opportunity_source.urlopen", side_effect=network), patch.object(
+                runner_module, "DynamicMarketStream", return_value=stream
+            ), patch.object(
+                runner_module, "PaperRealtimeLifecycle", return_value=lifecycle
+            ) as lifecycle_factory:
                 runner = runner_module.Paper8HRunner.create(config)
 
             self.assertIsNotNone(runner, "first_divergence=create() did not return a runner")
-            self.assertEqual(len(runner.pipeline.discovery.last_bootstrap.expected_symbols), 476)
-            self.assertEqual(len(runner.pipeline.discovery.last_bootstrap.received_symbols), 476)
-            self.assertEqual(runner.pipeline.discovery.last_bootstrap.missing_symbols, ())
+            bootstrap = runner.pipeline.discovery.last_bootstrap
+            self.assertEqual((len(bootstrap.expected_symbols), len(bootstrap.received_symbols)), (476, 476))
+            self.assertEqual(bootstrap.missing_symbols, ())
 
             targeted_ticker = network.targeted_symbols("ticker/24hr")
             targeted_book = network.targeted_symbols("ticker/bookTicker")
-            self.assertEqual(targeted_ticker, [next(url for url in targeted_ticker if DJTB in url)])
-            self.assertEqual(targeted_book, [next(url for url in targeted_book if DJTB in url)])
-            self.assertEqual(network.history_calls.count(DJTB), 1, "first_divergence=DJTB history was not acquired exactly once")
-            self.assertIn("targeted_ticker", network.phase_trace)
-            self.assertIn("targeted_book", network.phase_trace)
-            self.assertIn(f"history:{DJTB}:1d", network.phase_trace)
+            self.assertEqual(len(targeted_ticker), 1, f"first_divergence=targeted ticker count={len(targeted_ticker)}")
+            self.assertIn("symbol=DJTBUSDT", targeted_ticker[0], "first_divergence=targeted ticker symbol mismatch")
+            self.assertEqual(len(targeted_book), 1, f"first_divergence=targeted book count={len(targeted_book)}")
+            self.assertIn("symbol=DJTBUSDT", targeted_book[0], "first_divergence=targeted book symbol mismatch")
 
-            reconciliation_events = [
-                event for event in runner.pipeline.discovery.last_reconciliation_events if event["symbol"] == DJTB
-            ]
-            self.assertEqual(len(reconciliation_events), 1, "first_divergence=unexpected reconciliation count")
-            event = reconciliation_events[0]
-            self.assertEqual(event["bulk_ticker_state"], "absent")
-            self.assertEqual(event["bulk_book_state"], "absent")
-            self.assertEqual(event["targeted_ticker_state"], "present")
-            self.assertEqual(event["targeted_book_state"], "present")
+            self.assertEqual(
+                network.history_calls.count((DJTB, "1d")),
+                1,
+                "first_divergence=DJTB 1d history was not acquired exactly once",
+            )
+            self.assertIn("targeted_ticker", network.phase_trace, "first_divergence=targeted ticker never invoked")
+            self.assertIn("targeted_book", network.phase_trace, "first_divergence=targeted book never invoked")
+            self.assertIn(f"history:{DJTB}:1d", network.phase_trace, "first_divergence=DJTB 1d history never invoked")
+
+            events = [event for event in runner.pipeline.discovery.last_reconciliation_events if event["symbol"] == DJTB]
+            self.assertEqual(len(events), 1, "first_divergence=unexpected reconciliation event count")
+            event = events[0]
+            self.assertEqual((event["bulk_ticker_state"], event["bulk_book_state"]), ("absent", "absent"))
+            self.assertEqual((event["targeted_ticker_state"], event["targeted_book_state"]), ("present", "present"))
             self.assertTrue(event["needs_history"])
             self.assertEqual(event["history_outcome"], "success")
             self.assertEqual(event["final_disposition"], "eligible")
             lifecycle_factory.assert_called_once()
-
-            # The runtime object was created only after the real Paper8HRunner.create composition
-            # completed discovery. We intentionally do not call runner.run().
             self.assertIs(runner.supervisor.runtime, lifecycle)
 
     def test_real_paper8h_create_blocks_runtime_after_reconciliation_exhaustion(self):
@@ -192,8 +189,8 @@ class Paper8HStartupIntegrationTests(unittest.TestCase):
                 with self.assertRaisesRegex(RuntimeError, "missing=DJTBUSDT"):
                     runner_module.Paper8HRunner.create(config)
 
-            self.assertEqual(network.targeted_symbols("ticker/24hr").__len__(), 2)
-            self.assertEqual(network.targeted_symbols("ticker/bookTicker").__len__(), 2)
+            self.assertEqual(len(network.targeted_symbols("ticker/24hr")), 2)
+            self.assertEqual(len(network.targeted_symbols("ticker/bookTicker")), 2)
             self.assertEqual(network.history_calls, [], "first_divergence=history ran while DJTBUSDT remained unresolved")
             lifecycle_factory.assert_not_called()
 
@@ -203,8 +200,8 @@ class Paper8HStartupIntegrationTests(unittest.TestCase):
         network = _PaperNetwork(persistent_missing=False)
         with tempfile.TemporaryDirectory() as tmp:
             config = self._config(runner_module, Path(tmp) / "run")
-            with patch("providers.binance_opportunity_source.urlopen", side_effect=network), patch(
-                "tools.orion_paper_8h_runner.PaperRealtimeLifecycle", return_value=Mock()
+            with patch("providers.binance_opportunity_source.urlopen", side_effect=network), patch.object(
+                runner_module, "PaperRealtimeLifecycle", return_value=Mock()
             ):
                 runner = runner_module.Paper8HRunner.create(config)
 
