@@ -356,13 +356,40 @@ class BinanceSpotOpportunitySource:
             momentum_direction=None,
         )
 
-    def _record_reconciliation(self, *, attempt: int, symbol: str, metadata_state: str, needs_history: bool | None, history_outcome: str, final_disposition: str) -> None:
+    @staticmethod
+    def _metadata_summary(ticker: Mapping[str, Any] | None, book: Mapping[str, Any] | None) -> dict[str, Any]:
+        if ticker is None:
+            return {"ticker": None, "book_ticker": None}
+        summary: dict[str, Any] = {
+            "quote_volume_24h": ticker.get("quoteVolume"),
+            "last_price": ticker.get("lastPrice"),
+            "price_change_percent_24h": ticker.get("priceChangePercent"),
+            "weighted_avg_price_24h": ticker.get("weightedAvgPrice"),
+        }
+        if book is not None:
+            summary["bid_price"] = book.get("bidPrice")
+            summary["ask_price"] = book.get("askPrice")
+        return summary
+
+    def _record_reconciliation(
+        self,
+        *,
+        attempt: int,
+        symbol: str,
+        metadata_state: str,
+        ticker: Mapping[str, Any] | None,
+        book: Mapping[str, Any] | None,
+        needs_history: bool | None,
+        history_outcome: str,
+        final_disposition: str,
+    ) -> None:
         with self._request_lock:
             self._reconciliation_events.append(
                 {
                     "attempt": attempt,
                     "symbol": symbol,
                     "metadata_state": metadata_state,
+                    "metadata": self._metadata_summary(ticker, book),
                     "needs_history": needs_history,
                     "history_outcome": history_outcome,
                     "final_disposition": final_disposition,
@@ -377,8 +404,12 @@ class BinanceSpotOpportunitySource:
 
         resolved: dict[str, MarketMetrics] = {}
         pending = wanted
+        existing_handoff = self._last_daily_candle_handoff
+        reusable_daily: dict[str, tuple[Sequence[Any], ...]] = {}
+        if existing_handoff is not None and existing_handoff.limit == self.HISTORY_LIMIT:
+            reusable_daily.update(existing_handoff.candles)
+
         for attempt in range(1, self.RECONCILIATION_MAX_ATTEMPTS + 1):
-            self._last_daily_candle_handoff = None
             if not pending:
                 break
             try:
@@ -393,6 +424,8 @@ class BinanceSpotOpportunitySource:
                         attempt=attempt,
                         symbol=symbol,
                         metadata_state="acquisition_exception",
+                        ticker=None,
+                        book=None,
                         needs_history=None,
                         history_outcome="not_attempted",
                         final_disposition="unresolved",
@@ -429,6 +462,8 @@ class BinanceSpotOpportunitySource:
                             attempt=attempt,
                             symbol=symbol,
                             metadata_state=metadata_states[symbol][0],
+                            ticker=ticker,
+                            book=book,
                             needs_history=False,
                             history_outcome="not_required",
                             final_disposition="definitely_ineligible",
@@ -451,7 +486,6 @@ class BinanceSpotOpportunitySource:
                         continue
 
             next_pending: list[str] = []
-            reusable_daily: dict[str, tuple[Sequence[Any], ...]] = {}
             for symbol in pending:
                 if symbol in resolved:
                     continue
@@ -459,14 +493,15 @@ class BinanceSpotOpportunitySource:
                 book = book_by_symbol.get(symbol)
                 history = histories.get(symbol)
                 if ticker is None or history is None:
-                    history_outcome = "missing_or_failed"
                     next_pending.append(symbol)
                     self._record_reconciliation(
                         attempt=attempt,
                         symbol=symbol,
                         metadata_state=metadata_states[symbol][0],
+                        ticker=ticker,
+                        book=book,
                         needs_history=True,
-                        history_outcome=history_outcome,
+                        history_outcome="missing_or_failed",
                         final_disposition="unresolved",
                     )
                     continue
@@ -509,6 +544,8 @@ class BinanceSpotOpportunitySource:
                         attempt=attempt,
                         symbol=symbol,
                         metadata_state=metadata_states[symbol][0],
+                        ticker=ticker,
+                        book=book,
                         needs_history=True,
                         history_outcome="success",
                         final_disposition="eligible",
@@ -519,6 +556,8 @@ class BinanceSpotOpportunitySource:
                         attempt=attempt,
                         symbol=symbol,
                         metadata_state=metadata_states[symbol][0],
+                        ticker=ticker,
+                        book=book,
                         needs_history=True,
                         history_outcome="invalid",
                         final_disposition="unresolved",
@@ -531,6 +570,8 @@ class BinanceSpotOpportunitySource:
                 attempt=self.RECONCILIATION_MAX_ATTEMPTS,
                 symbol=symbol,
                 metadata_state="unresolved_after_reconciliation",
+                ticker=None,
+                book=None,
                 needs_history=True,
                 history_outcome="exhausted",
                 final_disposition="unresolved",
