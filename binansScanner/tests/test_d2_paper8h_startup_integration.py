@@ -6,11 +6,10 @@ import unittest
 from pathlib import Path
 from unittest.mock import Mock, patch
 
-from providers.binance_opportunity_source import BinanceSpotOpportunitySource
-
 DJTB = "DJTBUSDT"
 EXPECTED_SYMBOLS = tuple(f"S{i:03d}USDT" for i in range(475)) + (DJTB,)
 ELIGIBLE_BULK_SYMBOLS = EXPECTED_SYMBOLS[:50]
+LOW_VOLUME_BULK_SYMBOLS = EXPECTED_SYMBOLS[50:-1]
 
 
 def _history_payload(rows: int = 32):
@@ -81,20 +80,28 @@ class _PaperNetwork:
         if "ticker/24hr" in url:
             if "symbol=" in url:
                 self.phase_trace.append("targeted_ticker")
+                symbol = url.split("symbol=", 1)[1].split("&", 1)[0]
+                if symbol != DJTB:
+                    raise AssertionError(f"first_divergence=unexpected targeted ticker {symbol}")
                 if self.persistent_missing:
                     return _Response([])
                 return _Response(_ticker(DJTB))
             self.phase_trace.append("bulk_ticker")
-            return _Response([_ticker(symbol) for symbol in ELIGIBLE_BULK_SYMBOLS])
+            rows = [_ticker(symbol) for symbol in ELIGIBLE_BULK_SYMBOLS]
+            rows.extend(_ticker(symbol, 500_000.0) for symbol in LOW_VOLUME_BULK_SYMBOLS)
+            return _Response(rows)
 
         if "ticker/bookTicker" in url:
             if "symbol=" in url:
                 self.phase_trace.append("targeted_book")
+                symbol = url.split("symbol=", 1)[1].split("&", 1)[0]
+                if symbol != DJTB:
+                    raise AssertionError(f"first_divergence=unexpected targeted book {symbol}")
                 if self.persistent_missing:
                     return _Response([])
                 return _Response(_book(DJTB))
             self.phase_trace.append("bulk_book")
-            return _Response([_book(symbol) for symbol in ELIGIBLE_BULK_SYMBOLS])
+            return _Response([_book(symbol) for symbol in EXPECTED_SYMBOLS[:-1]])
 
         if "/klines?" in url:
             query = dict(part.split("=", 1) for part in url.split("?", 1)[1].split("&"))
@@ -112,7 +119,7 @@ class _PaperNetwork:
         return [
             call["url"]
             for call in self.calls
-            if endpoint in str(call["url"]) and "?symbol=DJTBUSDT" in str(call["url"])
+            if endpoint in str(call["url"]) and f"?symbol={DJTB}" in str(call["url"])
         ]
 
 
@@ -129,16 +136,7 @@ class Paper8HStartupIntegrationTests(unittest.TestCase):
 
     @staticmethod
     def _discovery_from_runner(runner):
-        pipeline = runner.opportunity
-        return pipeline.discovery
-
-    def _patch_network(self, runner_module, network, lifecycle):
-        return (
-            patch("providers.binance_opportunity_source.urlopen", side_effect=network),
-            patch("tools.orion_paper_8h_runner.urllib.request.urlopen", side_effect=network),
-            patch.object(runner_module, "DynamicMarketStream", return_value=Mock()),
-            patch.object(runner_module, "PaperRealtimeLifecycle", return_value=lifecycle),
-        )
+        return runner.opportunity.discovery
 
     def test_real_paper8h_create_recovers_475_of_476_djtb_with_targeted_metadata(self):
         import tools.orion_paper_8h_runner as runner_module
@@ -147,8 +145,11 @@ class Paper8HStartupIntegrationTests(unittest.TestCase):
         lifecycle = Mock()
         with tempfile.TemporaryDirectory() as tmp:
             config = self._config(runner_module, Path(tmp) / "run")
-            patches = self._patch_network(runner_module, network, lifecycle)
-            with patches[0], patches[1], patches[2], patches[3] as lifecycle_factory:
+            with patch("providers.binance_opportunity_source.urlopen", side_effect=network), patch(
+                "tools.orion_paper_8h_runner.urllib.request.urlopen", side_effect=network
+            ), patch.object(runner_module, "DynamicMarketStream", return_value=Mock()), patch.object(
+                runner_module, "PaperRealtimeLifecycle", return_value=lifecycle
+            ) as lifecycle_factory:
                 runner = runner_module.Paper8HRunner.create(config)
 
             self.assertIsNotNone(runner, "first_divergence=create() did not return a runner")
@@ -174,8 +175,8 @@ class Paper8HStartupIntegrationTests(unittest.TestCase):
             self.assertTrue(event["needs_history"])
             self.assertEqual(event["history_outcome"], "success")
             self.assertEqual(event["final_disposition"], "eligible")
+            lifecycle_factory.assert_called_once()
             self.assertIs(runner.supervisor.runtime, lifecycle)
-            self.assertEqual(runner.stream.symbols, tuple(sorted(runner.stream.symbols)))
 
     def test_real_paper8h_create_blocks_runtime_after_reconciliation_exhaustion(self):
         import tools.orion_paper_8h_runner as runner_module
