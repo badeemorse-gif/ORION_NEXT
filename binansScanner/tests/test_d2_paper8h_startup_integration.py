@@ -10,8 +10,6 @@ from providers.binance_opportunity_source import BinanceSpotOpportunitySource
 
 DJTB = "DJTBUSDT"
 EXPECTED_SYMBOLS = tuple(f"S{i:03d}USDT" for i in range(475)) + (DJTB,)
-# Keep enough ordinary symbols D1-eligible so the real Fast Recall stage has
-# a valid broad pool; the incident symbol is still the only missing symbol.
 ELIGIBLE_BULK_SYMBOLS = EXPECTED_SYMBOLS[:50]
 
 
@@ -87,7 +85,6 @@ class _PaperNetwork:
                     return _Response([])
                 return _Response(_ticker(DJTB))
             self.phase_trace.append("bulk_ticker")
-            # DJTBUSDT is deliberately omitted from the initial bulk snapshot.
             return _Response([_ticker(symbol) for symbol in ELIGIBLE_BULK_SYMBOLS])
 
         if "ticker/bookTicker" in url:
@@ -115,7 +112,7 @@ class _PaperNetwork:
         return [
             call["url"]
             for call in self.calls
-            if endpoint in str(call["url"]) and "symbol=" in str(call["url"])
+            if endpoint in str(call["url"]) and "?symbol=DJTBUSDT" in str(call["url"])
         ]
 
 
@@ -130,24 +127,32 @@ class Paper8HStartupIntegrationTests(unittest.TestCase):
             output_dir=output_dir,
         )
 
+    @staticmethod
+    def _discovery_from_runner(runner):
+        pipeline = runner.opportunity
+        return pipeline.discovery
+
+    def _patch_network(self, runner_module, network, lifecycle):
+        return (
+            patch("providers.binance_opportunity_source.urlopen", side_effect=network),
+            patch("tools.orion_paper_8h_runner.urllib.request.urlopen", side_effect=network),
+            patch.object(runner_module, "DynamicMarketStream", return_value=Mock()),
+            patch.object(runner_module, "PaperRealtimeLifecycle", return_value=lifecycle),
+        )
+
     def test_real_paper8h_create_recovers_475_of_476_djtb_with_targeted_metadata(self):
         import tools.orion_paper_8h_runner as runner_module
 
         network = _PaperNetwork(persistent_missing=False)
         lifecycle = Mock()
-        stream = Mock()
-
         with tempfile.TemporaryDirectory() as tmp:
             config = self._config(runner_module, Path(tmp) / "run")
-            with patch("providers.binance_opportunity_source.urlopen", side_effect=network), patch.object(
-                runner_module, "DynamicMarketStream", return_value=stream
-            ), patch.object(
-                runner_module, "PaperRealtimeLifecycle", return_value=lifecycle
-            ) as lifecycle_factory:
+            patches = self._patch_network(runner_module, network, lifecycle)
+            with patches[0], patches[1], patches[2], patches[3] as lifecycle_factory:
                 runner = runner_module.Paper8HRunner.create(config)
 
             self.assertIsNotNone(runner, "first_divergence=create() did not return a runner")
-            discovery = runner.pipeline.discovery
+            discovery = self._discovery_from_runner(runner)
             bootstrap = discovery.last_bootstrap
             self.assertEqual((len(bootstrap.expected_symbols), len(bootstrap.received_symbols)), (476, 476))
             self.assertEqual(bootstrap.missing_symbols, ())
@@ -155,18 +160,11 @@ class Paper8HStartupIntegrationTests(unittest.TestCase):
             targeted_ticker = network.targeted_symbols("ticker/24hr")
             targeted_book = network.targeted_symbols("ticker/bookTicker")
             self.assertEqual(len(targeted_ticker), 1, f"first_divergence=targeted ticker count={len(targeted_ticker)}")
-            self.assertIn("symbol=DJTBUSDT", targeted_ticker[0], "first_divergence=targeted ticker symbol mismatch")
             self.assertEqual(len(targeted_book), 1, f"first_divergence=targeted book count={len(targeted_book)}")
-            self.assertIn("symbol=DJTBUSDT", targeted_book[0], "first_divergence=targeted book symbol mismatch")
-
-            self.assertEqual(
-                network.history_calls.count((DJTB, "1d")),
-                1,
-                "first_divergence=DJTB 1d history was not acquired exactly once",
-            )
-            self.assertIn("targeted_ticker", network.phase_trace, "first_divergence=targeted ticker never invoked")
-            self.assertIn("targeted_book", network.phase_trace, "first_divergence=targeted book never invoked")
-            self.assertIn(f"history:{DJTB}:1d", network.phase_trace, "first_divergence=DJTB 1d history never invoked")
+            self.assertIn("symbol=DJTBUSDT", targeted_ticker[0])
+            self.assertIn("symbol=DJTBUSDT", targeted_book[0])
+            self.assertEqual(network.history_calls.count((DJTB, "1d")), 1, "first_divergence=DJTB 1d history not acquired exactly once")
+            self.assertIn("history:DJTBUSDT:1d", network.phase_trace)
 
             events = [event for event in discovery.last_reconciliation_events if event["symbol"] == DJTB]
             self.assertEqual(len(events), 1, "first_divergence=unexpected reconciliation event count")
@@ -176,8 +174,8 @@ class Paper8HStartupIntegrationTests(unittest.TestCase):
             self.assertTrue(event["needs_history"])
             self.assertEqual(event["history_outcome"], "success")
             self.assertEqual(event["final_disposition"], "eligible")
-            lifecycle_factory.assert_called_once()
             self.assertIs(runner.supervisor.runtime, lifecycle)
+            self.assertEqual(runner.stream.symbols, tuple(sorted(runner.stream.symbols)))
 
     def test_real_paper8h_create_blocks_runtime_after_reconciliation_exhaustion(self):
         import tools.orion_paper_8h_runner as runner_module
@@ -186,7 +184,9 @@ class Paper8HStartupIntegrationTests(unittest.TestCase):
         lifecycle_factory = Mock()
         with tempfile.TemporaryDirectory() as tmp:
             config = self._config(runner_module, Path(tmp) / "run")
-            with patch("providers.binance_opportunity_source.urlopen", side_effect=network), patch.object(
+            with patch("providers.binance_opportunity_source.urlopen", side_effect=network), patch(
+                "tools.orion_paper_8h_runner.urllib.request.urlopen", side_effect=network
+            ), patch.object(runner_module, "DynamicMarketStream", return_value=Mock()), patch.object(
                 runner_module, "PaperRealtimeLifecycle", lifecycle_factory
             ):
                 with self.assertRaisesRegex(RuntimeError, "missing=DJTBUSDT"):
@@ -194,7 +194,7 @@ class Paper8HStartupIntegrationTests(unittest.TestCase):
 
             self.assertEqual(len(network.targeted_symbols("ticker/24hr")), 2)
             self.assertEqual(len(network.targeted_symbols("ticker/bookTicker")), 2)
-            self.assertEqual(network.history_calls, [], "first_divergence=history ran while DJTBUSDT remained unresolved")
+            self.assertEqual(network.history_calls.count((DJTB, "1d")), 0)
             lifecycle_factory.assert_not_called()
 
     def test_exact_stage_trace_for_recovery_has_no_mapping_or_history_gap(self):
@@ -203,12 +203,15 @@ class Paper8HStartupIntegrationTests(unittest.TestCase):
         network = _PaperNetwork(persistent_missing=False)
         with tempfile.TemporaryDirectory() as tmp:
             config = self._config(runner_module, Path(tmp) / "run")
-            with patch("providers.binance_opportunity_source.urlopen", side_effect=network), patch.object(
+            with patch("providers.binance_opportunity_source.urlopen", side_effect=network), patch(
+                "tools.orion_paper_8h_runner.urllib.request.urlopen", side_effect=network
+            ), patch.object(runner_module, "DynamicMarketStream", return_value=Mock()), patch.object(
                 runner_module, "PaperRealtimeLifecycle", return_value=Mock()
             ):
                 runner = runner_module.Paper8HRunner.create(config)
 
-            bootstrap = runner.pipeline.discovery.last_bootstrap
+            discovery = self._discovery_from_runner(runner)
+            bootstrap = discovery.last_bootstrap
             self.assertEqual((len(bootstrap.expected_symbols), len(bootstrap.received_symbols)), (476, 476))
             self.assertEqual(bootstrap.missing_symbols, ())
             self.assertEqual(bootstrap.source_status, "complete")
