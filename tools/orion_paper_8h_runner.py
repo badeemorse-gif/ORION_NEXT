@@ -216,6 +216,19 @@ class _BoundedPublicBinanceKlineProvider(_legacy._PublicBinanceKlineProvider):
         return _legacy.Timeframe
 
 
+def _persist_metric_exception_events(log: JsonlRunLog, discovery: Any) -> None:
+    """Best-effort persistence of diagnostic metric-construction events."""
+    try:
+        events = getattr(discovery, "metric_exception_events", ())
+        for event in events:
+            payload = dict(event)
+            record_type = str(payload.pop("event_type", "startup_diagnostic_metric_exception"))
+            log.write(record_type, **payload)
+    except Exception:
+        # Diagnostics must never replace or mask the original startup failure.
+        return
+
+
 def _startup_log(config: Paper8HConfig) -> JsonlRunLog:
     log = JsonlRunLog(config.output_dir / "events.jsonl")
     log.open()
@@ -242,6 +255,7 @@ def _startup_log(config: Paper8HConfig) -> JsonlRunLog:
 @classmethod
 def _create(cls, config: Paper8HConfig) -> Paper8HRunner:
     log = _startup_log(config)
+    discovery = None
     try:
         log.write("startup_phase", startup_phase="market_discovery")
         source_factory = BinanceSpotOpportunitySource
@@ -283,10 +297,12 @@ def _create(cls, config: Paper8HConfig) -> Paper8HRunner:
         log.close()
         return runner
     except TimeoutError as exc:
+        _persist_metric_exception_events(log, discovery)
         log.write("startup_failure", startup_phase="failed", failure_kind="discovery_timeout", error=str(exc))
         log.close()
         raise
     except Exception as exc:
+        _persist_metric_exception_events(log, discovery)
         log.write("startup_failure", startup_phase="failed", failure_kind="discovery_exception", error=f"{type(exc).__name__}: {exc}")
         log.close()
         raise
