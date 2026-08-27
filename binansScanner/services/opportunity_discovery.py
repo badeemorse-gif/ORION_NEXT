@@ -408,19 +408,12 @@ class OpportunityDiscovery:
                     })
             pending = sorted(next_pending)
 
-        for symbol in pending:
-            events.append({
-                "symbol": symbol,
-                "bulk_ticker_state": "absent" if symbol not in ticker_by_symbol else "present",
-                "bulk_book_state": "absent" if symbol not in book_by_symbol else "present",
-                "targeted_ticker_state": "unresolved",
-                "targeted_book_state": "unresolved",
-                "reconciliation_attempt": max_rounds,
-                "metadata": {},
-                "needs_history": True,
-                "history_outcome": "exhausted",
-                "final_disposition": "unresolved",
-            })
+        if pending:
+            pending_set = set(pending)
+            for event in events:
+                if event["symbol"] in pending_set and event["reconciliation_attempt"] == max_rounds:
+                    event["history_outcome"] = "exhausted"
+                    event["final_disposition"] = "unresolved"
 
         self._last_reconciliation_events = tuple(sorted(events, key=lambda event: (event["symbol"], event["reconciliation_attempt"])))
         try:
