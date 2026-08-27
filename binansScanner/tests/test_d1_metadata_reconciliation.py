@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import math
+import socket
 import unittest
 from types import SimpleNamespace
+from unittest.mock import patch
 
 from models.opportunity import MarketMetrics
 from providers.binance_opportunity_source import BinanceSpotOpportunitySource
@@ -38,6 +40,7 @@ def _book(symbol: str, spread_bps: float = 1.0):
 class _ReconciliationSource(BinanceSpotOpportunitySource):
     def __init__(self, persistent_missing: bool = False, low_volume: bool = False, wide_spread: bool = False):
         super().__init__(ttl_seconds=30.0, timeout_seconds=1.0)
+        self._startup_deadline = math.inf
         self.metadata_round = 0
         self.history_calls: list[str] = []
         self.persistent_missing = persistent_missing
@@ -130,6 +133,32 @@ class D1MetadataReconciliationTests(unittest.TestCase):
         self.assertEqual(events[-1]["final_disposition"], "eligible")
         self.assertEqual(events[-1]["history_outcome"], "success")
 
+    def test_reconciliation_transient_metadata_timeout_uses_existing_retry(self):
+        source = BinanceSpotOpportunitySource(ttl_seconds=0.0, timeout_seconds=1.0)
+        responses = {"ticker": 0}
+        payload = _history()
+
+        def fake_urlopen(request, timeout):
+            url = request.full_url
+            if "ticker/24hr" in url:
+                responses["ticker"] += 1
+                if responses["ticker"] == 1:
+                    raise socket.timeout("read timed out")
+                return _Response([_ticker("DJTBUSDT")])
+            if "ticker/bookTicker" in url:
+                return _Response([_book("DJTBUSDT")])
+            if "/klines?" in url:
+                return _Response(payload)
+            raise AssertionError(url)
+
+        with patch("providers.binance_opportunity_source.urlopen", side_effect=fake_urlopen), patch(
+            "providers.binance_opportunity_source.time.sleep"
+        ) as sleep:
+            result = source.reconcile_missing_symbols(("DJTBUSDT",))
+        self.assertIn("DJTBUSDT", result)
+        self.assertEqual(responses["ticker"], 2)
+        sleep.assert_called_once_with(0.5)
+
     def test_persistent_metadata_absence_is_bounded_and_unresolved(self):
         source = _ReconciliationSource(persistent_missing=True)
         initial = source.metrics_bulk(SYMBOLS)
@@ -203,6 +232,21 @@ class D1MetadataReconciliationTests(unittest.TestCase):
         )
         discovery._universe = SimpleNamespace(discover=lambda: candidates)
         self.assertEqual(discovery.discover(top_n=1).candidates[0].symbol, "DJTBUSDT")
+
+
+class _Response:
+    def __init__(self, payload):
+        self.payload = payload
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        return False
+
+    def read(self):
+        import json
+        return json.dumps(self.payload).encode("utf-8")
 
 
 if __name__ == "__main__":
