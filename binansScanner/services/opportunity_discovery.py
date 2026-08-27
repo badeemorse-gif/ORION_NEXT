@@ -348,9 +348,11 @@ class OpportunityDiscovery:
 
         received = tuple(symbol for symbol in symbols if symbol in result)
         missing = tuple(symbol for symbol in symbols if symbol not in result)
+        reconciliation_attempted = False
         if startup_mode and missing:
             reconcile = getattr(self._metrics_source, "reconcile_missing_symbols", None)
             if callable(reconcile):
+                reconciliation_attempted = True
                 try:
                     reconciled = reconcile(missing)
                     if not isinstance(reconciled, Mapping):
@@ -367,7 +369,9 @@ class OpportunityDiscovery:
                     raise
             received = tuple(symbol for symbol in symbols if symbol in result)
             missing = tuple(symbol for symbol in symbols if symbol not in result)
-        source_status = "complete" if not missing else ("incomplete_after_reconciliation" if startup_mode else "incomplete")
+        source_status = "complete" if not missing else (
+            "incomplete_after_reconciliation" if reconciliation_attempted else "incomplete"
+        )
         self._record_bootstrap(symbols, received, source_status)
         if startup_mode and missing:
             raise RuntimeError(
