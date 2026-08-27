@@ -348,7 +348,26 @@ class OpportunityDiscovery:
 
         received = tuple(symbol for symbol in symbols if symbol in result)
         missing = tuple(symbol for symbol in symbols if symbol not in result)
-        source_status = "complete" if not missing else "incomplete"
+        if startup_mode and missing:
+            reconcile = getattr(self._metrics_source, "reconcile_missing_symbols", None)
+            if callable(reconcile):
+                try:
+                    reconciled = reconcile(missing)
+                    if not isinstance(reconciled, Mapping):
+                        raise TypeError("reconciliation source must return a mapping")
+                    for symbol in missing:
+                        metric = reconciled.get(symbol)
+                        if metric is not None:
+                            result[symbol] = metric
+                except TimeoutError:
+                    self._record_bootstrap(symbols, tuple(symbol for symbol in symbols if symbol in result), "reconciliation_timeout")
+                    raise
+                except Exception:
+                    self._record_bootstrap(symbols, tuple(symbol for symbol in symbols if symbol in result), "reconciliation_exception")
+                    raise
+            received = tuple(symbol for symbol in symbols if symbol in result)
+            missing = tuple(symbol for symbol in symbols if symbol not in result)
+        source_status = "complete" if not missing else ("incomplete_after_reconciliation" if startup_mode else "incomplete")
         self._record_bootstrap(symbols, received, source_status)
         if startup_mode and missing:
             raise RuntimeError(
