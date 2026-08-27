@@ -50,6 +50,7 @@ class BinanceSpotOpportunitySource:
     RETRY_JITTER_SECONDS = 0.0
     RETRY_SERVER_BACKOFF_MAX_SECONDS = 10.0
     RETRYABLE_HTTP_STATUSES = frozenset({429, 500, 502, 503, 504})
+    RECONCILIATION_MAX_ATTEMPTS = 2
 
     def __init__(self, ttl_seconds: float = 30.0, timeout_seconds: float = 10.0, clock=time.monotonic) -> None:
         if ttl_seconds < 0 or timeout_seconds <= 0:
@@ -62,6 +63,7 @@ class BinanceSpotOpportunitySource:
         self._request_lock = threading.Lock()
         self._next_request_id = 0
         self._request_events: list[dict[str, Any]] = []
+        self._reconciliation_events: list[dict[str, Any]] = []
         self._last_daily_candle_handoff: DailyCandleHandoff | None = None
 
     @property
@@ -69,6 +71,11 @@ class BinanceSpotOpportunitySource:
         """Return immutable-observer access to recorded public request attempts."""
         with self._request_lock:
             return tuple(dict(event) for event in self._request_events)
+
+    @property
+    def reconciliation_events(self) -> tuple[dict[str, Any], ...]:
+        with self._request_lock:
+            return tuple(dict(event) for event in self._reconciliation_events)
 
     def _new_request_id(self) -> int:
         with self._request_lock:
@@ -348,6 +355,187 @@ class BinanceSpotOpportunitySource:
             trend_persistence=None,
             momentum_direction=None,
         )
+
+    def _record_reconciliation(self, *, attempt: int, symbol: str, metadata_state: str, needs_history: bool | None, history_outcome: str, final_disposition: str) -> None:
+        with self._request_lock:
+            self._reconciliation_events.append(
+                {
+                    "attempt": attempt,
+                    "symbol": symbol,
+                    "metadata_state": metadata_state,
+                    "needs_history": needs_history,
+                    "history_outcome": history_outcome,
+                    "final_disposition": final_disposition,
+                }
+            )
+
+    def reconcile_missing_symbols(self, symbols: Sequence[str]) -> Mapping[str, MarketMetrics]:
+        """Reconcile missing startup symbols using fresh same-run metadata only."""
+        wanted = tuple(sorted({str(symbol).upper() for symbol in symbols if str(symbol).strip()}))
+        if not wanted:
+            return {}
+
+        resolved: dict[str, MarketMetrics] = {}
+        pending = wanted
+        for attempt in range(1, self.RECONCILIATION_MAX_ATTEMPTS + 1):
+            self._last_daily_candle_handoff = None
+            if not pending:
+                break
+            try:
+                with ThreadPoolExecutor(max_workers=self.METADATA_CONCURRENCY, thread_name_prefix="orion-reconciliation-metadata") as executor:
+                    ticker_future = executor.submit(self._get_json, "ticker/24hr")
+                    book_future = executor.submit(self._get_json, "ticker/bookTicker")
+                    tickers = ticker_future.result()
+                    books = book_future.result()
+            except Exception:
+                for symbol in pending:
+                    self._record_reconciliation(
+                        attempt=attempt,
+                        symbol=symbol,
+                        metadata_state="acquisition_exception",
+                        needs_history=None,
+                        history_outcome="not_attempted",
+                        final_disposition="unresolved",
+                    )
+                raise
+
+            ticker_by_symbol = {
+                str(row.get("symbol", "")).upper(): row
+                for row in tickers
+                if isinstance(row, Mapping)
+            }
+            book_by_symbol = {
+                str(row.get("symbol", "")).upper(): row
+                for row in books
+                if isinstance(row, Mapping)
+            }
+            history_symbols: list[str] = []
+            metadata_states: dict[str, tuple[str, Mapping[str, Any] | None, Mapping[str, Any] | None]] = {}
+            for symbol in pending:
+                ticker = ticker_by_symbol.get(symbol)
+                book = book_by_symbol.get(symbol)
+                if ticker is None:
+                    metadata_states[symbol] = ("ticker_missing", ticker, book)
+                elif book is None:
+                    metadata_states[symbol] = ("book_missing", ticker, book)
+                else:
+                    metadata_states[symbol] = ("complete", ticker, book)
+                needs_history = self._needs_history(ticker, book)
+                if not needs_history:
+                    metric = self._metadata_only_metric(symbol, ticker, book)
+                    if metric is not None:
+                        resolved[symbol] = metric
+                        self._record_reconciliation(
+                            attempt=attempt,
+                            symbol=symbol,
+                            metadata_state=metadata_states[symbol][0],
+                            needs_history=False,
+                            history_outcome="not_required",
+                            final_disposition="definitely_ineligible",
+                        )
+                        continue
+                history_symbols.append(symbol)
+
+            histories: dict[str, tuple[Sequence[Any], ...]] = {}
+            with ThreadPoolExecutor(max_workers=self.DISCOVERY_CONCURRENCY, thread_name_prefix="orion-reconciliation-history") as executor:
+                future_to_symbol = {executor.submit(self._fetch_history, symbol): symbol for symbol in history_symbols}
+                for future in as_completed(future_to_symbol):
+                    symbol = future_to_symbol[future]
+                    try:
+                        histories[symbol] = future.result()
+                    except TimeoutError:
+                        for pending_future in future_to_symbol:
+                            pending_future.cancel()
+                        raise
+                    except Exception:
+                        continue
+
+            next_pending: list[str] = []
+            reusable_daily: dict[str, tuple[Sequence[Any], ...]] = {}
+            for symbol in pending:
+                if symbol in resolved:
+                    continue
+                ticker = ticker_by_symbol.get(symbol)
+                book = book_by_symbol.get(symbol)
+                history = histories.get(symbol)
+                if ticker is None or history is None:
+                    history_outcome = "missing_or_failed"
+                    next_pending.append(symbol)
+                    self._record_reconciliation(
+                        attempt=attempt,
+                        symbol=symbol,
+                        metadata_state=metadata_states[symbol][0],
+                        needs_history=True,
+                        history_outcome=history_outcome,
+                        final_disposition="unresolved",
+                    )
+                    continue
+                try:
+                    last_price = float(ticker["lastPrice"])
+                    quote_volume = float(ticker["quoteVolume"])
+                    change_pct = float(ticker["priceChangePercent"])
+                    weighted_avg = float(ticker["weightedAvgPrice"])
+                    spread_bps = None
+                    if book is not None:
+                        bid = float(book["bidPrice"])
+                        ask = float(book["askPrice"])
+                        if bid > 0 and ask >= bid:
+                            spread_bps = ((ask - bid) / ((ask + bid) / 2.0)) * 10_000.0
+                    metric_history = history[-self.METRICS_HISTORY_WINDOW:]
+                    volatility, trend_quality, trend_direction, trend_persistence, momentum_quality, momentum_direction = self._history_features(metric_history)
+                    structure_deviation = abs(last_price / weighted_avg - 1.0) if weighted_avg > 0 else math.inf
+                    structure_quality = max(0.0, 1.0 - min(structure_deviation / 0.05, 1.0)) if math.isfinite(structure_deviation) else 0.0
+                    volume_quality = min(math.log1p(max(quote_volume, 0.0)) / math.log1p(100_000_000.0), 1.0)
+                    resolved[symbol] = MarketMetrics(
+                        symbol=symbol,
+                        quote_volume_24h=quote_volume,
+                        volatility=volatility,
+                        spread_bps=spread_bps,
+                        tradable=True,
+                        last_price=last_price,
+                        volume_quality=volume_quality,
+                        trend_quality=trend_quality,
+                        momentum_quality=momentum_quality,
+                        structure_quality=structure_quality,
+                        price_change_pct_24h=change_pct,
+                        weighted_avg_price_24h=weighted_avg,
+                        trend_direction=trend_direction,
+                        trend_persistence=trend_persistence,
+                        momentum_direction=momentum_direction,
+                    )
+                    if len(history) == self.HISTORY_LIMIT:
+                        reusable_daily[symbol] = history
+                    self._record_reconciliation(
+                        attempt=attempt,
+                        symbol=symbol,
+                        metadata_state=metadata_states[symbol][0],
+                        needs_history=True,
+                        history_outcome="success",
+                        final_disposition="eligible",
+                    )
+                except (KeyError, TypeError, ValueError, statistics.StatisticsError, ZeroDivisionError):
+                    next_pending.append(symbol)
+                    self._record_reconciliation(
+                        attempt=attempt,
+                        symbol=symbol,
+                        metadata_state=metadata_states[symbol][0],
+                        needs_history=True,
+                        history_outcome="invalid",
+                        final_disposition="unresolved",
+                    )
+            self._last_daily_candle_handoff = DailyCandleHandoff(limit=self.HISTORY_LIMIT, candles=dict(reusable_daily))
+            pending = tuple(next_pending)
+
+        for symbol in pending:
+            self._record_reconciliation(
+                attempt=self.RECONCILIATION_MAX_ATTEMPTS,
+                symbol=symbol,
+                metadata_state="unresolved_after_reconciliation",
+                needs_history=True,
+                history_outcome="exhausted",
+                final_disposition="unresolved",
+            )
+        return resolved
 
     def metrics_bulk(self, symbols: Sequence[str]) -> Mapping[str, MarketMetrics]:
         wanted = tuple(sorted({s.upper() for s in symbols}))
