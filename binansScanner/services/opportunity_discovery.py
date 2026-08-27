@@ -38,32 +38,6 @@ class DiscoveryBootstrapStatus:
     deadline_state: str
 
 
-class MarketUniverseDiscovery:
-    def __init__(self, source: UniverseSource, config: "OpportunityConfig | None" = None) -> None:
-        self._source = source
-        self._config = config or OpportunityConfig()
-
-    def discover(self) -> tuple[UniverseCandidate, ...]:
-        payload = self._source.exchange_info()
-        symbols = payload.get("symbols", [])
-        by_symbol: dict[str, UniverseCandidate] = {}
-        for item in symbols:
-            if not isinstance(item, Mapping):
-                continue
-            symbol = str(item.get("symbol", "")).strip().upper()
-            base = str(item.get("baseAsset", "")).strip().upper()
-            quote = str(item.get("quoteAsset", "")).strip().upper()
-            status = str(item.get("status", "")).strip().upper()
-            if not symbol or not base or not quote or status != "TRADING":
-                continue
-            if quote not in self._config.quote_assets or base in self._config.excluded_base_assets:
-                continue
-            if item.get("isSpotTradingAllowed") is False:
-                continue
-            by_symbol[symbol] = UniverseCandidate(symbol, base, quote)
-        return tuple(sorted(by_symbol.values(), key=lambda c: c.symbol))
-
-
 @dataclass(frozen=True, slots=True)
 class OpportunityConfig:
     quote_assets: tuple[str, ...] = ("USDT",)
@@ -103,10 +77,7 @@ class OpportunityConfig:
             raise ValueError("volume_reference_24h must be positive")
         if not self.min_volatility <= self.target_volatility <= self.max_volatility:
             raise ValueError("target_volatility must be within eligibility bounds")
-        weights = (
-            self.volume_weight, self.liquidity_weight, self.volatility_weight,
-            self.trend_weight, self.momentum_weight, self.structure_weight,
-        )
+        weights = (self.volume_weight, self.liquidity_weight, self.volatility_weight, self.trend_weight, self.momentum_weight, self.structure_weight)
         if any(weight < 0 for weight in weights) or not math.isclose(sum(weights), 1.0, abs_tol=1e-12):
             raise ValueError("opportunity weights must be non-negative and sum to 1")
         if self.default_top_n <= 0:
@@ -115,6 +86,32 @@ class OpportunityConfig:
             raise ValueError("refresh/cache TTL must be non-negative")
         if self.hysteresis_score_delta < 0:
             raise ValueError("hysteresis_score_delta must be non-negative")
+
+
+class MarketUniverseDiscovery:
+    def __init__(self, source: UniverseSource, config: OpportunityConfig | None = None) -> None:
+        self._source = source
+        self._config = config or OpportunityConfig()
+
+    def discover(self) -> tuple[UniverseCandidate, ...]:
+        payload = self._source.exchange_info()
+        symbols = payload.get("symbols", [])
+        by_symbol: dict[str, UniverseCandidate] = {}
+        for item in symbols:
+            if not isinstance(item, Mapping):
+                continue
+            symbol = str(item.get("symbol", "")).strip().upper()
+            base = str(item.get("baseAsset", "")).strip().upper()
+            quote = str(item.get("quoteAsset", "")).strip().upper()
+            status = str(item.get("status", "")).strip().upper()
+            if not symbol or not base or not quote or status != "TRADING":
+                continue
+            if quote not in self._config.quote_assets or base in self._config.excluded_base_assets:
+                continue
+            if item.get("isSpotTradingAllowed") is False:
+                continue
+            by_symbol[symbol] = UniverseCandidate(symbol, base, quote)
+        return tuple(sorted(by_symbol.values(), key=lambda c: c.symbol))
 
 
 class MarketEligibilityFilter:
@@ -173,11 +170,7 @@ class OpportunityScorer:
         return 0.0 if value is None else max(-1.0, min(value, 1.0))
 
     def score_components(self, metrics: MarketMetrics) -> tuple[tuple[str, float], ...]:
-        volume_component = (
-            self._neutral(metrics.volume_quality)
-            if metrics.volume_quality is not None
-            else min(math.log1p(max(metrics.quote_volume_24h, 0.0)) / math.log1p(self._config.volume_reference_24h), 1.0)
-        )
+        volume_component = self._neutral(metrics.volume_quality) if metrics.volume_quality is not None else min(math.log1p(max(metrics.quote_volume_24h, 0.0)) / math.log1p(self._config.volume_reference_24h), 1.0)
         distance = abs(metrics.volatility - self._config.target_volatility)
         span = max(self._config.target_volatility - self._config.min_volatility, self._config.max_volatility - self._config.target_volatility, 1e-12)
         volatility_component = max(0.0, 1.0 - distance / span)
@@ -188,32 +181,15 @@ class OpportunityScorer:
         else:
             liquidity_component = max(0.0, 1.0 - min(metrics.spread_bps / self._config.max_spread_bps, 1.0))
         trend_component = 0.7 * self._neutral(metrics.trend_quality) + 0.3 * self._neutral(metrics.trend_persistence)
-        return (
-            ("volume_quality", round(volume_component, 8)),
-            ("liquidity", round(liquidity_component, 8)),
-            ("volatility_regime", round(volatility_component, 8)),
-            ("trend_quality", round(trend_component, 8)),
-            ("momentum", round(self._neutral(metrics.momentum_quality), 8)),
-            ("structure_quality", round(self._neutral(metrics.structure_quality), 8)),
-        )
+        return (("volume_quality", round(volume_component, 8)), ("liquidity", round(liquidity_component, 8)), ("volatility_regime", round(volatility_component, 8)), ("trend_quality", round(trend_component, 8)), ("momentum", round(self._neutral(metrics.momentum_quality), 8)), ("structure_quality", round(self._neutral(metrics.structure_quality), 8)))
 
     def directional_evidence(self, metrics: MarketMetrics) -> float:
-        weighted = (
-            0.65 * self._direction(metrics.trend_direction) * self._neutral(metrics.trend_quality)
-            + 0.35 * self._direction(metrics.momentum_direction) * self._neutral(metrics.momentum_quality)
-        )
+        weighted = 0.65 * self._direction(metrics.trend_direction) * self._neutral(metrics.trend_quality) + 0.35 * self._direction(metrics.momentum_direction) * self._neutral(metrics.momentum_quality)
         return round(max(-1.0, min(weighted, 1.0)), 8)
 
     def score(self, metrics: MarketMetrics) -> float:
         components = dict(self.score_components(metrics))
-        total = (
-            self._config.volume_weight * components["volume_quality"]
-            + self._config.liquidity_weight * components["liquidity"]
-            + self._config.volatility_weight * components["volatility_regime"]
-            + self._config.trend_weight * components["trend_quality"]
-            + self._config.momentum_weight * components["momentum"]
-            + self._config.structure_weight * components["structure_quality"]
-        )
+        total = self._config.volume_weight * components["volume_quality"] + self._config.liquidity_weight * components["liquidity"] + self._config.volatility_weight * components["volatility_regime"] + self._config.trend_weight * components["trend_quality"] + self._config.momentum_weight * components["momentum"] + self._config.structure_weight * components["structure_quality"]
         return round(100.0 * max(0.0, min(total, 1.0)), 8)
 
 
@@ -236,15 +212,7 @@ class OpportunityRanker:
             decision = eligibility.evaluate(candidate, metric)
             if not decision.eligible:
                 continue
-            ranked.append(OpportunityCandidate(
-                candidate.symbol,
-                self._scorer.score(metric),
-                0,
-                metric,
-                decision.reasons,
-                self._scorer.score_components(metric),
-                self._scorer.directional_evidence(metric),
-            ))
+            ranked.append(OpportunityCandidate(candidate.symbol, self._scorer.score(metric), 0, metric, decision.reasons, self._scorer.score_components(metric), self._scorer.directional_evidence(metric)))
         ranked.sort(key=lambda item: (-item.opportunity_score, item.symbol))
         if self._previous_rank and self._config.hysteresis_score_delta > 0:
             for index in range(len(ranked) - 1):
@@ -255,16 +223,13 @@ class OpportunityRanker:
                     if rp is not None and (lp is None or rp < lp):
                         ranked[index], ranked[index + 1] = right, left
         selected = ranked[:requested_top_n]
-        result = tuple(
-            OpportunityCandidate(item.symbol, item.opportunity_score, index, item.metrics, item.eligibility_reasons, item.score_components, item.directional_evidence)
-            for index, item in enumerate(selected, start=1)
-        )
+        result = tuple(OpportunityCandidate(item.symbol, item.opportunity_score, index, item.metrics, item.eligibility_reasons, item.score_components, item.directional_evidence) for index, item in enumerate(selected, start=1))
         self._previous_rank = {item.symbol: item.rank for item in result}
         return OpportunityCandidateSet(result, requested_top_n, None)
 
 
 class OpportunityDiscovery:
-    """Universe -> bulk metadata -> bounded targeted revalidation -> history -> rank."""
+    """Universe -> bulk metadata -> bounded targeted symbol revalidation -> history -> rank."""
 
     def __init__(self, universe: MarketUniverseDiscovery, metrics_source: MetricsSource, config: OpportunityConfig | None = None, clock: Callable[[], float] = __import__("time").monotonic) -> None:
         self._universe = universe
@@ -326,23 +291,7 @@ class OpportunityDiscovery:
         structure_deviation = abs(last_price / weighted_avg - 1.0) if weighted_avg > 0 else math.inf
         structure_quality = max(0.0, 1.0 - min(structure_deviation / 0.05, 1.0)) if math.isfinite(structure_deviation) else 0.0
         volume_quality = min(math.log1p(max(quote_volume, 0.0)) / math.log1p(100_000_000.0), 1.0)
-        return MarketMetrics(
-            symbol=symbol,
-            quote_volume_24h=quote_volume,
-            volatility=volatility,
-            spread_bps=spread_bps,
-            tradable=True,
-            last_price=last_price,
-            volume_quality=volume_quality,
-            trend_quality=trend_quality,
-            momentum_quality=momentum_quality,
-            structure_quality=structure_quality,
-            price_change_pct_24h=change_pct,
-            weighted_avg_price_24h=weighted_avg,
-            trend_direction=trend_direction,
-            trend_persistence=trend_persistence,
-            momentum_direction=momentum_direction,
-        )
+        return MarketMetrics(symbol=symbol, quote_volume_24h=quote_volume, volatility=volatility, spread_bps=spread_bps, tradable=True, last_price=last_price, volume_quality=volume_quality, trend_quality=trend_quality, momentum_quality=momentum_quality, structure_quality=structure_quality, price_change_pct_24h=change_pct, weighted_avg_price_24h=weighted_avg, trend_direction=trend_direction, trend_persistence=trend_persistence, momentum_direction=momentum_direction)
 
     def _startup_metrics(self, candidates: tuple[UniverseCandidate, ...]) -> Mapping[str, MarketMetrics]:
         source = self._metrics_source
@@ -360,11 +309,8 @@ class OpportunityDiscovery:
         book_by_symbol = {str(row.get("symbol", "")).upper(): row for row in book_rows if isinstance(row, Mapping)}
 
         result: dict[str, MarketMetrics] = {}
-        missing = tuple(symbol for symbol in symbols if symbol not in ticker_by_symbol)
-        possible_history = tuple(
-            symbol for symbol in symbols
-            if symbol in ticker_by_symbol and source._needs_history(ticker_by_symbol.get(symbol), book_by_symbol.get(symbol))
-        )
+        revalidation_candidates = tuple(symbol for symbol in symbols if symbol not in ticker_by_symbol or symbol not in book_by_symbol)
+        possible_history = tuple(symbol for symbol in symbols if symbol not in revalidation_candidates and source._needs_history(ticker_by_symbol.get(symbol), book_by_symbol.get(symbol)))
 
         def acquire_history(symbol: str) -> tuple[str, tuple[Sequence[Any], ...] | None]:
             try:
@@ -385,11 +331,11 @@ class OpportunityDiscovery:
         for symbol in symbols:
             ticker = ticker_by_symbol.get(symbol)
             book = book_by_symbol.get(symbol)
-            if ticker is not None and not source._needs_history(ticker, book):
+            if ticker is not None and symbol not in revalidation_candidates and not source._needs_history(ticker, book):
                 metric = source._metadata_only_metric(symbol, ticker, book)
                 if metric is not None:
                     result[symbol] = metric
-            elif ticker is not None and symbol in histories:
+            elif ticker is not None and symbol not in revalidation_candidates and symbol in histories:
                 try:
                     result[symbol] = self._build_history_metric(source, symbol, ticker, book, histories[symbol])
                     if len(histories[symbol]) == source.HISTORY_LIMIT:
@@ -397,25 +343,23 @@ class OpportunityDiscovery:
                 except (KeyError, TypeError, ValueError, ArithmeticError):
                     pass
 
-        pending = list(missing)
+        pending = list(revalidation_candidates)
         events: list[dict[str, Any]] = []
-        for attempt in range(1, getattr(source, "RECONCILIATION_MAX_ATTEMPTS", 2) + 1):
+        max_rounds = getattr(source, "RECONCILIATION_MAX_ATTEMPTS", 2)
+        for attempt in range(1, max_rounds + 1):
             if not pending:
                 break
             next_pending: list[str] = []
 
-            def targeted(symbol: str) -> tuple[str, Mapping[str, Any] | None, Mapping[str, Any] | None, str | None, str | None]:
+            def targeted(symbol: str) -> tuple[str, Mapping[str, Any] | None, Mapping[str, Any] | None, str, str]:
                 ticker = book = None
-                ticker_state = book_state = None
                 try:
-                    ticker_payload = bulk_get("ticker/24hr", {"symbol": symbol})
-                    ticker = self._single_payload(ticker_payload)
+                    ticker = self._single_payload(bulk_get("ticker/24hr", {"symbol": symbol}))
                     ticker_state = "present" if ticker is not None else "absent"
                 except Exception:
                     ticker_state = "error"
                 try:
-                    book_payload = bulk_get("ticker/bookTicker", {"symbol": symbol})
-                    book = self._single_payload(book_payload)
+                    book = self._single_payload(bulk_get("ticker/bookTicker", {"symbol": symbol}))
                     book_state = "present" if book is not None else "absent"
                 except Exception:
                     book_state = "error"
@@ -441,9 +385,7 @@ class OpportunityDiscovery:
                         else:
                             try:
                                 history = tuple(source._fetch_history(symbol))
-                                metric = self._build_history_metric(source, symbol, ticker, book, history)
-                                result[symbol] = metric
-                                needs_history = True
+                                result[symbol] = self._build_history_metric(source, symbol, ticker, book, history)
                                 history_outcome = "success"
                                 final_disposition = "eligible"
                                 if len(history) == source.HISTORY_LIMIT:
@@ -473,7 +415,7 @@ class OpportunityDiscovery:
                 "bulk_book_state": "absent" if symbol not in book_by_symbol else "present",
                 "targeted_ticker_state": "unresolved",
                 "targeted_book_state": "unresolved",
-                "reconciliation_attempt": getattr(source, "RECONCILIATION_MAX_ATTEMPTS", 2),
+                "reconciliation_attempt": max_rounds,
                 "metadata": {},
                 "needs_history": True,
                 "history_outcome": "exhausted",
@@ -494,10 +436,8 @@ class OpportunityDiscovery:
             raw = bulk(tuple(c.symbol for c in candidates))
             if not isinstance(raw, Mapping):
                 raise TypeError("metrics source must return a mapping")
-            result = {symbol: raw[symbol] for symbol in (c.symbol for c in candidates) if symbol in raw}
-        else:
-            result = {candidate.symbol: self._metrics_source.metrics(candidate.symbol) for candidate in candidates}
-        return result
+            return {symbol: raw[symbol] for symbol in (c.symbol for c in candidates) if symbol in raw}
+        return {candidate.symbol: self._metrics_source.metrics(candidate.symbol) for candidate in candidates}
 
     def _collect_metrics(self, candidates: tuple[UniverseCandidate, ...]) -> Mapping[str, MarketMetrics]:
         symbols = tuple(c.symbol for c in candidates)
@@ -512,8 +452,7 @@ class OpportunityDiscovery:
             raise
         received = tuple(symbol for symbol in symbols if symbol in result)
         missing = tuple(symbol for symbol in symbols if symbol not in result)
-        source_status = "complete" if not missing else "incomplete"
-        self._record_bootstrap(symbols, received, source_status)
+        self._record_bootstrap(symbols, received, "complete" if not missing else "incomplete")
         if startup_mode and missing:
             raise RuntimeError(f"fresh discovery bootstrap incomplete: expected={len(symbols)} received={len(received)} missing={','.join(missing)}")
         return result
