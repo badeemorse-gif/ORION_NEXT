@@ -10,6 +10,9 @@ from providers.binance_opportunity_source import BinanceSpotOpportunitySource
 
 DJTB = "DJTBUSDT"
 EXPECTED_SYMBOLS = tuple(f"S{i:03d}USDT" for i in range(475)) + (DJTB,)
+# Keep enough ordinary symbols D1-eligible so the real Fast Recall stage has
+# a valid broad pool; the incident symbol is still the only missing symbol.
+ELIGIBLE_BULK_SYMBOLS = EXPECTED_SYMBOLS[:50]
 
 
 def _history_payload(rows: int = 32):
@@ -32,7 +35,7 @@ def _exchange_info_rows():
     }
 
 
-def _ticker(symbol: str, volume: float = 1_000_000.0):
+def _ticker(symbol: str, volume: float = 200_000_000.0):
     return {
         "symbol": symbol,
         "lastPrice": "100",
@@ -84,8 +87,8 @@ class _PaperNetwork:
                     return _Response([])
                 return _Response(_ticker(DJTB))
             self.phase_trace.append("bulk_ticker")
-            # Deliberately omit DJTBUSDT from both bulk metadata snapshots.
-            return _Response([_ticker(symbol, 500_000.0) for symbol in EXPECTED_SYMBOLS[:-1]])
+            # DJTBUSDT is deliberately omitted from the initial bulk snapshot.
+            return _Response([_ticker(symbol) for symbol in ELIGIBLE_BULK_SYMBOLS])
 
         if "ticker/bookTicker" in url:
             if "symbol=" in url:
@@ -94,7 +97,7 @@ class _PaperNetwork:
                     return _Response([])
                 return _Response(_book(DJTB))
             self.phase_trace.append("bulk_book")
-            return _Response([_book(symbol) for symbol in EXPECTED_SYMBOLS[:-1]])
+            return _Response([_book(symbol) for symbol in ELIGIBLE_BULK_SYMBOLS])
 
         if "/klines?" in url:
             query = dict(part.split("=", 1) for part in url.split("?", 1)[1].split("&"))
@@ -102,7 +105,7 @@ class _PaperNetwork:
             interval = query["interval"]
             self.phase_trace.append(f"history:{symbol}:{interval}")
             self.history_calls.append((symbol, interval))
-            if self.persistent_missing:
+            if self.persistent_missing and symbol == DJTB:
                 raise AssertionError(f"first_divergence=unexpected history request for unresolved {DJTB}")
             return _Response(_history_payload())
 
@@ -133,7 +136,6 @@ class Paper8HStartupIntegrationTests(unittest.TestCase):
         network = _PaperNetwork(persistent_missing=False)
         lifecycle = Mock()
         stream = Mock()
-        stream.set_symbols.return_value = False
 
         with tempfile.TemporaryDirectory() as tmp:
             config = self._config(runner_module, Path(tmp) / "run")
@@ -145,7 +147,8 @@ class Paper8HStartupIntegrationTests(unittest.TestCase):
                 runner = runner_module.Paper8HRunner.create(config)
 
             self.assertIsNotNone(runner, "first_divergence=create() did not return a runner")
-            bootstrap = runner.pipeline.discovery.last_bootstrap
+            discovery = runner.pipeline.discovery
+            bootstrap = discovery.last_bootstrap
             self.assertEqual((len(bootstrap.expected_symbols), len(bootstrap.received_symbols)), (476, 476))
             self.assertEqual(bootstrap.missing_symbols, ())
 
@@ -165,7 +168,7 @@ class Paper8HStartupIntegrationTests(unittest.TestCase):
             self.assertIn("targeted_book", network.phase_trace, "first_divergence=targeted book never invoked")
             self.assertIn(f"history:{DJTB}:1d", network.phase_trace, "first_divergence=DJTB 1d history never invoked")
 
-            events = [event for event in runner.pipeline.discovery.last_reconciliation_events if event["symbol"] == DJTB]
+            events = [event for event in discovery.last_reconciliation_events if event["symbol"] == DJTB]
             self.assertEqual(len(events), 1, "first_divergence=unexpected reconciliation event count")
             event = events[0]
             self.assertEqual((event["bulk_ticker_state"], event["bulk_book_state"]), ("absent", "absent"))
