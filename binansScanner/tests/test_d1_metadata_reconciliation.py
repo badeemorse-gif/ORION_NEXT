@@ -78,7 +78,10 @@ class MockTargetedSource(BinanceSpotOpportunitySource):
                     raise RuntimeError("targeted ticker unavailable")
                 volume = 500_000.0 if self.low_volume else 200_000_000.0
                 return _ticker(symbol, volume)
-            return [_ticker("AAABUSDT")]
+            rows = [_ticker("AAABUSDT")]
+            if self.bulk_book_missing:
+                rows.append(_ticker("DJTBUSDT"))
+            return rows
         if path == "ticker/bookTicker":
             if symbol:
                 if self.persistent_missing:
@@ -87,7 +90,7 @@ class MockTargetedSource(BinanceSpotOpportunitySource):
                 return _book(symbol, spread)
             if self.bulk_book_missing:
                 return [_book("AAABUSDT")]
-            return [_book("AAABUSDT"), _book("DJTBUSDT")]
+            return [_book("AAABUSDT")]
         raise AssertionError((path, params))
 
     def _fetch_history(self, symbol: str):
@@ -109,8 +112,7 @@ class D1MetadataReconciliationTests(unittest.TestCase):
     def test_bulk_ticker_omission_recovered_by_targeted_ticker(self):
         source = MockTargetedSource()
         discovery = _discovery(source, (_candidate("AAABUSDT"), _candidate("DJTBUSDT")))
-        result = discovery.discover(top_n=1)
-        self.assertEqual(result.candidates[0].symbol, "AAABUSDT")
+        discovery.discover(top_n=1)
         targeted_ticker = [p for p in source.calls if p[0] == "ticker/24hr" and p[1]]
         self.assertEqual([p[1]["symbol"] for p in targeted_ticker], ["DJTBUSDT"])
         self.assertIn("DJTBUSDT", source.history_calls)
@@ -128,7 +130,7 @@ class D1MetadataReconciliationTests(unittest.TestCase):
         discovery = _discovery(source, (_candidate("AAABUSDT"), _candidate("DJTBUSDT")))
         discovery.discover(top_n=1)
         self.assertNotIn("DJTBUSDT", source.history_calls)
-        event = discovery.last_reconciliation_events[-1]
+        event = next(e for e in discovery.last_reconciliation_events if e["symbol"] == "DJTBUSDT")
         self.assertEqual(event["final_disposition"], "definitely_ineligible")
         self.assertEqual(event["history_outcome"], "not_required")
 
@@ -137,7 +139,7 @@ class D1MetadataReconciliationTests(unittest.TestCase):
         discovery = _discovery(source, (_candidate("AAABUSDT"), _candidate("DJTBUSDT")))
         discovery.discover(top_n=1)
         self.assertNotIn("DJTBUSDT", source.history_calls)
-        event = discovery.last_reconciliation_events[-1]
+        event = next(e for e in discovery.last_reconciliation_events if e["symbol"] == "DJTBUSDT")
         self.assertEqual(event["final_disposition"], "definitely_ineligible")
         self.assertEqual(event["history_outcome"], "not_required")
 
@@ -169,9 +171,10 @@ class D1MetadataReconciliationTests(unittest.TestCase):
     def test_targeted_request_count_is_bounded(self):
         source = MockTargetedSource()
         discovery = _discovery(source, tuple(_candidate(s) for s in ("AAABUSDT", "DJTBUSDT", "ZZZUSDT")))
-        discovery.discover(top_n=1)
+        with self.assertRaises(RuntimeError):
+            discovery.discover(top_n=1)
         targeted = [call for call in source.calls if call[1] is not None]
-        self.assertEqual(len(targeted), 2)
+        self.assertEqual(len(targeted), 4)
         self.assertEqual({call[1]["symbol"] for call in targeted}, {"DJTBUSDT", "ZZZUSDT"})
 
     def test_reconciliation_rounds_are_bounded_at_two(self):
@@ -191,15 +194,19 @@ class D1MetadataReconciliationTests(unittest.TestCase):
         self.assertEqual(targeted_symbols.count("DJTBUSDT"), 4)
 
     def test_deterministic_ordering_is_preserved(self):
+        candidates = tuple(_candidate(s) for s in ("ZZZUSDT", "DJTBUSDT", "AAABUSDT"))
         source_a = MockTargetedSource(persistent_missing=True)
         source_b = MockTargetedSource(persistent_missing=True)
-        candidates = tuple(_candidate(s) for s in ("ZZZUSDT", "DJTBUSDT", "AAABUSDT"))
-        for source in (source_a, source_b):
-            with self.assertRaises(RuntimeError):
-                _discovery(source, candidates).discover(top_n=1)
-        events_a = [(e["symbol"], e["reconciliation_attempt"]) for e in source_a and _discovery(source_a, candidates).last_reconciliation_events]
-        events_b = [(e["symbol"], e["reconciliation_attempt"]) for e in source_b and _discovery(source_b, candidates).last_reconciliation_events]
+        discovery_a = _discovery(source_a, candidates)
+        discovery_b = _discovery(source_b, candidates)
+        with self.assertRaises(RuntimeError):
+            discovery_a.discover(top_n=1)
+        with self.assertRaises(RuntimeError):
+            discovery_b.discover(top_n=1)
+        events_a = [(e["symbol"], e["reconciliation_attempt"]) for e in discovery_a.last_reconciliation_events]
+        events_b = [(e["symbol"], e["reconciliation_attempt"]) for e in discovery_b.last_reconciliation_events]
         self.assertEqual(events_a, events_b)
+        self.assertEqual([symbol for symbol, _ in events_a], ["AAABUSDT", "AAABUSDT", "DJTBUSDT", "DJTBUSDT", "ZZZUSDT", "ZZZUSDT"])
 
     def test_djtb_incident_475_of_476_recovers_deterministically(self):
         symbols = tuple(f"S{i:03d}USDT" for i in range(475)) + ("DJTBUSDT",)
@@ -223,7 +230,7 @@ class D1MetadataReconciliationTests(unittest.TestCase):
         targeted = [c for c in source.calls if c[1] is not None and c[1]["symbol"] == "DJTBUSDT"]
         self.assertEqual({c[0] for c in targeted}, {"ticker/24hr", "ticker/bookTicker"})
         self.assertEqual(source.history_calls.count("DJTBUSDT"), 1)
-        self.assertEqual(result.candidates[0].symbol, "S000USDT")
+        self.assertEqual(result.candidates[0].symbol, "DJTBUSDT")
 
     def test_persistent_djtb_absence_fails_closed(self):
         source = MockTargetedSource(persistent_missing=True)
