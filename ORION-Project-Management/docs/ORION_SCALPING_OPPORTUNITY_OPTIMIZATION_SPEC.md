@@ -1,6 +1,6 @@
 # ORION — Scalping Opportunity Optimization Specification
 
-الإصدار: 1.0
+الإصدار: 1.1
 الحالة: ACCEPTED — DEVELOPMENT GATE AFTER CURRENT PAPER TEST
 المشروع: ORION_NEXT
 
@@ -49,6 +49,8 @@ Exit
 
 القواعد الصلبة تستخدم فقط عند وجود سبب أمني أو تشغيلي أو تعاقدي واضح.
 أما جودة الفرصة فتُعامل كمسألة وزن واحتمال وأفضلية، لا كسلسلة Gates جامدة بلا مبرر.
+
+**قاعدة تشغيلية حاكمة:** لا يجوز أن تتسبب دورة تحليل بطيئة أو انتظار غير ضروري لإشارة إطار زمني أبطأ في فقدان فرصة قصيرة الأجل كانت مؤهلة وفق الأدلة المتاحة في الوقت الفعلي.
 
 ==================================================
 3. MULTI-TIMEFRAME OPPORTUNITY MODEL
@@ -107,6 +109,8 @@ Exit
 
 عندما تكون الحركة استمرارًا صحيًا وليست Pump عشوائيًا.
 
+**Sudden-Move Response Requirement:** عند رصد تغير سعري سريع أو توسع غير اعتيادي في النطاق خلال نافذة قصيرة، يجب أن ينتقل النظام إلى إعادة تقييم سريعة للفرصة بدل انتظار اكتمال دورة تقييم بطيئة. لا يعني ذلك الدخول الآلي؛ يعني تقليص زمن اكتشاف/تحقق/قرار الفرصة إلى الحد الذي تثبته الاختبارات دون الإخلال بقيود المخاطر.
+
 ==================================================
 5. OPPORTUNITY CLASSIFICATION
 ==================================================
@@ -146,6 +150,8 @@ Immediate Entry Candidates
 يجب أن تسمح المعمارية بمراقبة عدد أوسع من المرشحين، مع Active Top-N أصغر للتنفيذ والمتابعة، حتى لا تضيع العملة عند تغير ترتيبها مؤقتًا.
 
 القيم العددية النهائية لا تُثبت إلا بعد الاختبار.
+
+**ممنوع تشغيليًا** إسقاط مرشح قوي فقط لأن ترتيبه المؤقت انخفض دورة واحدة أثناء استمرار الـmomentum أو الـacceleration.
 
 ==================================================
 7. RANKING PHILOSOPHY
@@ -213,6 +219,8 @@ D
 
 الفرصة قد تكون ممتازة بينما التوقيت غير مناسب.
 
+**Anti-Wait Rule:** لا يجوز أن يبقى مرشح مؤهل في WAIT إلى أجل غير محدد بينما تستمر أدلة الـmomentum/acceleration. يجب أن تكون لكل حالة Watch/Wait نافذة إعادة تقييم محددة أو محفزة بحدث واضح، ويجب تسجيل سبب استمرار الانتظار.
+
 ==================================================
 10. CAPITAL ALLOCATION ROLE
 ==================================================
@@ -265,6 +273,11 @@ Minimum Notional ليس sizing policy؛ هو execution constraint.
 - Opportunity Capture Rate.
 - False Negative Rate.
 - Rejection reasons.
+- **Detection Latency.**
+- **Decision Latency.**
+- **Execution Latency.**
+- **Opportunity Response Failure Rate.**
+- **Premature Exit Rate on successful momentum moves.**
 
 الهدف هو تعظيم النمو المعدل بالمخاطر، وليس تعظيم عدد الصفقات أو Win Rate بمعزل عن بقية المؤشرات.
 
@@ -296,6 +309,8 @@ If rejected — why?
 
 هذا القياس أهم من الاكتفاء بعدد الصفقات المنفذة.
 
+**Opportunity Capture لا يُقاس فقط بوجود إشارة؛ بل يُقاس أيضًا بالزمن.** يجب تسجيل أول لحظة أصبحت فيها الفرصة مؤهلة، ثم زمن اكتشافها، وزمن القرار، وزمن التنفيذ، وقياس الجزء القابل للتداول من الحركة الذي تم التقاطه.
+
 ==================================================
 14. DECISION TRACE
 ==================================================
@@ -318,12 +333,19 @@ If rejected — why?
 - blocks.
 - warnings.
 - rejection reason.
+- **opportunity_detected_at.**
+- **decision_at.**
+- **execution_at.**
+- **latency_ms لكل مرحلة.**
+- **opportunity state at each transition.**
 
 الهدف هو الإجابة عن السؤال:
 
 **لماذا لم يدخل ORION هذه العملة؟**
 
-دون تخمين.
+ودون تخمين، مع القدرة على الإجابة أيضًا:
+
+**هل دخل بعد فوات الجزء المهم من الحركة بسبب التأخر؟**
 
 ==================================================
 15. CURRENT OBSERVATION / DESIGN FINDING
@@ -338,6 +360,8 @@ If rejected — why?
 
 هذه الوثيقة تعتمد Multi-Timeframe model بدل استخدام الـ1D كـTrend Gate.
 
+**Finding إضافي يجب حسمه قبل الاعتماد:** إذا أظهرت الاختبارات أن فرصة قوية تفقد نسبة جوهرية من حركتها بسبب بطء الكشف أو طول WAIT أو اعتماد تأكيد أبطأ من طبيعة الحركة، فيجب تصنيف ذلك كـOpportunity Response defect وليس كسلوك سوق عادي.
+
 ==================================================
 16. A/B TESTING BEFORE ADOPTION
 ==================================================
@@ -349,6 +373,7 @@ If rejected — why?
 - Multi-timeframe scoring.
 - Opportunity classification.
 - Candidate pool expansion.
+- **Fast opportunity re-evaluation / latency controls.**
 
 يجب أولًا اختباره مقابل Baseline معروف.
 
@@ -361,6 +386,16 @@ If rejected — why?
 
 ولا يعتمد أي تعديل لمجرد أنه زاد عدد الصفقات.
 
+**يجب أن يتضمن كل A/B test خاص بالـopportunity response مقارنة صريحة في:**
+
+- Capture Rate.
+- False Negative Rate.
+- Detection / Decision / Execution latency.
+- Average captured move.
+- Net PnL after fees/slippage.
+- Drawdown.
+- Premature entries caused by acceleration sensitivity.
+
 ==================================================
 17. DEVELOPMENT ORDER
 ==================================================
@@ -370,30 +405,62 @@ If rejected — why?
 1. تحليل Market Movers والفرص الضائعة.
 2. قياس Opportunity Capture Rate.
 3. تحديد نقطة فقدان الفرصة داخل Universe → Eligibility → Rank → Profile → Decision → Entry.
-4. بناء Multi-Timeframe evidence model.
-5. إضافة Short-Term Momentum / Acceleration.
-6. دراسة Opportunity Classification.
-7. دراسة Supertrend كـevidence مستقل.
-8. ضبط Candidate Pool / Active Trading Set.
-9. A/B Test مقابل Baseline.
-10. Full Verification.
-11. Paper Forward Test جديد.
-12. اعتماد النتيجة قبل أي Live Trading.
+4. قياس Detection / Decision / Execution latency لكل مرحلة.
+5. بناء Multi-Timeframe evidence model.
+6. إضافة Short-Term Momentum / Acceleration.
+7. دراسة Opportunity Classification.
+8. دراسة Fast Re-evaluation / Event-driven opportunity response.
+9. تصميم Position Management يحافظ على الأرباح أثناء استمرار الـmomentum ويمنع الخروج المبكر غير المبرر.
+10. دراسة Supertrend كـevidence مستقل.
+11. إجراء A/B tests.
+12. اعتماد القواعد النهائية فقط بعد إثباتها على نفس بيانات وخط أساس معروف.
 
 ==================================================
-18. GOVERNANCE
+18. MANDATORY OPPORTUNITY RESPONSE ACCEPTANCE GATE
 ==================================================
 
-لا يبدأ تنفيذ هذه النقاط أثناء تجربة الـ$50 / 4H الحالية.
+لا تعتبر حزمة Opportunity Engine مكتملة أو قابلة للاعتماد النهائي ما لم تثبت الاختبارات، على بيانات تاريخية و/أو Forward/Paper معاد إنتاجها، الشروط التالية:
 
-التجربة الحالية يجب أن تكتمل دون تعديل الكود حتى تبقى Baseline صالحة للتحليل.
+### A — Detection
 
-بعد وصول Final Results:
+يستطيع النظام اكتشاف الحركات المهمة داخل نافذة زمنية قصيرة بما يتوافق مع cadence التشغيل الفعلي.
 
-**GPT يراجع النتائج أولًا، ثم يصدر تكليف التطوير.**
+### B — Response
 
-لا يتم استنتاج نجاح أو فشل التعديلات قبل الاختبار.
+بعد ظهور evidence كافٍ، لا يبقى النظام في انتظار غير محدود أو confirmation أبطأ من طبيعة الفرصة دون سبب موثق.
+
+### C — Latency
+
+كل مرحلة من Detection → Decision → Execution قابلة للقياس، وتوجد حدود قبول رقمية تُحدد بعد baseline measurement ولا تُترك ضمنية.
+
+### D — Capture
+
+يُقاس الجزء من الحركة القابلة للتداول الذي تم التقاطه فعليًا، وليس فقط ما إذا كانت الصفقة رابحة.
+
+### E — Anti-Missed-Opportunity
+
+تُسجل الفرص الكبيرة التي كانت قابلة للتداول ولم تُنفذ، مع السبب الدقيق، ويجب ألا تكون الأسباب المتكررة ناتجة عن WAIT غير محدود، Top-N churn، أو confirmation latency غير مبرر.
+
+### F — Risk Preservation
+
+أي تسريع في الاستجابة لا يجوز أن يحول النظام إلى مطاردة عمياء للحركات الممتدة. يجب أن تبقى liquidity, volatility, slippage, risk/reward وposition limits جزءًا من القرار.
+
+### G — Exit Preservation
+
+بعد الدخول في حركة قوية، يجب اختبار قدرة Position Management على عدم قتل الصفقة مبكرًا دون evidence كافٍ لانعكاس أو فقدان للزخم، مع حماية الأرباح المكتسبة.
+
+**Failure of any item above = CHANGES REQUIRED.**
 
 ==================================================
-END
+19. ACCEPTANCE LANGUAGE
+==================================================
+
+يُمنع في وثائق الاعتماد استخدام عبارة عامة مثل "البوت سريع" أو "البوت لا يفوّت الفرص" دون قياس.
+
+العبارة المقبولة يجب أن تكون قابلة للإثبات من trace وmetrics:
+
+**ORION detected the opportunity, responded within the accepted latency envelope, entered only when risk constraints allowed, and captured a measurable portion of the tradable move.**
+
+==================================================
+END OF SPECIFICATION
 ==================================================
