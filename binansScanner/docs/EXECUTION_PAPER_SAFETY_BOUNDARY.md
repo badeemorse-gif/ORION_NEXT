@@ -30,6 +30,27 @@ The review found no `LiveExecutionAdapter` and no live order-placement implement
 
 That path is now closed at the composition root. A future live implementation must introduce a separately reviewed execution boundary instead of reusing the Phase A paper path as an implicit bridge.
 
+## Opportunity-response timing boundary
+
+Paper execution must preserve timing evidence needed to determine whether an opportunity was lost because of execution-path delay.
+
+Where the upstream opportunity/decision path supplies timestamps, the paper path must retain or expose, without inventing timestamps:
+
+- `opportunity_detected_at`
+- `decision_at`
+- `execution_requested_at`
+- `execution_confirmed_at`
+
+The execution layer is responsible for measuring execution-path latency, not for redefining when the opportunity became valid.
+
+A paper execution success must therefore not be interpreted as evidence that opportunity response was timely. Timing acceptance is a separate verification concern.
+
+## Position-management boundary
+
+Phase A remains limited to paper entry/execution safety. It does not imply that `ExecutionResult` completes the lifecycle of an active trading position.
+
+When Position Management is introduced, it must be a separately reviewed component handling the post-entry lifecycle, including profit protection, trailing/scale-out decisions, invalidation, and exit execution. A future exit must not be implemented by silently changing the meaning of the existing entry `DecisionResult` contract.
+
 ## Phase A guardrail
 
 `paper_trading_enabled == False` → **FAIL CLOSED**
@@ -43,3 +64,5 @@ No execution adapter or execution engine is constructed after that failure.
 - Live adapter construction.
 - Configuration-only activation of live execution.
 - Unknown-decision fallback to `ExecutionSide.NONE` / `SKIPPED`.
+- Claiming opportunity-response latency is acceptable without timestamp evidence.
+- Treating paper execution success as proof of trading-strategy profitability or timely opportunity capture.
