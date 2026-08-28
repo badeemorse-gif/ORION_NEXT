@@ -14,17 +14,21 @@ LOW_VOLUME = SYMBOLS[50:-1]
 
 
 def history_payload(rows: int = 32):
-    return [
-        [
-            1_700_000_000_000 + index * 86_400_000,
-            "100",
-            "101",
-            "99",
-            str(100 + (index % 5)),
-            "10",
-        ]
-        for index in range(rows)
-    ]
+    base_ts = 1_700_000_000_000
+    payload = []
+    for index in range(rows):
+        close = 100 + index
+        payload.append(
+            [
+                base_ts + index * 86_400_000,
+                str(close - 0.5),
+                str(close + 0.5),
+                str(close - 1.0),
+                str(close),
+                "10",
+            ]
+        )
+    return payload
 
 
 def exchange_info_rows():
@@ -233,7 +237,7 @@ class D2HistoryRecoveryTests(unittest.TestCase):
                 with self.assertRaisesRegex(RuntimeError, "missing=DJTBUSDT"):
                     runner_module.Paper8HRunner.create(config)
 
-        self.assertEqual(network.history_calls.count(DJTB), 2)
+        self.assertEqual(network.history_calls.count(DJTB), 4)
         lifecycle_factory.assert_not_called()
 
 
