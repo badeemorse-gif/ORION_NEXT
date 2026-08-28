@@ -78,6 +78,13 @@ jobs:
           printf 'status=%s\n' "$status" | tee "$EVIDENCE_DIR/clean-tree-before.txt"
           test -z "$status"
 
+      - name: Capture immutable source fingerprint
+        shell: bash
+        run: |
+          set -euo pipefail
+          git rev-parse HEAD > "$EVIDENCE_DIR/source-head-before.txt"
+          git diff-tree --no-commit-id --name-status -r "$SOURCE_SHA" > "$EVIDENCE_DIR/source-tree.txt"
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
@@ -114,7 +121,6 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          # This workflow deliberately does not request, inject, or expose secrets.
           for name in BINANCE_API_KEY BINANCE_API_SECRET API_KEY API_SECRET; do
             if [[ -n "${!name:-}" ]]; then
               echo "Forbidden credential environment variable present: $name" >&2
@@ -124,7 +130,6 @@ jobs:
 
       - name: Run Paper Extended Verification
         id: paper
-        working-directory: .
         shell: bash
         continue-on-error: true
         run: |
@@ -145,33 +150,52 @@ jobs:
           set -e
           printf '%s\n' "$rc" > "$EVIDENCE_DIR/exit-code.txt"
           printf 'output_dir=%s\n' "$output_dir" > "$EVIDENCE_DIR/output-dir.txt"
-          exit 0
 
       - name: Locate and validate events.jsonl
         shell: bash
         run: |
           set -euo pipefail
-          output_dir="$(cut -d= -f2 "$EVIDENCE_DIR/output-dir.txt")"
+          output_dir="$(cut -d= -f2- "$EVIDENCE_DIR/output-dir.txt")"
           events="$output_dir/events.jsonl"
           test -f "$events"
           cp "$events" "$EVIDENCE_DIR/events.jsonl"
           python - <<'PY'
           import json
+          import os
           from pathlib import Path
-          p = Path("$EVIDENCE_DIR/events.jsonl")
-          events = [json.loads(line) for line in p.read_text(encoding="utf-8").splitlines() if line.strip()]
-          if not any(e.get("event") == "run_end" or e.get("event_type") == "run_end" for e in events):
+
+          evidence_dir = Path(os.environ["EVIDENCE_DIR"])
+          events_path = evidence_dir / "events.jsonl"
+          events = [
+              json.loads(line)
+              for line in events_path.read_text(encoding="utf-8").splitlines()
+              if line.strip()
+          ]
+
+          run_ends = [
+              e for e in events
+              if e.get("event") == "run_end" or e.get("event_type") == "run_end"
+          ]
+          if not run_ends:
               raise SystemExit("Missing run_end event")
-          last = [e for e in events if e.get("event") == "run_end" or e.get("event_type") == "run_end"][-1]
+
+          last = run_ends[-1]
           required = (
-              "runtime_failure", "runtime_health", "capital_replay_equal", "runtime_replay_equal",
-              "runtime_repeat_recovery_equal", "paper_only_verification", "exchange_orders", "credentials_used",
+              "runtime_failure",
+              "runtime_health",
+              "capital_replay_equal",
+              "runtime_replay_equal",
+              "runtime_repeat_recovery_equal",
+              "paper_only_verification",
+              "exchange_orders",
+              "credentials_used",
           )
-          missing = [k for k in required if k not in last]
+          missing = [key for key in required if key not in last]
           if missing:
               raise SystemExit(f"run_end missing required fields: {missing}")
-          Path("$EVIDENCE_DIR/run-end.json").write_text(json.dumps(last, indent=2, sort_keys=True), encoding="utf-8")
+
           checks = {
+              "exit_code_zero": int((evidence_dir / "exit-code.txt").read_text().strip()) == 0,
               "runtime_failure": last["runtime_failure"] is None,
               "runtime_health": last["runtime_health"] is True,
               "capital_replay_equal": last["capital_replay_equal"] is True,
@@ -181,22 +205,39 @@ jobs:
               "exchange_orders": last["exchange_orders"] is False,
               "credentials_used": last["credentials_used"] is False,
           }
-          Path("$EVIDENCE_DIR/final-verification.json").write_text(json.dumps(checks, indent=2, sort_keys=True), encoding="utf-8")
+
+          (evidence_dir / "run-end.json").write_text(
+              json.dumps(last, indent=2, sort_keys=True),
+              encoding="utf-8",
+          )
+          (evidence_dir / "final-verification.json").write_text(
+              json.dumps(checks, indent=2, sort_keys=True),
+              encoding="utf-8",
+          )
+
           if not all(checks.values()):
               raise SystemExit(f"Extended verification failed: {checks}")
           PY
 
-      - name: Record end timestamp and exit semantics
+      - name: Record end timestamp and immutable-source check
+        if: always()
         shell: bash
         run: |
           set -euo pipefail
           printf 'end_timestamp=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$EVIDENCE_DIR/run-config.txt"
-          cp "$EVIDENCE_DIR/exit-code.txt" "$EVIDENCE_DIR/runner-exit-code.txt"
+          if git rev-parse HEAD > "$EVIDENCE_DIR/source-head-after.txt"; then
+            test "$(cat "$EVIDENCE_DIR/source-head-after.txt")" = "$SOURCE_SHA"
+          fi
 
       - name: Verify clean tree after run
+        if: always()
         shell: bash
         run: |
           set -euo pipefail
+          output_dir="$(cut -d= -f2- "$EVIDENCE_DIR/output-dir.txt" 2>/dev/null || true)"
+          if [[ -n "$output_dir" && -d "$output_dir" ]]; then
+            rm -rf "$output_dir"
+          fi
           status="$(git status --porcelain --untracked-files=all)"
           printf 'status=%s\n' "$status" | tee "$EVIDENCE_DIR/clean-tree-after.txt"
           test -z "$status"
@@ -211,8 +252,8 @@ jobs:
             printf 'runner_os=%s\n' "${RUNNER_OS:-unknown}"
             printf 'python_version=%s\n' "$(python --version 2>&1)"
             printf 'duration_hours=%s\n' "$DURATION_HOURS"
-            printf 'start_timestamp=%s\n' "$(grep '^start_timestamp=' "$EVIDENCE_DIR/run-config.txt" | cut -d= -f2-)"
-            printf 'end_timestamp=%s\n' "$(grep '^end_timestamp=' "$EVIDENCE_DIR/run-config.txt" | cut -d= -f2- || true)"
+            printf 'start_timestamp=%s\n' "$(grep '^start_timestamp=' "$EVIDENCE_DIR/run-config.txt" 2>/dev/null | cut -d= -f2- || true)"
+            printf 'end_timestamp=%s\n' "$(grep '^end_timestamp=' "$EVIDENCE_DIR/run-config.txt" 2>/dev/null | cut -d= -f2- || true)"
             printf 'exit_code=%s\n' "$(cat "$EVIDENCE_DIR/exit-code.txt" 2>/dev/null || echo unavailable)"
             printf 'evidence_paths=events.jsonl,paper-stdout.txt,run-config.txt,source-sha.txt,checkout.txt,exit-code.txt,run-end.json,final-verification.json\n'
           } > "$EVIDENCE_DIR/artifact-manifest.txt"
@@ -225,15 +266,16 @@ jobs:
           path: ${{ runner.temp }}/orion-paper-extended-${{ github.run_id }}
           if-no-files-found: error
 
-      - name: Enforce Paper result
-        if: steps.paper.outcome == 'success'
+      - name: Enforce successful Paper result
+        if: always()
         shell: bash
         run: |
           set -euo pipefail
           test -f "$EVIDENCE_DIR/final-verification.json"
           python - <<'PY'
           import json
+          import os
           from pathlib import Path
-          checks = json.loads(Path("$EVIDENCE_DIR/final-verification.json").read_text(encoding="utf-8"))
+          checks = json.loads((Path(os.environ["EVIDENCE_DIR"]) / "final-verification.json").read_text(encoding="utf-8"))
           assert all(checks.values()), checks
           PY
