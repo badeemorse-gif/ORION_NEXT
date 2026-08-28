@@ -31,13 +31,18 @@ class Clock:
     def __call__(self): return self.value
 
 
+def _history(rows: int = 31):
+    base_ts = 1_700_000_000_000
+    return [[base_ts + index * 86_400_000, str(100 + index - 0.5), str(100 + index + 0.5), str(100 + index - 1.0), str(100 + index), "10"] for index in range(rows)]
+
+
 class D1V3Tests(unittest.TestCase):
     def setUp(self):
         self.rows = [
             {"symbol":"BTCUSDT","baseAsset":"BTC","quoteAsset":"USDT","status":"TRADING","isSpotTradingAllowed":True},
             {"symbol":"ETHUSDT","baseAsset":"ETH","quoteAsset":"USDT","status":"TRADING","isSpotTradingAllowed":True},
         ]
-        self.config = OpportunityConfig(min_quote_volume_24h=1e6, min_volatility=0.001, max_volatility=0.20, target_volatility=0.03, default_top_n=2)
+        self.config = OpportunityConfig(min_quote_volume_24h=1e6, min_volatility=.001, max_volatility=.20, target_volatility=.03, default_top_n=2)
         self.candidates = MarketUniverseDiscovery(Universe(self.rows)).discover()
 
     @staticmethod
@@ -148,7 +153,7 @@ class SourceTests(unittest.TestCase):
     def test_true_market_volatility_and_feature_extraction(self):
         source = BinanceSpotOpportunitySource(clock=lambda: 0)
         prices = [100, 101, 103, 102, 104, 106, 105, 107, 109, 108, 110, 112, 111, 113, 115, 114, 116, 118, 117, 119, 121, 120, 122, 124, 123, 125, 127, 126, 128, 130, 129]
-        history = [[0, 0, 0, 0, str(price)] for price in prices]
+        history = [[1_700_000_000_000 + i * 86_400_000, str(price - 1), str(price + 1), str(price - 1.5), str(price), "10"] for i, price in enumerate(prices)]
         volatility, trend_quality, trend_direction, persistence, momentum_quality, momentum_direction = source._history_features(history)
         self.assertGreater(volatility, 0.0)
         self.assertGreater(trend_quality, 0.0)
@@ -164,7 +169,7 @@ class SourceTests(unittest.TestCase):
             "exchangeInfo": {"symbols": [{"symbol": "BTCUSDT", "status": "TRADING", "baseAsset": "BTC", "quoteAsset": "USDT", "isSpotTradingAllowed": True}]},
             "ticker/24hr": [{"symbol": "BTCUSDT", "lastPrice": "130", "quoteVolume": "200000000", "priceChangePercent": "3", "weightedAvgPrice": "129"}],
             "ticker/bookTicker": [{"symbol": "BTCUSDT", "bidPrice": "129.9", "askPrice": "130.1"}],
-            "klines": [[0, 0, 0, 0, str(100 + i), 0] for i in range(31)],
+            "klines": _history(32),
         }
         source._get_json = lambda path, params=None: (calls.append((path, params)) or payloads[path])
         result = source.metrics_bulk(["BTCUSDT"])
