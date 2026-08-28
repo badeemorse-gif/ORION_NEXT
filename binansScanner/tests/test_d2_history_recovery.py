@@ -164,7 +164,9 @@ class D2HistoryRecoveryTests(unittest.TestCase):
                 url = request.full_url
                 if "/klines?" in url:
                     self.history_calls.append(DJTB)
-                    return Response([["bad"]])
+                    payload = history_payload(22)
+                    payload[0][4] = "not-a-number"
+                    return Response(payload)
                 return super().__call__(request, timeout)
 
         network = Malformed()
