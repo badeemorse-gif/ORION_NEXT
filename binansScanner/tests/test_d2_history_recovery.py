@@ -17,7 +17,14 @@ def history_payload(rows: int = 32):
     payload = []
     for index in range(rows):
         close = 100 + index
-        payload.append([ts := base_ts + index * 86_400_000, str(close - 0.5), str(close + 0.5), str(close - 1.0), str(close), "10"])
+        payload.append([
+            base_ts + index * 86_400_000,
+            str(close - 0.5),
+            str(close + 0.5),
+            str(close - 1.0),
+            str(close),
+            "10",
+        ])
     return payload
 
 
@@ -69,7 +76,7 @@ class D2HistoryRecoveryTests(unittest.TestCase):
         network = ShortHistoryNetwork()
         with patch("providers.binance_opportunity_source.urlopen", side_effect=network):
             source = BinanceSpotOpportunitySource(ttl_seconds=300.0); history = source._fetch_history(DJTB)
-        self.assertEqual(len(history), 32); self.assertEqual(network.history_calls, [DJTB, DJTB]); self.assertEqual(source._cache[f"klines_{DJTB}"].value, history)
+        self.assertEqual(len(history), 32); self.assertGreaterEqual(len(history), source.MIN_HISTORY_CANDLES); self.assertEqual(network.history_calls, [DJTB, DJTB]); self.assertEqual(source._cache[f"klines_{DJTB}"].value, history)
         recovery = [event for event in source.reconciliation_events if event["symbol"] == DJTB]
         self.assertEqual([event["history_outcome"] for event in recovery], ["retrying", "recovered"])
 
@@ -96,7 +103,7 @@ class D2HistoryRecoveryTests(unittest.TestCase):
         network = EmptyThenValid()
         with patch("providers.binance_opportunity_source.urlopen", side_effect=network):
             source = BinanceSpotOpportunitySource(ttl_seconds=300.0); history = source._fetch_history(DJTB)
-        self.assertEqual(len(history), 32); self.assertEqual(network.history_calls, [DJTB, DJTB])
+        self.assertEqual(len(history), 32); self.assertGreaterEqual(len(history), source.MIN_HISTORY_CANDLES); self.assertEqual(network.history_calls, [DJTB, DJTB])
 
     def test_provider_malformed_history_fails_without_recovery_loop(self):
         from providers.binance_opportunity_source import BinanceSpotOpportunitySource
@@ -120,7 +127,7 @@ class D2HistoryRecoveryTests(unittest.TestCase):
             built_lengths.append(len(history)); return original_builder(self, source, symbol, ticker_value, book_value, history)
         with tempfile.TemporaryDirectory() as tmp:
             config = runner_module.Paper8HConfig(duration_hours=0.01, starting_capital=50.0, dynamic_universe=True, top_n=1, output_dir=Path(tmp) / "run")
-            with patch("providers.binance_opportunity_source.urlopen", side_effect=network), patch("tools/orion_paper_8h_runner.urllib.request.urlopen", side_effect=network), patch.object(runner_module, "DynamicMarketStream", return_value=Mock()), patch.object(runner_module, "PaperRealtimeLifecycle", return_value=lifecycle) as lifecycle_factory, patch.object(OpportunityDiscovery, "_build_history_metric", new=traced_builder):
+            with patch("providers.binance_opportunity_source.urlopen", side_effect=network), patch("tools.orion_paper_8h_runner.urllib.request.urlopen", side_effect=network), patch.object(runner_module, "DynamicMarketStream", return_value=Mock()), patch.object(runner_module, "PaperRealtimeLifecycle", return_value=lifecycle) as lifecycle_factory, patch.object(OpportunityDiscovery, "_build_history_metric", new=traced_builder):
                 runner = runner_module.Paper8HRunner.create(config)
         discovery = runner.opportunity.discovery
         self.assertEqual(discovery.last_bootstrap.missing_symbols, ()); self.assertEqual(len(discovery.last_bootstrap.expected_symbols), 476); self.assertEqual(len(discovery.last_bootstrap.received_symbols), 476); self.assertIn(32, built_lengths); self.assertNotIn(3, built_lengths); self.assertEqual(network.history_calls.count(DJTB), 2); lifecycle_factory.assert_called_once()
@@ -130,7 +137,7 @@ class D2HistoryRecoveryTests(unittest.TestCase):
         network = ShortHistoryNetwork(persistent_short=True); lifecycle_factory = Mock()
         with tempfile.TemporaryDirectory() as tmp:
             config = runner_module.Paper8HConfig(duration_hours=0.01, starting_capital=50.0, dynamic_universe=True, top_n=1, output_dir=Path(tmp) / "run")
-            with patch("providers.binance_opportunity_source.urlopen", side_effect=network), patch("tools.orion_paper_8h_runner.urllib.request.urlopen", side_effect=network), patch.object(runner_module, "DynamicMarketStream", return_value=Mock()), patch.object(runner_module, "PaperRealtimeLifecycle", lifecycle_factory):
+            with patch("providers.binance_opportunity_source.urlopen", side_effect=network), patch("tools/orion_paper_8h_runner.urllib.request.urlopen", side_effect=network), patch.object(runner_module, "DynamicMarketStream", return_value=Mock()), patch.object(runner_module, "PaperRealtimeLifecycle", lifecycle_factory):
                 with self.assertRaisesRegex(RuntimeError, "missing=DJTBUSDT"): runner_module.Paper8HRunner.create(config)
         self.assertEqual(network.history_calls.count(DJTB), 4); lifecycle_factory.assert_not_called()
 
