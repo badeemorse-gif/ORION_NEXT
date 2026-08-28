@@ -25,8 +25,13 @@ def exchange_info_rows():
     return {"symbols": [{"symbol": symbol, "status": "TRADING", "baseAsset": symbol[:-4], "quoteAsset": "USDT", "isSpotTradingAllowed": True, "filters": []} for symbol in SYMBOLS]}
 
 
-def ticker(symbol: str, volume: float = 200_000_000.0):
-    return {"symbol": symbol, "lastPrice": "100", "quoteVolume": str(volume), "priceChangePercent": "1", "weightedAvgPrice": "100"}
+def ticker(symbol: str, volume: float | None = None, change: float | None = None):
+    index = int(symbol[1:4]) if symbol.startswith("S") else 999
+    if volume is None:
+        volume = 400_000_000.0 - (index * 1_500_000.0 if index < 100 else 0.0)
+    if change is None:
+        change = 1.0 if index < 50 else 25.0
+    return {"symbol": symbol, "lastPrice": "100", "quoteVolume": str(volume), "priceChangePercent": str(change), "weightedAvgPrice": "100"}
 
 
 def book(symbol: str): return {"symbol": symbol, "bidPrice": "99.99", "askPrice": "100.01"}
@@ -46,8 +51,8 @@ class ShortHistoryNetwork:
         url = request.full_url
         if "exchangeInfo" in url: return Response(exchange_info_rows())
         if "ticker/24hr" in url:
-            if "symbol=" in url: self.targeted_calls.append(url); return Response(ticker(DJTB))
-            return Response([ticker(symbol) for symbol in ELIGIBLE] + [ticker(symbol, 500_000.0) for symbol in LOW_VOLUME])
+            if "symbol=" in url: self.targeted_calls.append(url); return Response(ticker(DJTB, volume=200_000_000.0, change=20.0))
+            return Response([ticker(symbol) for symbol in ELIGIBLE] + [ticker(symbol, 500_000.0, 0.0) for symbol in LOW_VOLUME])
         if "ticker/bookTicker" in url:
             if "symbol=" in url: self.targeted_calls.append(url); return Response(book(DJTB))
             return Response([book(symbol) for symbol in SYMBOLS[:-1]])
