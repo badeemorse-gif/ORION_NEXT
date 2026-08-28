@@ -1,6 +1,6 @@
 # ORION — خارطة طريق التنفيذ الرسمية
 
-الإصدار: 3.0
+الإصدار: 3.1
 الحالة: ACTIVE
 المشروع: ORION
 
@@ -43,6 +43,8 @@ Documentation
 Approval
 
 ولا يتم تجاوز ترتيب المراحل إلا بقرار موثق في ORION_DECISIONS.md.
+
+**قاعدة إضافية حاكمة:** لا يجوز اعتبار Trading Bot أو Production جاهزًا إذا كانت قدرة النظام على الاستجابة السريعة للفرص أو إدارة المركز بعد الدخول غير مثبتة حتى لو كان المسار الأساسي Signal → Execution يعمل.
 
 ==================================================
 3. PHASE 0 — Repository Foundation
@@ -155,8 +157,12 @@ PENDING
 - Factors / Reasoning.
 - Rejection Reasons.
 - Multi-timeframe context عند الحاجة.
+- **Fast Recall / Sudden-Move Re-evaluation state.**
+- **Opportunity event timestamps.**
 
 يجب أن يكون الترشيح قابلًا للتتبع من Market Data إلى Analysis وProfile وScore وDecision.
+
+يجب ألا تعتمد المرحلة على دورة تحليل بطيئة واحدة فقط؛ يجب أن تتعامل مع الأحداث السريعة وفق Opportunity Response contract الذي تثبته الاختبارات.
 
 ==================================================
 7. PHASE 4 — Desktop Application / GUI
@@ -205,6 +211,7 @@ PENDING
 - Estimated time window عندما تسمح البيانات.
 - Reasons.
 - Signal invalidation.
+- **Fast re-evaluation trigger when acceleration is detected.**
 
 لا تدعي الميزة التنبؤ المؤكد بالانفجار.
 
@@ -237,6 +244,16 @@ Audit / Report
 
 تبدأ بـ Paper Trading، وليس Live Trading.
 
+**متطلبات إلزامية قبل اكتمال Phase 6:**
+
+1. Entry response latency قابلة للقياس.
+2. Fast re-evaluation عند sudden-move / acceleration.
+3. عدم إبقاء Opportunity مؤهلة في WAIT بلا حد زمني أو trigger واضح.
+4. Position Management مستقل عن Entry Decision.
+5. Dynamic profit protection / trailing / scale-out behavior مثبت أو مرفوض بالدليل التجريبي؛ لا يُفترض fixed take-profit كحل افتراضي.
+6. Exit latency قابلة للقياس.
+7. Audit trail كامل لدورة المركز.
+
 ==================================================
 10. PHASE 7 — Backtesting / Replay / Validation
 ==================================================
@@ -253,6 +270,30 @@ PENDING
 - Risk Validation.
 - Execution Simulation.
 - Performance Measurement.
+
+**إضافة إلزامية:**
+
+يجب أن تتضمن Replay/Backtest حالات extreme-move وسوق سريع، وليس فقط عينات السوق العادية.
+
+يجب قياس:
+
+Opportunity detected
+→ Decision
+→ Entry
+→ MFE
+→ Management
+→ Exit
+
+مع:
+
+- Capture Rate.
+- Detection Latency.
+- Decision Latency.
+- Execution Latency.
+- False Negative Rate.
+- Opportunity Response Failure Rate.
+- Premature Exit Rate.
+- Net PnL بعد الرسوم والانزلاق.
 
 لا يعتمد Live Trading على نتيجة اختبار واحدة.
 
@@ -275,6 +316,15 @@ PENDING
 - Paper Trading Validation.
 - Final Architecture Review.
 - Operational Verification.
+
+**بوابة Opportunity/Position إلزامية:**
+
+لا يسمح بالانتقال إلى Live Trading Readiness/Production إذا وُجد دليل على أن النظام:
+
+- يفوّت فرصًا مؤهلة بسبب انتظار غير مبرر.
+- يتأخر في الاستجابة لأحداث acceleration ضمن حدود البنية التحتية.
+- يخرج مبكرًا بصورة منهجية من الحركات الناجحة القوية دون مبرر استراتيجي مثبت.
+- لا يستطيع تفسير سبب عدم الدخول أو سبب الخروج.
 
 ==================================================
 12. PHASE 9 — Production ORION
@@ -315,6 +365,12 @@ Reports / Audit / Monitoring
 - Documentation Consistency.
 - Legacy Containment.
 - Observability / Auditability.
+- **Opportunity Response Integrity.**
+- **Position Management Integrity.**
+
+Opportunity Response Integrity تعني أن النظام يستطيع اكتشاف الحدث، وإعادة تقييمه، واتخاذ قرار، وطلب التنفيذ ضمن حدود latency مثبتة، مع تسجيل السبب والزمن.
+
+Position Management Integrity تعني أن المركز المفتوح يملك دورة حياة مستقلة وقابلة للاختبار، ولا يتم إغلاقه تلقائيًا لمجرد انتهاء منطق Entry.
 
 لا يجوز استخدام هذه البوابات لإيقاف التطوير بلا دليل؛ لكنها تصبح blocker عندما يثبت أن الاستمرار سيضر Contract أو Architecture أو الهدف التشغيلي.
 
