@@ -65,7 +65,9 @@ class ShortHistoryNetwork:
             return Response([book(symbol) for symbol in SYMBOLS[:-1]])
         if "/klines?" in url:
             symbol = url.split("symbol=", 1)[1].split("&", 1)[0]; self.history_calls.append(symbol)
-            if self.persistent_short or len(self.history_calls) == 1: return Response(history_payload(3))
+            if symbol == DJTB:
+                if self.persistent_short or self.history_calls.count(DJTB) == 1: return Response(history_payload(3))
+                return Response(history_payload(32))
             return Response(history_payload(32))
         raise AssertionError(f"first_divergence=unexpected endpoint {url}")
 
@@ -137,9 +139,9 @@ class D2HistoryRecoveryTests(unittest.TestCase):
         network = ShortHistoryNetwork(persistent_short=True); lifecycle_factory = Mock()
         with tempfile.TemporaryDirectory() as tmp:
             config = runner_module.Paper8HConfig(duration_hours=0.01, starting_capital=50.0, dynamic_universe=True, top_n=1, output_dir=Path(tmp) / "run")
-            with patch("providers.binance_opportunity_source.urlopen", side_effect=network), patch("tools/orion_paper_8h_runner.urllib.request.urlopen", side_effect=network), patch.object(runner_module, "DynamicMarketStream", return_value=Mock()), patch.object(runner_module, "PaperRealtimeLifecycle", lifecycle_factory):
+            with patch("providers.binance_opportunity_source.urlopen", side_effect=network), patch("tools.orion_paper_8h_runner.urllib.request.urlopen", side_effect=network), patch.object(runner_module, "DynamicMarketStream", return_value=Mock()), patch.object(runner_module, "PaperRealtimeLifecycle", lifecycle_factory):
                 with self.assertRaisesRegex(RuntimeError, "missing=DJTBUSDT"): runner_module.Paper8HRunner.create(config)
-        self.assertEqual(network.history_calls.count(DJTB), 4); lifecycle_factory.assert_not_called()
+        self.assertEqual(network.history_calls, [DJTB, DJTB]); lifecycle_factory.assert_not_called()
 
 
 if __name__ == "__main__": unittest.main()
