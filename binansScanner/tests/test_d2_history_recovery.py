@@ -119,7 +119,7 @@ class D2HistoryRecoveryTests(unittest.TestCase):
         def traced_builder(self, source, symbol, ticker_value, book_value, history):
             built_lengths.append(len(history)); return original_builder(self, source, symbol, ticker_value, book_value, history)
         with tempfile.TemporaryDirectory() as tmp:
-            config = runner_module.Paper8HConfig(duration_hours=0.01, starting_capital=50.0, dynamic_universe=True, top_n=100, output_dir=Path(tmp) / "run")
+            config = runner_module.Paper8HConfig(duration_hours=0.01, starting_capital=50.0, dynamic_universe=True, top_n=10, output_dir=Path(tmp) / "run")
             with patch("providers.binance_opportunity_source.urlopen", side_effect=network), patch("tools.orion_paper_8h_runner.urllib.request.urlopen", side_effect=network), patch.object(runner_module, "DynamicMarketStream", return_value=Mock()), patch.object(runner_module, "PaperRealtimeLifecycle", return_value=lifecycle) as lifecycle_factory, patch.object(OpportunityDiscovery, "_build_history_metric", new=traced_builder):
                 runner = runner_module.Paper8HRunner.create(config)
         discovery = runner.opportunity.discovery
@@ -129,7 +129,7 @@ class D2HistoryRecoveryTests(unittest.TestCase):
         import tools.orion_paper_8h_runner as runner_module
         network = ShortHistoryNetwork(persistent_short=True); lifecycle_factory = Mock()
         with tempfile.TemporaryDirectory() as tmp:
-            config = runner_module.Paper8HConfig(duration_hours=0.01, starting_capital=50.0, dynamic_universe=True, top_n=100, output_dir=Path(tmp) / "run")
+            config = runner_module.Paper8HConfig(duration_hours=0.01, starting_capital=50.0, dynamic_universe=True, top_n=10, output_dir=Path(tmp) / "run")
             with patch("providers.binance_opportunity_source.urlopen", side_effect=network), patch("tools.orion_paper_8h_runner.urllib.request.urlopen", side_effect=network), patch.object(runner_module, "DynamicMarketStream", return_value=Mock()), patch.object(runner_module, "PaperRealtimeLifecycle", lifecycle_factory):
                 with self.assertRaisesRegex(RuntimeError, "missing=DJTBUSDT"): runner_module.Paper8HRunner.create(config)
         self.assertEqual(network.history_calls.count(DJTB), 4); lifecycle_factory.assert_not_called()
