@@ -15,6 +15,11 @@ from services.opportunity_discovery import MarketUniverseDiscovery, OpportunityC
 SYMBOL = "AAAUSDT"
 
 
+def _history_payload(rows: int = 32):
+    base_ts = 1_700_000_000_000
+    return [[base_ts + index * 86_400_000, "100", "101", "99", str(100 + index), "10"] for index in range(rows)]
+
+
 def _metric(symbol: str = SYMBOL) -> MarketMetrics:
     return MarketMetrics(
         symbol=symbol,
@@ -212,7 +217,7 @@ class ResilientBootstrapTests(unittest.TestCase):
                 return super()._get_json(path, params)
 
         source = Source(ttl_seconds=0.0, timeout_seconds=10.0)
-        payload = [[index, "1", "2", "0", str(100 + index), "10"] for index in range(32)]
+        payload = _history_payload()
         with patch("providers.binance_opportunity_source.urlopen", side_effect=[socket.timeout("read timed out"), _Response(payload)]), patch(
             "providers.binance_opportunity_source.time.sleep"
         ) as sleep:
@@ -253,12 +258,12 @@ class ResilientBootstrapTests(unittest.TestCase):
         from enums import Timeframe
 
         provider = runner_module._BoundedPublicBinanceKlineProvider()
-        payload = [[index, "1", "2", "0", str(100 + index), "10"] for index in range(8)]
+        payload = _history_payload(32)
         with patch(
             "tools.orion_paper_8h_runner.urllib.request.urlopen",
             side_effect=[socket.timeout("read timed out"), _Response(payload)],
         ), patch("tools.orion_paper_8h_runner.time.sleep") as sleep:
-            self.assertEqual(provider.klines(SYMBOL, Timeframe.H4, 8), payload)
+            self.assertEqual(provider.klines(SYMBOL, Timeframe.H4, 32), payload)
         self.assertEqual(sleep.call_count, 1)
         self.assertEqual(provider.request_events[0]["failure_category"], "read_or_transport_timeout")
         self.assertEqual(provider.request_events[-1]["outcome"], "success")
