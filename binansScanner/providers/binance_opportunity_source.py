@@ -39,6 +39,7 @@ class BinanceSpotOpportunitySource:
     HISTORY_LIMIT = 32
     METRICS_HISTORY_WINDOW = 31
     MIN_HISTORY_CANDLES = 22
+    HISTORY_RECOVERY_ATTEMPTS = 2
     DISCOVERY_CONCURRENCY = 4
     METADATA_CONCURRENCY = 2
     EARLY_MIN_QUOTE_VOLUME_24H = 1_000_000.0
@@ -256,7 +257,7 @@ class BinanceSpotOpportunitySource:
 
     @classmethod
     def _history_features(cls, rows: Sequence[Any]) -> tuple[float, float, float, float, float, float]:
-        closes = [float(row[4]) for row in rows if isinstance(row, Sequence) and len(row) > 4]
+        closes = [float(row[4]) for row in rows if isinstance(row, Sequence) and not isinstance(row, (str, bytes)) and len(row) > 4]
         if len(closes) < cls.MIN_HISTORY_CANDLES:
             raise ValueError("insufficient price history")
         returns = [math.log(closes[i] / closes[i - 1]) for i in range(1, len(closes)) if closes[i] > 0 and closes[i - 1] > 0]
@@ -280,17 +281,112 @@ class BinanceSpotOpportunitySource:
         momentum_quality = min(1.0, abs(momentum_direction))
         return volatility, trend_quality, trend_direction, trend_persistence, momentum_quality, momentum_direction
 
-    def _fetch_history(self, symbol: str) -> tuple[Sequence[Any], ...]:
-        history = self._cached(
-            f"klines_{symbol}",
-            lambda: self._get_json(
-                "klines",
-                {"symbol": symbol, "interval": self.HISTORY_INTERVAL, "limit": self.HISTORY_LIMIT},
-            ),
-        )
+    @classmethod
+    def _validate_history_payload(cls, history: Any) -> tuple[Sequence[Any], ...]:
         if not isinstance(history, list):
             raise ValueError("invalid price history payload")
+        if not history or len(history) < cls.MIN_HISTORY_CANDLES:
+            raise ValueError("insufficient price history")
+
+        for index, row in enumerate(history):
+            if not isinstance(row, Sequence) or isinstance(row, (str, bytes)) or len(row) < 6:
+                raise ValueError(f"invalid price history candle at index {index}")
+            try:
+                timestamp = float(row[0])
+                open_price = float(row[1])
+                high_price = float(row[2])
+                low_price = float(row[3])
+                close_price = float(row[4])
+                volume = float(row[5])
+            except (TypeError, ValueError, OverflowError) as exc:
+                raise ValueError(f"invalid price history candle at index {index}") from exc
+            values = (timestamp, open_price, high_price, low_price, close_price, volume)
+            if not all(math.isfinite(value) for value in values):
+                raise ValueError(f"invalid price history candle at index {index}")
+            if timestamp <= 0 or volume < 0 or min(open_price, high_price, low_price, close_price) <= 0:
+                raise ValueError(f"invalid price history candle at index {index}")
+            if high_price < max(open_price, close_price, low_price) or low_price > min(open_price, close_price, high_price):
+                raise ValueError(f"invalid price history candle at index {index}")
+
         return tuple(history)
+
+    @classmethod
+    def _history_recovery_allowed(cls, exc: ValueError) -> bool:
+        return str(exc) in {"insufficient price history", "insufficient return history"}
+
+    def _record_history_recovery(
+        self,
+        *,
+        symbol: str,
+        attempt: int,
+        history_outcome: str,
+        final_disposition: str,
+        history_length: int | None,
+        exception_type: str | None = None,
+        exception_message: str | None = None,
+    ) -> None:
+        with self._request_lock:
+            self._reconciliation_events.append(
+                {
+                    "attempt": attempt,
+                    "symbol": symbol,
+                    "metadata_state": "history_incomplete",
+                    "metadata": None,
+                    "needs_history": True,
+                    "history_outcome": history_outcome,
+                    "final_disposition": final_disposition,
+                    "history_length": history_length,
+                    "exception_type": exception_type,
+                    "exception_message": exception_message,
+                }
+            )
+
+    def _fetch_history(self, symbol: str) -> tuple[Sequence[Any], ...]:
+        """Fetch fresh valid history; short history is recoverable, malformed data is fatal."""
+        key = f"klines_{symbol}"
+        for attempt in range(1, self.HISTORY_RECOVERY_ATTEMPTS + 1):
+            history: Any = None
+            try:
+                history = self._get_json(
+                    "klines",
+                    {"symbol": symbol, "interval": self.HISTORY_INTERVAL, "limit": self.HISTORY_LIMIT},
+                )
+                validated = self._validate_history_payload(history)
+                with self._cache_lock:
+                    now = self._clock()
+                    self._cache[key] = _CacheEntry(now + self.ttl_seconds, validated)
+                if attempt > 1:
+                    self._record_history_recovery(
+                        symbol=symbol,
+                        attempt=attempt,
+                        history_outcome="recovered",
+                        final_disposition="eligible",
+                        history_length=len(validated),
+                    )
+                return validated
+            except ValueError as exc:
+                history_length = len(history) if isinstance(history, list) else None
+                if not self._history_recovery_allowed(exc) or attempt >= self.HISTORY_RECOVERY_ATTEMPTS:
+                    self._record_history_recovery(
+                        symbol=symbol,
+                        attempt=attempt,
+                        history_outcome="exhausted" if self._history_recovery_allowed(exc) else "invalid",
+                        final_disposition="unresolved",
+                        history_length=history_length,
+                        exception_type=type(exc).__name__,
+                        exception_message=str(exc),
+                    )
+                    raise
+                self._record_history_recovery(
+                    symbol=symbol,
+                    attempt=attempt,
+                    history_outcome="retrying",
+                    final_disposition="unresolved",
+                    history_length=history_length,
+                    exception_type=type(exc).__name__,
+                    exception_message=str(exc),
+                )
+        raise RuntimeError("history recovery loop exhausted unexpectedly")
 
     @classmethod
     def _needs_history(cls, ticker: Mapping[str, Any] | None, book: Mapping[str, Any] | None) -> bool:
