@@ -14,7 +14,11 @@ SYMBOL = "AAAUSDT"
 
 
 def _history_payload():
-    return [[index, "1", "2", "0", str(100 + index), "10"] for index in range(32)]
+    base_ts = 1_700_000_000_000
+    return [
+        [base_ts + index * 86_400_000, str(100 + index - 0.5), str(100 + index + 0.5), str(100 + index - 1.0), str(100 + index), "10"]
+        for index in range(32)
+    ]
 
 
 class _Response:
@@ -83,7 +87,7 @@ class ResilientBootstrapRunnerIntegrationTests(unittest.TestCase):
             lifecycle_factory = Mock(return_value=runtime)
             stream_factory = Mock(return_value=object())
             supervisor_factory = Mock(side_effect=lambda runtime: _FakeSupervisor(runtime))
-            with patch("providers.binance_opportunity_source.urlopen", side_effect=fake_urlopen), patch(
+            with patch("providers.binansScanner.providers.binance_opportunity_source.urlopen", side_effect=fake_urlopen), patch("providers.binance_opportunity_source.urlopen", side_effect=fake_urlopen), patch(
                 "providers.binance_opportunity_source.time.sleep"
             ) as sleep, patch.object(runner_module, "ScalpingOpportunityPipeline", _FakePipeline), patch.object(
                 runner_module, "DynamicMarketStream", stream_factory
