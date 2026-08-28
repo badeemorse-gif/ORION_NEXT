@@ -1,6 +1,7 @@
 """D1 fast recall and scalping pipeline orchestration."""
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from typing import Mapping, Sequence
 
@@ -97,6 +98,7 @@ class ScalpingOpportunityPipeline:
     """Eligible universe -> fast recall -> broad pool -> deep evaluation -> active set."""
 
     _RECALL_UNIVERSE_LIMIT = 10_000
+    DEFAULT_CANDLE_FETCH_CONCURRENCY = 4
 
     def __init__(
         self,
@@ -106,18 +108,59 @@ class ScalpingOpportunityPipeline:
         decision_engine: ScalpingDecisionEngine | None = None,
         pool_manager: ScalpingCandidatePoolManager | None = None,
         recall: FastRecall | None = None,
+        candle_fetch_concurrency: int = DEFAULT_CANDLE_FETCH_CONCURRENCY,
     ) -> None:
+        if candle_fetch_concurrency <= 0:
+            raise ValueError("candle_fetch_concurrency must be positive")
         self.discovery = discovery
         self.candle_source = candle_source
         self.decision_engine = decision_engine or ScalpingDecisionEngine()
         self.pool_manager = pool_manager or ScalpingCandidatePoolManager(self.decision_engine.config)
         self.recall = recall or FastRecall()
+        self.candle_fetch_concurrency = candle_fetch_concurrency
 
-    def _candles_for(self, symbol: str) -> Mapping[str, Sequence[Candle]]:
-        return {
-            timeframe: tuple(self.candle_source.candles(symbol, timeframe, self.decision_engine.config.min_candles))
-            for timeframe in ("1d", "4h", "1h", "15m")
-        }
+    @staticmethod
+    def _raw_to_candles(raw: Sequence[object]) -> tuple[Candle, ...]:
+        result: list[Candle] = []
+        for row in raw:
+            if isinstance(row, Candle):
+                result.append(row)
+                continue
+            if not isinstance(row, Sequence) or len(row) < 6:
+                continue
+            result.append(
+                Candle(
+                    int(row[0]),
+                    float(row[1]),
+                    float(row[2]),
+                    float(row[3]),
+                    float(row[4]),
+                    float(row[5]),
+                )
+            )
+        return tuple(result)
+
+    @staticmethod
+    def _daily_handoff(discovery: OpportunityDiscovery):
+        source = getattr(discovery, "_metrics_source", None)
+        take = getattr(source, "take_daily_candle_handoff", None)
+        return take() if callable(take) else None
+
+    def _candles_for(self, symbol: str, daily_handoff=None) -> Mapping[str, Sequence[Candle]]:
+        required_limit = self.decision_engine.config.min_candles
+        daily_rows = None
+        if daily_handoff is not None and getattr(daily_handoff, "limit", None) == required_limit:
+            daily_rows = getattr(daily_handoff, "candles", {}).get(symbol)
+
+        result: dict[str, Sequence[Candle]] = {}
+        if daily_rows is not None:
+            result["1d"] = self._raw_to_candles(daily_rows)
+        else:
+            result["1d"] = tuple(self.candle_source.candles(symbol, "1d", required_limit))
+
+        for timeframe in ("4h", "1h", "15m"):
+            result[timeframe] = tuple(self.candle_source.candles(symbol, timeframe, required_limit))
+        return result
 
     @staticmethod
     def _rebuild(
@@ -231,6 +274,35 @@ class ScalpingOpportunityPipeline:
             lanes,
         )
 
+    def _evaluate_candidate(self, candidate: OpportunityCandidate, provenance: Mapping[str, tuple[str, ...]], daily_handoff=None, decision_kwargs: Mapping[str, object] | None = None) -> OpportunityCandidate:
+        try:
+            candle_map = self._candles_for(candidate.symbol, daily_handoff)
+        except TimeoutError:
+            raise
+        except Exception:
+            candle_map = {}
+        decided = self.decision_engine.decide(candidate, candle_map, **dict(decision_kwargs or {}))
+        return self._with_recall_lanes(self._classification_integrity(decided), provenance)
+
+    def _evaluate_candidates(self, candidates: Sequence[OpportunityCandidate], provenance: Mapping[str, tuple[str, ...]], daily_handoff=None, decision_kwargs: Mapping[str, object] | None = None) -> tuple[OpportunityCandidate, ...]:
+        if not candidates:
+            return ()
+        indexed: list[OpportunityCandidate | None] = [None] * len(candidates)
+        with ThreadPoolExecutor(max_workers=min(self.candle_fetch_concurrency, len(candidates)), thread_name_prefix="orion-scalping-candles") as executor:
+            future_to_index = {
+                executor.submit(self._evaluate_candidate, candidate, provenance, daily_handoff, decision_kwargs): index
+                for index, candidate in enumerate(candidates)
+            }
+            try:
+                for future in as_completed(future_to_index):
+                    index = future_to_index[future]
+                    indexed[index] = future.result()
+            except TimeoutError:
+                for future in future_to_index:
+                    future.cancel()
+                raise
+        return tuple(item for item in indexed if item is not None)
+
     def discover(self, top_n: int | None = None, **decision_kwargs) -> ScalpingCandidateSet:
         """Run fast recall across the eligible universe before deep scalping ranking."""
         broad_top_n = top_n if top_n is not None else self.pool_manager.config.broad_pool_top_n
@@ -238,20 +310,13 @@ class ScalpingOpportunityPipeline:
             raise ValueError("broad discovery pool must be larger than active_top_n")
 
         universe = self.discovery.discover(top_n=self._RECALL_UNIVERSE_LIMIT)
+        daily_handoff = self._daily_handoff(self.discovery)
         recall_result = self.recall.recall(universe.candidates, broad_limit=broad_top_n)
         if len(recall_result.candidates) <= self.pool_manager.config.active_top_n:
             raise ValueError("fast recall did not produce a sufficiently broad candidate pool")
 
         provenance = dict(recall_result.provenance)
-        enriched = []
-        for candidate in recall_result.candidates:
-            try:
-                candle_map = self._candles_for(candidate.symbol)
-            except Exception:
-                candle_map = {}
-            decided = self.decision_engine.decide(candidate, candle_map, **decision_kwargs)
-            decided = self._with_recall_lanes(self._classification_integrity(decided), provenance)
-            enriched.append(decided)
+        enriched = self._evaluate_candidates(recall_result.candidates, provenance, daily_handoff, decision_kwargs)
 
         broad_input = OpportunityCandidateSet(tuple(enriched), len(enriched), universe.snapshot_timestamp)
         result = self.pool_manager.select(broad_input, enriched)

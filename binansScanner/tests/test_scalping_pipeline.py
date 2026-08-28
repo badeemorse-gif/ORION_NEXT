@@ -41,8 +41,18 @@ class FakeCandles:
         return tuple(rows)
 
 
+class TimeoutCandles(FakeCandles):
+    def candles(self, symbol, timeframe, limit):
+        raise TimeoutError("startup discovery deadline exceeded")
+
+
+class OrdinaryFailureCandles(FakeCandles):
+    def candles(self, symbol, timeframe, limit):
+        raise RuntimeError("ordinary candle data failure")
+
+
 class ScalpingPipelineTests(unittest.TestCase):
-    def test_full_universe_to_broad_then_active_pipeline(self):
+    def _pipeline(self, candles):
         config = ScalpingConfig(active_top_n=2, broad_pool_top_n=6)
         discovery = OpportunityDiscovery(
             MarketUniverseDiscovery(FakeUniverse()),
@@ -50,11 +60,14 @@ class ScalpingPipelineTests(unittest.TestCase):
             OpportunityConfig(default_top_n=8),
             clock=lambda: 0.0,
         )
-        pipeline = ScalpingOpportunityPipeline(
+        return ScalpingOpportunityPipeline(
             discovery,
-            FakeCandles(),
+            candles,
             pool_manager=ScalpingCandidatePoolManager(config),
         )
+
+    def test_full_universe_to_broad_then_active_pipeline(self):
+        pipeline = self._pipeline(FakeCandles())
         result = pipeline.discover()
         self.assertEqual(len(result.broad_pool.candidates), 6)
         self.assertEqual(len(result.active_set.candidates), 2)
@@ -81,6 +94,19 @@ class ScalpingPipelineTests(unittest.TestCase):
     def test_capital_boundary_is_read_only_during_discovery(self):
         manager = CapitalManager(AllocationConfig(starting_capital=50.0, fixed_allocation=10.0))
         self.assertEqual(manager.reserved_capital, 0.0)
+
+    def test_candle_timeout_propagates_out_of_pipeline(self):
+        pipeline = self._pipeline(TimeoutCandles())
+        with self.assertRaises(TimeoutError):
+            pipeline.discover()
+
+    def test_ordinary_candle_exception_preserves_fail_safe_behavior(self):
+        pipeline = self._pipeline(OrdinaryFailureCandles())
+        result = pipeline.discover()
+        self.assertEqual(len(result.broad_pool.candidates), 6)
+        self.assertEqual(len(result.active_set.candidates), 2)
+        self.assertTrue(all(item.entry_state in {EntryState.C.value, EntryState.D.value} for item in result.broad_pool.candidates))
+        self.assertTrue(all(getattr(item.decision_trace, "entry_allowed", False) is False for item in result.broad_pool.candidates))
 
 
 if __name__ == "__main__":
