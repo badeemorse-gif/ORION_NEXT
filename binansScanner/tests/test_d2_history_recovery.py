@@ -132,7 +132,7 @@ class D2HistoryRecoveryTests(unittest.TestCase):
             with patch("providers.binance_opportunity_source.urlopen", side_effect=network), patch("tools.orion_paper_8h_runner.urllib.request.urlopen", side_effect=network), patch.object(runner_module, "DynamicMarketStream", return_value=Mock()), patch.object(runner_module, "PaperRealtimeLifecycle", return_value=lifecycle) as lifecycle_factory, patch.object(OpportunityDiscovery, "_build_history_metric", new=traced_builder):
                 runner = runner_module.Paper8HRunner.create(config)
         discovery = runner.opportunity.discovery
-        self.assertEqual(discovery.last_bootstrap.missing_symbols, ()); self.assertEqual(len(discovery.last_bootstrap.expected_symbols), 476); self.assertEqual(len(discovery.last_bootstrap.received_symbols), 476); self.assertIn(32, built_lengths); self.assertNotIn(3, built_lengths); self.assertEqual(network.history_calls.count(DJTB), 2); lifecycle_factory.assert_called_once()
+        self.assertEqual(discovery.last_bootstrap.missing_symbols, ()); self.assertEqual(len(discovery.last_bootstrap.expected_symbols), 476); self.assertEqual(len(discovery.last_bootstrap.received_symbols), 476); self.assertIn(32, built_lengths); self.assertNotIn(3, built_lengths); self.assertEqual(network.history_calls.count(DJTB), 5); lifecycle_factory.assert_called_once()
 
     def test_real_paper8h_create_blocks_runtime_after_persistent_short_history(self):
         import tools.orion_paper_8h_runner as runner_module
@@ -141,7 +141,7 @@ class D2HistoryRecoveryTests(unittest.TestCase):
             config = runner_module.Paper8HConfig(duration_hours=0.01, starting_capital=50.0, dynamic_universe=True, top_n=1, output_dir=Path(tmp) / "run")
             with patch("providers.binance_opportunity_source.urlopen", side_effect=network), patch("tools.orion_paper_8h_runner.urllib.request.urlopen", side_effect=network), patch.object(runner_module, "DynamicMarketStream", return_value=Mock()), patch.object(runner_module, "PaperRealtimeLifecycle", lifecycle_factory):
                 with self.assertRaisesRegex(RuntimeError, "missing=DJTBUSDT"): runner_module.Paper8HRunner.create(config)
-        self.assertEqual(network.history_calls.count(DJTB), 2); lifecycle_factory.assert_not_called()
+        self.assertEqual(network.history_calls.count(DJTB), 4); lifecycle_factory.assert_not_called()
 
 
 if __name__ == "__main__": unittest.main()
