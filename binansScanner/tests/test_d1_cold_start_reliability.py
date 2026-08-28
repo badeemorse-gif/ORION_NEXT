@@ -1,12 +1,10 @@
 from __future__ import annotations
 
-import json
 import tempfile
 import threading
 import time
 import unittest
 from pathlib import Path
-from unittest.mock import patch
 
 from models.opportunity import MarketMetrics
 from services.opportunity_discovery import MarketUniverseDiscovery, OpportunityConfig, OpportunityDiscovery
@@ -18,17 +16,20 @@ SYMBOLS = ("AAAUSDT", "BBBUSDT", "CCCUSDT", "DDDUSDT")
 
 def _history_payload(rows: int = 32, quality: float = 1.0):
     base_ts = 1_700_000_000_000
-    return [
-        [
-            base_ts + index * 86_400_000,
-            "100",
-            "101",
-            "99",
-            f"{100 + index * quality:.8f}",
-            "10",
-        ]
-        for index in range(rows)
-    ]
+    payload = []
+    for index in range(rows):
+        close = 100.0 + index * quality
+        payload.append(
+            [
+                base_ts + index * 86_400_000,
+                f"{close - 0.5:.8f}",
+                f"{close + 0.5:.8f}",
+                f"{close - 1.0:.8f}",
+                f"{close:.8f}",
+                "10",
+            ]
+        )
+    return payload
 
 
 def _metric(symbol: str, quality: float) -> MarketMetrics:
