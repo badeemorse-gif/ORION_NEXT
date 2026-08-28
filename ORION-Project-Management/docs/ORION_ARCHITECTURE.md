@@ -1,6 +1,6 @@
 # ORION — المعمارية الرسمية
 
-الإصدار: 2.1
+الإصدار: 2.2
 الحالة: ACTIVE
 المشروع: ORION
 المستودع: badeemorse-gif/ORION_NEXT
@@ -20,6 +20,7 @@
 - تدفق البيانات.
 - المسارات التنفيذية القانونية.
 - سياسة Legacy والازدواجية.
+- حدود Opportunity Response وPosition Management عند دخول النظام مراحل التداول.
 
 لا تحدد المرحلة الحالية أو ترتيب المراحل؛ لذلك يرجع إلى:
 
@@ -141,6 +142,8 @@ ReportResult
 
 لا يتم إخفاء نتيجة مرحلة داخل Domain Model غير مخصص لها.
 
+عند دخول Trading Bot، يجب ألا تُستخدم حالة المركز أو توقيت الاستجابة كمتغيرات مخفية داخل Result Contract قائم. أي state جديد مطلوب لـPosition Management أو Opportunity Response يجب أن يملك contract مستقلًا ومراجعًا معماريًا.
+
 ==================================================
 7. Intelligence Layer
 ==================================================
@@ -187,6 +190,24 @@ DecisionResult
 
 Decision يقرر ما يجب فعله، ولا ينفذ الصفقة بنفسه.
 
+### Opportunity Response
+
+عند وجود فرصة قصيرة الأجل أو Sudden-Move / Acceleration event، يجب أن يستطيع المسار التشغيلي طلب إعادة تقييم أسرع من الدورة العادية دون كسر حدود الطبقات.
+
+المبدأ المعماري:
+
+Market Event
+↓
+Opportunity Re-evaluation Trigger
+↓
+Analysis / Opportunity Context
+↓
+Score / Decision
+↓
+ExecutionPlan
+
+ولا يجوز أن تُدفن قاعدة الاستجابة السريعة داخل GUI أو Scheduler أو ExecutionAdapter.
+
 ==================================================
 8. Execution Boundary
 ==================================================
@@ -209,8 +230,70 @@ Orchestrator ينسق ولا يمتلك mapping logic الخاص بـExecutionPl
 
 التكامل مع Broker/Exchange وRisk/Order Management المتقدم يظل ضمن مرحلة Trading Bot المستقبلية ولا يعاد هندسته مبكرًا دون حاجة.
 
+عند دخول Trading Bot، يجب أن يكون هناك فصل صريح بين:
+
+1. Entry Decision
+2. Order Execution
+3. Active Position Management
+4. Exit Decision
+
+ولا يجوز افتراض أن `SELL` الناتج من Decision الأساسي يغطي وحده كل حالات إدارة الصفقة المفتوحة.
+
 ==================================================
-9. Report Boundary — Canonical
+9. Opportunity Response Boundary
+==================================================
+
+Opportunity Response ليست مجرد Metric تقريرية؛ هي متطلب تشغيلي يمتد عبر عدة طبقات.
+
+يجب أن يدعم التصميم مستقبلًا تسجيل سلسلة زمنية قابلة للتدقيق:
+
+opportunity_detected_at
+↓
+revalidation_started_at
+↓
+decision_at
+↓
+execution_requested_at
+↓
+execution_confirmed_at
+
+الحدود:
+
+- Provider/MarketData يملك freshness/timestamp الخاص بالبيانات.
+- Opportunity/Analysis يحدد أن حدثًا سريعًا يستحق إعادة التقييم.
+- Decision يقرر دون انتظار غير مبرر.
+- ExecutionPlan ينقل القرار دون إضافة delay غير مبرر.
+- Execution يسجل زمن الطلب والتنفيذ الفعلي.
+- Reporting/Audit يعرض جميع نقاط الزمن.
+
+يجب ألا تستخدم قيمة زمنية ثابتة قبل إثباتها تجريبيًا؛ القيم النهائية تأتي من Performance/Replay Tests.
+
+==================================================
+10. Position Management Boundary
+==================================================
+
+بعد تنفيذ دخول ناجح، لا ينتهي المسار عند ExecutionResult.
+
+المسار المستهدف:
+
+ExecutionResult
+↓
+Active Position State
+↓
+Position Management
+↓
+Profit Protection / Trailing / Scale-Out / Exit Evaluation
+↓
+Exit Execution
+↓
+Final Position Result / Audit
+
+Position Management مسؤول عن الاستمرار داخل الحركة عندما تكون الأدلة داعمة، وعن حماية الربح عند تراجع الزخم، وعن الخروج عند invalidation أو خطر تشغيلي.
+
+لا يجوز اختزال هذه الوظيفة في `fixed take-profit` واحد دون إثبات تجريبي أنه لا يسبب Premature Exit مرتفعًا في الحركات القوية.
+
+==================================================
+11. Report Boundary — Canonical
 ==================================================
 
 المسار القانوني الحالي:
@@ -240,12 +323,10 @@ ReportExporter
 - Renderers تستهلك ReportResult.
 - ReportExporter يمر عبر renderer boundary.
 
-لا يوجد مسار Report بديل قانوني في main الحالية.
-
-المراجع التاريخية مثل `engines.report_engine` أو `FullReport` لا تعاد إلى المسار التنفيذي إلا بعد Architecture Review وDecision صريح.
+عند توفر Trading Bot telemetry، يجب أن يتسع ReportResult أو عقد تقريري مستقل مراجع ليحمل Opportunity Response وPosition Management metrics دون تهريب state تشغيلي إلى Analysis/Decision contracts.
 
 ==================================================
-10. Orchestrator وPipeline
+12. Orchestrator وPipeline
 ==================================================
 
 ### Orchestrator
@@ -260,8 +341,10 @@ ReportExporter
 
 لا يعيد تنفيذ منطق Engines.
 
+في Trading Bot، لا يجوز أن يتحول Orchestrator إلى منطق لإدارة الصفقة؛ Position Management يجب أن يكون مكونًا قانونيًا مستقلًا.
+
 ==================================================
-11. Application / Bootstrap
+13. Application / Bootstrap
 ==================================================
 
 Bootstrap:
@@ -285,7 +368,7 @@ Pipeline / Orchestrator
 Application ينسق حالات الاستخدام ودورة الحياة ولا يعتمد على UI implementation details.
 
 ==================================================
-12. API / GUI / Scheduler
+14. API / GUI / Scheduler
 ==================================================
 
 ### API
@@ -316,8 +399,10 @@ Pipeline
 
 Scheduler مسؤول عن WHEN وليس عن كيفية عمل Analysis.
 
+Scheduler لا يملك وحده Opportunity Response policy؛ الحدث السريع يجب أن يصل إلى مكونه القانوني دون أن يتحول Scheduler إلى محرك استراتيجية.
+
 ==================================================
-13. Repository / Storage
+15. Repository / Storage
 ==================================================
 
 Application
@@ -331,7 +416,7 @@ SQLite أو أي تنفيذ تخزين آخر يبقى خلف Repository/Storage
 لا تتسرب تفاصيل التخزين إلى Business Logic.
 
 ==================================================
-14. Legacy Policy
+16. Legacy Policy
 ==================================================
 
 يصبح المكون Legacy عندما:
@@ -347,7 +432,7 @@ SQLite أو أي تنفيذ تخزين آخر يبقى خلف Repository/Storage
 لكن لا يسمح بإعادة استخدامه كمسار قانوني جديد دون قرار معماري.
 
 ==================================================
-15. حالة الازدواجيات المعروفة
+17. حالة الازدواجيات المعروفة
 ==================================================
 
 تم حسم Report Architecture في Phase 1.
@@ -365,7 +450,7 @@ reports.report_exporter.ReportExporter
 أما `app/` و`application/` أو أي تعدد آخر فيظل مقبولًا فقط عندما تكون المسؤوليات مختلفة فعلًا، وليس لمجرد وجود اسمين متشابهين.
 
 ==================================================
-16. Verification Boundary
+18. Verification Boundary
 ==================================================
 
 المعمارية لا تعتبر صحيحة لمجرد وجود Classes.
@@ -377,11 +462,19 @@ reports.report_exporter.ReportExporter
 - E2E Tests عند وجود أثر تكاملي.
 - Full Verification عند بوابة المرحلة.
 
+وبالنسبة لمرحلة Trading Bot، يجب أن تتضمن Verification أيضًا:
+
+- Opportunity Response Latency.
+- False Negative / Missed Opportunity analysis.
+- Premature Exit analysis.
+- Position Management state transitions.
+- Auditability of event/decision/execution timestamps.
+
 المرجع الحالي للحالة والـVerification:
 ORION_PROJECT_STATE.md
 
 ==================================================
-17. قاعدة التطوير الحالية
+19. قاعدة التطوير الحالية
 ==================================================
 
 Phase 1 مكتملة.
@@ -389,6 +482,8 @@ Phase 1 مكتملة.
 Phase 2 تعمل فوق هذه المعمارية.
 
 لا يعاد فتح عقد أو boundary مثبتة إلا بسبب معماري أو متطلب جديد مثبت بالأدلة.
+
+متطلب Opportunity Response وPosition Management هنا يعد متطلبًا معماريًا مستقبليًا محميًا، ولا يجوز إسقاطه عند الانتقال إلى Scalping/Trading Bot لمجرد أن المسار الأساسي يعمل.
 
 ==================================================
 END
