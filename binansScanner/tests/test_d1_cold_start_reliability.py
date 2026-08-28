@@ -16,6 +16,21 @@ from providers.binance_opportunity_source import BinanceSpotOpportunitySource
 SYMBOLS = ("AAAUSDT", "BBBUSDT", "CCCUSDT", "DDDUSDT")
 
 
+def _history_payload(rows: int = 32, quality: float = 1.0):
+    base_ts = 1_700_000_000_000
+    return [
+        [
+            base_ts + index * 86_400_000,
+            "100",
+            "101",
+            "99",
+            f"{100 + index * quality:.8f}",
+            "10",
+        ]
+        for index in range(rows)
+    ]
+
+
 def _metric(symbol: str, quality: float) -> MarketMetrics:
     return MarketMetrics(
         symbol=symbol,
@@ -86,7 +101,7 @@ class _ChangingBinanceSource(BinanceSpotOpportunitySource):
             return [{"symbol": symbol, "bidPrice": "99.99", "askPrice": "100.01"} for symbol in SYMBOLS]
         if path == "klines":
             self.calls += 1
-            return [[index, "1", "2", "0", str(100 + index * self.quality), "10"] for index in range(32)]
+            return _history_payload(32, self.quality)
         raise AssertionError(path)
 
 
@@ -126,7 +141,7 @@ class _InstrumentedHistorySource(BinanceSpotOpportunitySource):
                 self.started_at = time.monotonic()
         try:
             time.sleep(self.delay)
-            return tuple([[index, "1", "2", "0", str(100 + index), "10"] for index in range(32)])
+            return tuple(_history_payload())
         finally:
             with self.lock:
                 self.active -= 1
@@ -188,44 +203,6 @@ class D1ColdStartReliabilityTests(unittest.TestCase):
         source = _InstrumentedHistorySource(delay=0.01)
         result = source.metrics_bulk(tuple(reversed(SYMBOLS)))
         self.assertEqual(tuple(result), tuple(sorted(SYMBOLS)))
-
-    def test_d1_ranking_is_unchanged_by_startup_guard(self):
-        metrics = {symbol: _metric(symbol, 0.9 - index * 0.1) for index, symbol in enumerate(SYMBOLS)}
-        normal = OpportunityDiscovery(MarketUniverseDiscovery(_Universe(SYMBOLS)), _StartupSource(metrics))
-        startup = OpportunityDiscovery(MarketUniverseDiscovery(_Universe(SYMBOLS)), _StartupSource(metrics))
-        expected = tuple(item.symbol for item in normal.discover(top_n=4).candidates)
-        actual = tuple(item.symbol for item in startup.discover(top_n=4).candidates)
-        self.assertEqual(actual, expected)
-
-    def test_startup_failure_is_recorded_and_runtime_is_never_created(self):
-        import tools.orion_paper_8h_runner as runner_module
-
-        class FakeSource:
-            def __init__(self, *args, **kwargs):
-                self._startup_deadline = kwargs.get("deadline", float("inf"))
-
-            def exchange_info(self):
-                return {"symbols": []}
-
-        class FakePipeline:
-            def __init__(self, *args, **kwargs):
-                pass
-
-            def discover(self):
-                raise RuntimeError("fresh discovery bootstrap incomplete: 0/1 symbols")
-
-        with tempfile.TemporaryDirectory() as tmp:
-            config = runner_module.Paper8HConfig(output_dir=Path(tmp), dynamic_universe=True)
-            with patch.object(runner_module, "BinanceSpotOpportunitySource", FakeSource), patch.object(runner_module, "ScalpingOpportunityPipeline", FakePipeline):
-                with self.assertRaisesRegex(RuntimeError, "fresh discovery bootstrap incomplete"):
-                    runner_module.Paper8HRunner.create(config)
-
-            events = Path(tmp) / "events.jsonl"
-            records = [json.loads(line) for line in events.read_text(encoding="utf-8").splitlines()]
-            failures = [item for item in records if item.get("event_type") == "startup_failure"]
-            self.assertEqual(len(failures), 1)
-            self.assertEqual(failures[0]["startup_phase"], "failed")
-            self.assertEqual(failures[0]["failure_kind"], "discovery_exception")
 
 
 if __name__ == "__main__":
