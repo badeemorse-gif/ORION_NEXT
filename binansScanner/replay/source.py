@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any, Mapping, Sequence
+from typing import Any, Mapping
 
+from enums import Timeframe
 from providers.binance_opportunity_source import BinanceSpotOpportunitySource
 
 from replay.clock import ReplayClock
@@ -10,12 +11,14 @@ from replay.dataset import HistoricalDataset
 
 
 class HistoricalMarketDataSource(BinanceSpotOpportunitySource):
-    """Offline MarketMetrics source backed only by preloaded historical data.
+    """Offline MarketMetrics/candle source backed only by preloaded data."""
 
-    The inherited discovery/feature logic remains authoritative. Only the transport
-    boundary is replaced; an accidental live request is impossible because _get_json
-    serves exclusively from HistoricalDataset.
-    """
+    _INTERVALS = {
+        Timeframe.D1: "1d",
+        Timeframe.H4: "4h",
+        Timeframe.H1: "1h",
+        Timeframe.M15: "15m",
+    }
 
     def __init__(self, dataset: HistoricalDataset, clock: ReplayClock) -> None:
         super().__init__(ttl_seconds=0.0, timeout_seconds=10.0, clock=clock.monotonic)
@@ -59,8 +62,15 @@ class HistoricalMarketDataSource(BinanceSpotOpportunitySource):
             return list(rows[-limit:])
         raise RuntimeError(f"historical replay reached unsupported market-data path: {path}")
 
+    def klines(self, symbol: str, timeframe: Timeframe, limit: int):
+        interval = self._INTERVALS[timeframe]
+        return self._get_json(
+            "klines",
+            {"symbol": symbol.upper(), "interval": interval, "limit": int(limit)},
+        )
+
     def _cached(self, key: str, loader):
-        # Replay state changes with simulation time; no cross-timestamp cache is allowed.
+        # Discovery snapshots must be resolved against the current simulation time.
         return loader()
 
     def mark(self, timestamp: datetime) -> None:
