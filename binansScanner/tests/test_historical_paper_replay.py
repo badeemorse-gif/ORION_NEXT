@@ -85,13 +85,6 @@ class TestHistoricalPaperReplay(unittest.TestCase):
             payload=dict(event.payload),
             source_event_id=event.source_event_id,
         )
-        for label, obj in (("event", event), ("duplicate", duplicate)):
-            print(
-                f"{label}: symbol={obj.symbol!r} event_type={obj.event_type!r} "
-                f"event_timestamp={obj.event_timestamp!r} source_timestamp={obj.source_timestamp!r} "
-                f"source_event_id={obj.source_event_id!r} payload={dict(obj.payload)!r} event_id={obj.event_id!r}",
-                flush=True,
-            )
         self.assertEqual(event.event_id, duplicate.event_id)
         dataset = build_fixture_dataset()
         with tempfile.TemporaryDirectory() as tmp:
