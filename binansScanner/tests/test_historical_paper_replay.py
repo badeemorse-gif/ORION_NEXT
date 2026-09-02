@@ -83,6 +83,7 @@ class TestHistoricalPaperReplay(unittest.TestCase):
             event_timestamp=event.event_timestamp,
             event_type=event.event_type,
             payload=dict(event.payload),
+            source_timestamp=event.source_timestamp,
             source_event_id=event.source_event_id,
         )
         self.assertEqual(event.event_id, duplicate.event_id)
