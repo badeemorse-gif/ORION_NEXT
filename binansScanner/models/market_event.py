@@ -43,22 +43,34 @@ class MarketEvent:
     @property
     def event_id(self) -> str:
         """Stable identity used for duplicate suppression across reconnects."""
-        canonical = json.dumps(
-            {
-                "symbol": self.symbol,
-                "event_type": self.event_type.value,
-                "event_timestamp": self.event_timestamp.astimezone(timezone.utc).isoformat(),
-                "source_timestamp": (
-                    self.source_timestamp.astimezone(timezone.utc).isoformat()
-                    if self.source_timestamp is not None else None
-                ),
-                "source_event_id": self.source_event_id,
-                "payload": self.payload,
-            },
-            sort_keys=True,
-            separators=(",", ":"),
-            default=str,
-        )
+        if self.source_event_id is not None:
+            canonical = json.dumps(
+                {
+                    "symbol": self.symbol,
+                    "event_type": self.event_type.value,
+                    "source_event_id": self.source_event_id,
+                },
+                sort_keys=True,
+                separators=(",", ":"),
+                default=str,
+            )
+        else:
+            canonical = json.dumps(
+                {
+                    "symbol": self.symbol,
+                    "event_type": self.event_type.value,
+                    "event_timestamp": self.event_timestamp.astimezone(timezone.utc).isoformat(),
+                    "source_timestamp": (
+                        self.source_timestamp.astimezone(timezone.utc).isoformat()
+                        if self.source_timestamp is not None else None
+                    ),
+                    "source_event_id": None,
+                    "payload": self.payload,
+                },
+                sort_keys=True,
+                separators=(",", ":"),
+                default=str,
+            )
         return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
