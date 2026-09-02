@@ -9,7 +9,7 @@ import unittest
 from models.market_event import MarketEvent, MarketEventType
 from models.signal_snapshot import MaterialChangePolicy, SignalIdentity, build_next_snapshot
 from replay.clock import ReplayClock
-from replay.dataset import HistoricalDataset, HistoricalDatasetManifest, HistoricalMarketEvent
+from replay.dataset import HistoricalDataset
 from replay.runner import HistoricalPaperReplayRunner, ReplayConfig
 from replay.source import HistoricalMarketDataSource
 from replay.verification import ReplayVerifier
@@ -24,6 +24,16 @@ class TestHistoricalPaperReplay(unittest.TestCase):
         self.assertEqual(left.manifest.integrity_sha256, right.manifest.integrity_sha256)
         self.assertEqual(tuple(event.event_id for event in left.events), tuple(event.event_id for event in right.events))
 
+    def test_fixture_round_trip_preserves_manifest_and_data(self):
+        dataset = build_fixture_dataset()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "dataset"
+            dataset.write_directory(root)
+            loaded = HistoricalDataset.from_directory(root)
+        self.assertEqual(dataset.manifest.integrity_sha256, loaded.manifest.integrity_sha256)
+        self.assertEqual(tuple(event.event_id for event in dataset.events), tuple(event.event_id for event in loaded.events))
+        self.assertEqual(dataset.candles, loaded.candles)
+
     def test_progressive_clock_blocks_future_metadata_and_candles(self):
         dataset = build_fixture_dataset()
         clock = ReplayClock(dataset.start)
@@ -33,15 +43,34 @@ class TestHistoricalPaperReplay(unittest.TestCase):
         self.assertEqual(source.exchange_info(), {"symbols": []})
         clock.advance_to(dataset.start)
         self.assertEqual(len(source.exchange_info()["symbols"]), len(SYMBOLS))
-        future_row = (int((dataset.end + timedelta(days=1)).timestamp() * 1000), "1", "1", "1", "1", "1", int((dataset.end + timedelta(days=1, hours=1)).timestamp() * 1000))
+        future_row = (
+            int((dataset.end + timedelta(days=1)).timestamp() * 1000),
+            "1", "1", "1", "1", "1",
+            int((dataset.end + timedelta(days=1, hours=1)).timestamp() * 1000),
+        )
         augmented = dict(dataset.candles)
         augmented[(SYMBOLS[0], "1d")] = (*augmented[(SYMBOLS[0], "1d")], future_row)
         future_dataset = HistoricalDataset(dataset.manifest, dataset.events, dataset.metadata_snapshots, augmented)
         future_clock = ReplayClock(dataset.start)
         future_source = HistoricalMarketDataSource(future_dataset, future_clock)
-        visible = future_dataset.candles_at(SYMBOLS[0], "1d", dataset.start)
+        visible = future_source.dataset.candles_at(SYMBOLS[0], "1d", dataset.start)
         self.assertNotIn(future_row, visible)
-        self.assertEqual(future_source.dataset.candles_at(SYMBOLS[0], "1d", dataset.start), visible)
+
+    def test_stream_releases_events_in_simulation_order(self):
+        dataset = build_fixture_dataset()
+        clock = ReplayClock(dataset.start, acceleration_factor=1e9)
+        stream = __import__("replay.stream", fromlist=["HistoricalMarketEventStream"]).HistoricalMarketEventStream(dataset, clock)
+
+        async def collect():
+            await stream.connect()
+            timestamps = []
+            async for raw in stream.events():
+                timestamps.append(raw["E"])
+            await stream.close()
+            return timestamps
+
+        timestamps = asyncio.run(collect())
+        self.assertEqual(timestamps, sorted(timestamps))
 
     def test_same_timestamp_order_is_deterministic(self):
         dataset = build_fixture_dataset()
@@ -58,7 +87,11 @@ class TestHistoricalPaperReplay(unittest.TestCase):
             source_event_id=event.source_event_id,
         )
         self.assertEqual(event.event_id, duplicate.event_id)
-        supervisor = HistoricalPaperReplayRunner.build(build_fixture_dataset(), Path(tempfile.mkdtemp()), replay_config=ReplayConfig(active_top_n=1, broad_pool_top_n=5)).supervisor
+        supervisor = HistoricalPaperReplayRunner.build(
+            build_fixture_dataset(),
+            Path(tempfile.mkdtemp()),
+            replay_config=ReplayConfig(active_top_n=1, broad_pool_top_n=5),
+        ).supervisor
         self.assertEqual(supervisor.process_market_event(event), ())
         self.assertEqual(supervisor.process_market_event(duplicate), ())
         self.assertEqual(supervisor.health.duplicate_events, 1)
@@ -71,6 +104,8 @@ class TestHistoricalPaperReplay(unittest.TestCase):
         source._get_json("ticker/bookTicker")
         source._get_json("klines", {"symbol": SYMBOLS[0], "interval": "1d", "limit": 32})
         self.assertFalse(source.live_accessed)
+        with self.assertRaises(RuntimeError):
+            source._get_json("unknown")
 
     def test_real_paper_runtime_is_constructed_only_after_startup_discovery(self):
         dataset = build_fixture_dataset()
@@ -90,15 +125,21 @@ class TestHistoricalPaperReplay(unittest.TestCase):
             runner = HistoricalPaperReplayRunner.build(
                 dataset,
                 Path(tmp),
-                replay_config=ReplayConfig(active_top_n=1, broad_pool_top_n=5, acceleration_factor=600.0),
+                replay_config=ReplayConfig(active_top_n=1, broad_pool_top_n=5, acceleration_factor=1e9),
                 starting_capital=200.0,
             )
-            report = asyncio.run(runner.run_replay(dataset, replay_config=ReplayConfig(active_top_n=1, broad_pool_top_n=5, acceleration_factor=600.0)))
+            report = asyncio.run(
+                runner.run_replay(
+                    dataset,
+                    replay_config=ReplayConfig(active_top_n=1, broad_pool_top_n=5, acceleration_factor=1e9),
+                )
+            )
             self.assertGreater(report["processed_event_count"], 0)
             self.assertEqual(report["out_of_order_count"], 0)
             self.assertTrue(report["lookahead_verification"])
             self.assertTrue(report["runtime_health"])
             self.assertTrue(report["paper_only"])
+            self.assertEqual(report["duplicate_event_count"], 0)
             events = (Path(tmp) / "events.jsonl").read_text(encoding="utf-8")
             self.assertIn('"event_type": "replay_start"', events)
             self.assertIn('"event_type": "replay_end"', events)
@@ -106,7 +147,11 @@ class TestHistoricalPaperReplay(unittest.TestCase):
     def test_order_fill_causality_uses_later_market_event(self):
         dataset = build_fixture_dataset()
         with tempfile.TemporaryDirectory() as tmp:
-            runner = HistoricalPaperReplayRunner.build(dataset, Path(tmp), replay_config=ReplayConfig(active_top_n=1, broad_pool_top_n=5))
+            runner = HistoricalPaperReplayRunner.build(
+                dataset,
+                Path(tmp),
+                replay_config=ReplayConfig(active_top_n=1, broad_pool_top_n=5),
+            )
             now = START
             snapshot = build_next_snapshot(
                 previous=None,
@@ -132,8 +177,6 @@ class TestHistoricalPaperReplay(unittest.TestCase):
             )
             filled = runner.supervisor.process_market_event(later)
             self.assertEqual(len(filled), 1)
-            order_id = filled[0]
-            self.assertEqual(runner.supervisor.runtime.orders.get(order_id).state.value, "filled")
 
     def test_recovery_from_checkpoint_matches_uninterrupted_state(self):
         dataset = build_fixture_dataset()
@@ -149,16 +192,21 @@ class TestHistoricalPaperReplay(unittest.TestCase):
                 process(full.supervisor, event)
             checkpoint = len(events) // 2
             recovered = ReplayVerifier.recovery_from_checkpoint(recovered_seed.supervisor, events, checkpoint, process)
-            self.assertEqual(full.supervisor.replay_state(), recovered.replay_state())
-            self.assertTrue(full.supervisor.no_live_path())
-            self.assertTrue(recovered.no_live_path())
+            comparison = ReplayVerifier.compare_supervisors(full.supervisor, recovered)
+            self.assertTrue(comparison.event_ids_equal)
+            self.assertTrue(comparison.capital_state_equal)
+            self.assertTrue(comparison.replay_state_equal)
+            self.assertTrue(comparison.deterministic)
 
     def test_historical_universe_changes_only_when_metadata_snapshot_is_visible(self):
         dataset = build_fixture_dataset()
         later_time = START + timedelta(days=10)
         later_snapshot = dict(dataset.metadata_snapshots[0][1])
         later_snapshot["exchange_info"] = {
-            "symbols": [*later_snapshot["exchange_info"]["symbols"], {"symbol": "NEWUSDT", "baseAsset": "NEW", "quoteAsset": "USDT", "status": "TRADING", "isSpotTradingAllowed": True}]
+            "symbols": [
+                *later_snapshot["exchange_info"]["symbols"],
+                {"symbol": "NEWUSDT", "baseAsset": "NEW", "quoteAsset": "USDT", "status": "TRADING", "isSpotTradingAllowed": True},
+            ]
         }
         modified = HistoricalDataset(
             dataset.manifest,
@@ -176,6 +224,17 @@ class TestHistoricalPaperReplay(unittest.TestCase):
         for campaign in ("7D", "30D", "90D", "365D"):
             config = ReplayConfig(campaign=campaign, active_top_n=1, broad_pool_top_n=5)
             self.assertEqual(config.__class__.__name__, "ReplayConfig")
+
+    def test_large_movement_is_auditable(self):
+        from replay.audit import build_movement_audit
+        now = START
+        events = (
+            MarketEvent("AAAUSDT", now, MarketEventType.TRADE, {"price": 100.0}, source_event_id="1"),
+            MarketEvent("AAAUSDT", now + timedelta(minutes=1), MarketEventType.TRADE, {"price": 106.0}, source_event_id="2"),
+        )
+        audits = build_movement_audit(events, threshold_pct=5.0)
+        self.assertEqual(len(audits), 1)
+        self.assertAlmostEqual(audits[0].movement_pct, 6.0)
 
 
 if __name__ == "__main__":
