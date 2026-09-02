@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 from typing import Any, Mapping
 
 from enums import Timeframe
@@ -35,25 +35,60 @@ class HistoricalMarketDataSource(BinanceSpotOpportunitySource):
     def exchange_info(self) -> Mapping[str, Any]:
         return self._snapshot().get("exchange_info", {"symbols": []})
 
+    def _historical_24h_ticker(self, symbol: str) -> Mapping[str, Any] | None:
+        """Derive point-in-time 24h ticker metadata from preloaded 5m candles only."""
+        rows = self.dataset.candles_at(symbol, "5m", self.clock.simulation_timestamp)
+        if not rows:
+            return None
+        cutoff = self.clock.simulation_timestamp.astimezone(timezone.utc)
+        window_start = cutoff - timedelta(hours=24)
+        window_start_ms = int(window_start.timestamp() * 1000)
+        window = [row for row in rows if len(row) > 6 and int(row[6]) > window_start_ms]
+        if len(window) < 2:
+            return None
+        first = window[0]
+        last = window[-1]
+        first_price = float(first[1])
+        last_price = float(last[4])
+        base_volume = sum(float(row[5]) for row in window)
+        quote_volume = sum(float(row[4]) * float(row[5]) for row in window)
+        if first_price <= 0 or base_volume <= 0 or quote_volume <= 0:
+            return None
+        weighted_average = quote_volume / base_volume
+        return {
+            "symbol": symbol.upper(),
+            "lastPrice": f"{last_price:.16g}",
+            "priceChangePercent": f"{((last_price / first_price) - 1.0) * 100.0:.16g}",
+            "weightedAvgPrice": f"{weighted_average:.16g}",
+            "quoteVolume": f"{quote_volume:.16g}",
+        }
+
+    def _historical_tickers(self) -> list[Mapping[str, Any]]:
+        return [
+            ticker
+            for symbol in self.dataset.manifest.symbols
+            for ticker in (self._historical_24h_ticker(symbol),)
+            if ticker is not None
+        ]
+
     def _get_json(self, path: str, params: Mapping[str, Any] | None = None) -> Any:
         params = params or {}
         snapshot = self._snapshot()
         if path == "exchangeInfo":
             return snapshot.get("exchange_info", {"symbols": []})
         if path == "ticker/24hr":
+            rows = self._historical_tickers()
             symbol = params.get("symbol")
-            rows = snapshot.get("ticker_24h", [])
             if symbol is None:
                 return rows
             wanted = str(symbol).upper()
             return [row for row in rows if str(row.get("symbol", "")).upper() == wanted]
         if path == "ticker/bookTicker":
-            symbol = params.get("symbol")
-            rows = snapshot.get("book_ticker", [])
-            if symbol is None:
-                return rows
-            wanted = str(symbol).upper()
-            return [row for row in rows if str(row.get("symbol", "")).upper() == wanted]
+            # Historical order-book top-of-book is not part of this candle dataset.
+            # Canonical discovery already falls back to historical candle features when
+            # book metadata is absent, so returning no fabricated book state preserves the
+            # no-lookahead / no-synthetic-order-book contract.
+            return []
         if path == "klines":
             symbol = str(params.get("symbol", "")).upper()
             interval = str(params.get("interval", "1d"))
