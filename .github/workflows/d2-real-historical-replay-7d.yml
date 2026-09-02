@@ -35,12 +35,12 @@ jobs:
       - name: Real dataset and replay
         working-directory: binansScanner
         env:
-          PYTHONPATH: ${{ github.workspace }}/binansScanner
+          PYTHONPATH: ${{ github.workspace }}/binansScanner:${{ github.workspace }}
         run: python real_historical_replay.py --output real_replay_7d
       - name: Determinism gate
         working-directory: binansScanner
         env:
-          PYTHONPATH: ${{ github.workspace }}/binansScanner
+          PYTHONPATH: ${{ github.workspace }}/binansScanner:${{ github.workspace }}
         run: |
           python - <<'PY'
           import json, pathlib
