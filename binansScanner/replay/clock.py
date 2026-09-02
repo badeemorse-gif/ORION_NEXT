@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import time
 
 
@@ -41,7 +41,7 @@ class ReplayClock:
         return max(0.0, time.monotonic() - self._wall_start)
 
     def monotonic(self) -> float:
-        """Expose simulation seconds as a monotonic-compatible scalar."""
+        """Return simulation elapsed seconds for deterministic cache/refresh logic."""
         return self.elapsed_simulation_seconds
 
     def advance_to(self, timestamp: datetime) -> None:
@@ -55,5 +55,9 @@ class ReplayClock:
     def advance_by_wall_seconds(self, seconds: float) -> None:
         if seconds < 0:
             raise ValueError("seconds must be non-negative")
-        delta = seconds * self.acceleration_factor
-        self.advance_to(self.simulation_timestamp + __import__("datetime").timedelta(seconds=delta))
+        self.advance_to(self.simulation_timestamp + timedelta(seconds=seconds * self.acceleration_factor))
+
+    def wall_delay_for(self, simulation_delta_seconds: float) -> float:
+        if simulation_delta_seconds < 0:
+            raise ValueError("simulation_delta_seconds must be non-negative")
+        return simulation_delta_seconds / self.acceleration_factor
