@@ -28,7 +28,12 @@ jobs:
           cache: pip
       - name: Install dependencies
         working-directory: binansScanner
-        run: python -m pip install -r requirements.txt numpy pandas pandas-ta python-binance
+        run: |
+          python -m pip install --upgrade pip setuptools wheel
+          python -m pip install -r requirements.txt
+          python -m pip install numpy pandas pandas-ta python-binance
+          python -m pip check
+          python -c "import numpy, pandas, pandas_ta, binance; print('DEPENDENCIES_OK', numpy.__version__, pandas.__version__)"
       - name: Compile
         working-directory: binansScanner
         run: python -m compileall -q .
@@ -55,10 +60,28 @@ jobs:
           assert a['end_of_run_policy']=='CLOSE_AT_END' and a['paper_only'] is True
           assert a['safety']['credentials_used'] is False and a['safety']['live_orders'] is False
           pathlib.Path('real_replay_7d/determinism.json').write_text(json.dumps({'result':'PASS','core_metrics_equal':True},indent=2)+'\n')
-          pathlib.Path('real_replay_7d/qualification.json').write_text(json.dumps({'dataset_integrity':'PASS','causality':'PASS','replay_determinism':'PASS','capital_integrity':'PASS','evidence_complete':True,'campaign':'7D','policy':'CLOSE_AT_END'},indent=2)+'\n')
           PY
       - name: Clean tree
         run: test -z "$(git status --porcelain)"
+      - name: Finalize qualification evidence
+        working-directory: binansScanner
+        run: |
+          test -f real_replay_7d/dataset/manifest.json
+          test -f real_replay_7d/run/campaign_report.json
+          test -f real_replay_7d/determinism.json
+          python - <<'PY'
+          import json, pathlib
+          report=json.loads(pathlib.Path('real_replay_7d/run/campaign_report.json').read_text())
+          det=json.loads(pathlib.Path('real_replay_7d/determinism.json').read_text())
+          assert det['result']=='PASS'
+          assert report['lookahead_verification'] is True
+          assert report['out_of_order_count']==0
+          assert report['end_of_run_policy']=='CLOSE_AT_END'
+          assert report['paper_only'] is True
+          assert report['safety']['credentials_used'] is False
+          assert report['safety']['live_orders'] is False
+          pathlib.Path('real_replay_7d/qualification.json').write_text(json.dumps({'dataset_integrity':'PASS','causality':'PASS','replay_determinism':'PASS','paper_only_safety':'PASS','capital_integrity':'EVIDENCED_IN_REPORT','evidence_complete':True,'campaign':'7D','policy':'CLOSE_AT_END'},indent=2)+'\n')
+          PY
       - uses: actions/upload-artifact@v4
         with:
           name: d2-real-historical-replay-7d
