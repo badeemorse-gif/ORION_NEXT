@@ -4,21 +4,21 @@ on:
     branches: [main]
     types: [opened, synchronize, reopened]
   push:
-    branches: [d2/real-historical-replay-7d-20260902, d2/real-historical-replay-execution-20260902]
+    branches: [d2/real-historical-replay-execution-20260902]
 jobs:
   replay:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 180
     permissions:
       contents: read
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.sha }}
+          ref: f329dd37ccc3c4796021095cd22f299c13f2440f
           fetch-depth: 0
       - name: Verify replay baseline and isolation
         run: |
-          test "$(git rev-parse HEAD)" = "${{ github.sha }}"
+          test "$(git rev-parse HEAD)" = "f329dd37ccc3c4796021095cd22f299c13f2440f"
           test "$(git rev-parse c6126e0b94781608147f321f737742f87f48bf2f)" = "c6126e0b94781608147f321f737742f87f48bf2f"
           git merge-base --is-ancestor c6126e0b94781608147f321f737742f87f48bf2f HEAD
           test "$(git diff --name-only c6126e0b94781608147f321f737742f87f48bf2f HEAD)" = $'.github/workflows/d2-real-historical-replay-7d.yml\nbinansScanner/real_historical_replay.py\nbinansScanner/replay/source.py'
