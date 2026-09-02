@@ -14,11 +14,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: 0bbbbf4b2720efaa840414c64da708eca414d249
+          ref: aab1fc15f07adfaeb4d617d669e459f77f8b0895
           fetch-depth: 0
       - name: Verify replay baseline and isolation
         run: |
-          test "$(git rev-parse HEAD)" = "0bbbbf4b2720efaa840414c64da708eca414d249"
+          test "$(git rev-parse HEAD)" = "aab1fc15f07adfaeb4d617d669e459f77f8b0895"
           test "$(git rev-parse c6126e0b94781608147f321f737742f87f48bf2f)" = "c6126e0b94781608147f321f737742f87f48bf2f"
           git merge-base --is-ancestor c6126e0b94781608147f321f737742f87f48bf2f HEAD
           test "$(git diff --name-only c6126e0b94781608147f321f737742f87f48bf2f HEAD)" = $'binansScanner/real_historical_replay.py\n.github/workflows/d2-real-historical-replay-7d.yml'
