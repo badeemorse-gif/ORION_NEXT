@@ -2,6 +2,9 @@ name: D2 REAL Historical Replay 7D
 on:
   push:
     branches: [d2/real-historical-replay-7d-20260902]
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened]
 jobs:
   replay:
     runs-on: ubuntu-latest
