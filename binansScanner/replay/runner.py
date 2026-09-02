@@ -1,18 +1,17 @@
 from __future__ import annotations
 
 import asyncio
-import json
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
+import subprocess
 
 from integration.paper_realtime_lifecycle import PaperRealtimeLifecycle
 from integration.paper_runtime_supervisor import PaperRuntimeSupervisor
-from models.market_event import MarketEvent, MarketEventNormalizer if False else None
-from models.paper_capital import PaperLedger
-from tools._orion_paper_8h_runner_legacy import JsonlRunLog, Paper8HConfig, Paper8HRunner
 from providers.market_stream import MarketEventNormalizer
-
+from tools._orion_paper_8h_runner_legacy import JsonlRunLog, Paper8HConfig, Paper8HRunner
+from models.market_event import MarketEventType
+from models.paper_capital import PaperLedger
 from replay.clock import ReplayClock
 from replay.dataset import HistoricalDataset
 from replay.source import HistoricalMarketDataSource
@@ -43,7 +42,7 @@ class ReplayConfig:
 
 
 class HistoricalPaperReplayRunner(Paper8HRunner):
-    """Replay orchestration reusing canonical D1/scalping/paper runtime contracts."""
+    """Offline replay orchestration that reuses canonical discovery and Paper contracts."""
 
     @classmethod
     def build(
@@ -52,8 +51,11 @@ class HistoricalPaperReplayRunner(Paper8HRunner):
         output_dir: Path,
         *,
         replay_config: ReplayConfig | None = None,
+        starting_capital: float = 200.0,
     ) -> "HistoricalPaperReplayRunner":
         replay_config = replay_config or ReplayConfig()
+        output_dir = Path(output_dir)
+        output_dir.mkdir(parents=True, exist_ok=True)
         clock = ReplayClock(dataset.start, replay_config.acceleration_factor)
         source = HistoricalMarketDataSource(dataset, clock)
         discovery_config = OpportunityConfig(
@@ -79,14 +81,14 @@ class HistoricalPaperReplayRunner(Paper8HRunner):
             pool_manager=ScalpingCandidatePoolManager(scalping_config),
         )
         stream = HistoricalMarketEventStream(dataset, clock)
-        lifecycle = PaperRealtimeLifecycle(ledger=PaperLedger(starting_equity=200.0))
+        lifecycle = PaperRealtimeLifecycle(ledger=PaperLedger(starting_equity=starting_capital))
         supervisor = PaperRuntimeSupervisor(
             runtime=lifecycle,
             control_path=output_dir / "replay_trading_control.json",
         )
         paper_config = Paper8HConfig(
             duration_hours=1.0,
-            starting_capital=200.0,
+            starting_capital=starting_capital,
             dynamic_universe=True,
             output_dir=output_dir,
             top_n=replay_config.active_top_n,
@@ -97,14 +99,13 @@ class HistoricalPaperReplayRunner(Paper8HRunner):
             supervisor,
             pipeline,
             JsonlRunLog(output_dir / "events.jsonl"),
-            peak_equity=200.0,
+            peak_equity=starting_capital,
         )
-
-    def _write_replay_event(self, record_type: str, **payload) -> None:
-        self.log.write(record_type, **payload)
 
     async def run_replay(self, dataset: HistoricalDataset, *, replay_config: ReplayConfig | None = None) -> dict:
         replay_config = replay_config or ReplayConfig()
+        clock = self.stream.clock
+        normalizer = MarketEventNormalizer()
         self.log.open()
         self.log.write(
             "replay_start",
@@ -123,104 +124,91 @@ class HistoricalPaperReplayRunner(Paper8HRunner):
             exchange_orders=False,
         )
 
-        normalizer = MarketEventNormalizer()
         seen: set[str] = set()
         last_timestamp: datetime | None = None
-        processed = duplicates = out_of_order = 0
-
+        processed = duplicates = out_of_order = decision_cycles = 0
+        simulation_end = dataset.end
         try:
             await self.stream.connect()
             async for raw in self.stream.events():
                 event = normalizer.normalize(raw)
                 if event.event_id in seen:
                     duplicates += 1
-                    self.log.write("replay_duplicate", event_id=event.event_id, symbol=event.symbol, simulation_timestamp=event.event_timestamp.isoformat())
+                    self.log.write(
+                        "replay_duplicate",
+                        event_id=event.event_id,
+                        symbol=event.symbol,
+                        simulation_timestamp=event.event_timestamp.isoformat(),
+                    )
                     continue
                 if last_timestamp is not None and event.event_timestamp < last_timestamp:
                     out_of_order += 1
                     raise RuntimeError("historical replay event ordering violation")
                 seen.add(event.event_id)
                 last_timestamp = event.event_timestamp
+                if event.event_type is MarketEventType.CANDLE_CLOSE:
+                    decision_cycles += 1
                 await self._on_market_event(event)
                 processed += 1
 
-            if dataset.events:
-                self._simulation_end = dataset.end
-            await self._close_positions_at_end()
-            report = self._replay_report(
-                dataset=dataset,
-                replay_config=replay_config,
-                processed=processed,
-                duplicates=duplicates,
-                out_of_order=out_of_order,
-            )
+            for position in self.supervisor.active_positions:
+                price = self.last_prices.get(position.symbol)
+                if price is None:
+                    raise RuntimeError(f"no terminal mark for open position {position.symbol}")
+                self.supervisor.runtime.exit_position(
+                    symbol=position.symbol,
+                    price=price,
+                    now=simulation_end,
+                )
+                self.log.write(
+                    "replay_end_position_close",
+                    symbol=position.symbol,
+                    price=price,
+                    simulation_timestamp=simulation_end.isoformat(),
+                    policy=replay_config.end_policy,
+                )
+
+            report = {
+                "code_sha": self._code_sha(),
+                "dataset_hash": dataset.manifest.integrity_sha256,
+                "simulation_start": dataset.start.isoformat(),
+                "simulation_end": dataset.end.isoformat(),
+                "wall_clock_start": clock.wall_clock_timestamp.isoformat(),
+                "wall_clock_end": datetime.now(timezone.utc).isoformat(),
+                "acceleration_factor": replay_config.acceleration_factor,
+                "processed_event_count": processed,
+                "duplicate_event_count": duplicates,
+                "out_of_order_count": out_of_order,
+                "decision_cycles": decision_cycles,
+                "orders": len(self.supervisor.runtime.orders.events),
+                "fills": len([event for event in self.supervisor.runtime.orders.events if event.event_type == "ORDER_FILLED"]),
+                "positions": len(self.supervisor.runtime.positions.events),
+                "capital_state": {
+                    "cash": self.supervisor.replay_state()[3].wallet.cash,
+                    "starting_equity": self.supervisor.replay_state()[3].wallet.starting_equity,
+                },
+                "runtime_health": self.supervisor.health.healthy,
+                "paper_only": self.supervisor.health.paper_only,
+                "lookahead_verification": self._lookahead_verification(dataset),
+                "recovery_verification": True,
+                "end_of_run_policy": replay_config.end_policy,
+            }
             self.log.write("replay_end", **report)
             return report
         finally:
             await self.stream.close()
             self.log.close()
 
-    async def _close_positions_at_end(self) -> None:
-        policy = "CLOSE_AT_END"
-        positions = self.supervisor.active_positions
-        for position in positions:
-            price = self.last_prices.get(position.symbol)
-            if price is None:
-                raise RuntimeError(f"no terminal mark for open position {position.symbol}")
-            self.supervisor.runtime.exit_position(
-                symbol=position.symbol,
-                price=price,
-                now=self._simulation_end,
-            )
-            self.log.write(
-                "replay_end_position_close",
-                symbol=position.symbol,
-                price=price,
-                simulation_timestamp=self._simulation_end.isoformat(),
-                policy=policy,
-            )
-
-    def _replay_report(self, *, dataset: HistoricalDataset, replay_config: ReplayConfig, processed: int, duplicates: int, out_of_order: int) -> dict:
-        health = self.supervisor.health
-        account = self.supervisor.replay_state()[3]
-        state = self.supervisor.replay_state()
-        return {
-            "code_sha": self._code_sha(),
-            "dataset_hash": dataset.manifest.integrity_sha256,
-            "simulation_start": dataset.start.isoformat(),
-            "simulation_end": dataset.end.isoformat(),
-            "wall_clock_start": self.clock.wall_clock_timestamp.isoformat(),
-            "wall_clock_end": datetime.now(timezone.utc).isoformat(),
-            "acceleration_factor": replay_config.acceleration_factor,
-            "processed_event_count": processed,
-            "duplicate_event_count": duplicates,
-            "out_of_order_count": out_of_order,
-            "decisions": sum(1 for event in self.log._handle and []),
-            "orders": len(self.supervisor.runtime.orders.events),
-            "fills": len([event for event in self.supervisor.runtime.orders.events if event.event_type == "ORDER_FILLED"]),
-            "positions": len(self.supervisor.runtime.positions.events),
-            "capital_state": {
-                "cash": account.wallet.cash,
-                "starting_equity": account.wallet.starting_equity,
-            },
-            "runtime_health": health.healthy,
-            "paper_only": health.paper_only,
-            "lookahead_verification": self._lookahead_verification(dataset),
-            "recovery_verification": True,
-            "end_of_run_policy": replay_config.end_policy,
-            "runtime_state_digest": repr(state),
-        }
-
     @staticmethod
     def _lookahead_verification(dataset: HistoricalDataset) -> bool:
-        for event in dataset.events:
-            if event.timestamp > dataset.end:
-                return False
-        return True
+        return all(event.timestamp <= dataset.end for event in dataset.events)
 
     @staticmethod
     def _code_sha() -> str:
-        return "replay-source-checkout"
+        try:
+            return subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
+        except (OSError, subprocess.CalledProcessError):
+            return "unknown"
 
 
 __all__ = ["HistoricalPaperReplayRunner", "ReplayConfig"]
