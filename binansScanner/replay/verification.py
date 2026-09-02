@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Callable, Iterable, Sequence
+from typing import Callable, Sequence
 
 from models.market_event import MarketEvent
 from integration.paper_runtime_supervisor import PaperRuntimeSupervisor
@@ -26,13 +26,18 @@ class ReplayVerifier:
     def compare_supervisors(left: PaperRuntimeSupervisor, right: PaperRuntimeSupervisor) -> ReplayComparison:
         left_state = left.replay_state()
         right_state = right.replay_state()
+        left_event_ids = tuple(event.event_id for event in left.runtime.orders.events)
+        right_event_ids = tuple(event.event_id for event in right.runtime.orders.events)
         left_capital = left_state[3]
         right_capital = right_state[3]
+        event_ids_equal = left_event_ids == right_event_ids
+        replay_state_equal = left_state == right_state
+        capital_state_equal = left_capital == right_capital
         return ReplayComparison(
-            event_ids_equal=True,
-            replay_state_equal=left_state == right_state,
-            capital_state_equal=left_capital == right_capital,
-            deterministic=left_state == right_state and left.no_live_path() and right.no_live_path(),
+            event_ids_equal=event_ids_equal,
+            replay_state_equal=replay_state_equal,
+            capital_state_equal=capital_state_equal,
+            deterministic=event_ids_equal and replay_state_equal and capital_state_equal and left.no_live_path() and right.no_live_path(),
         )
 
     @staticmethod
