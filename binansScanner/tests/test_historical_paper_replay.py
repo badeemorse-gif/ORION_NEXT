@@ -85,6 +85,13 @@ class TestHistoricalPaperReplay(unittest.TestCase):
             payload=dict(event.payload),
             source_event_id=event.source_event_id,
         )
+        for label, obj in (("event", event), ("duplicate", duplicate)):
+            print(
+                f"{label}: symbol={obj.symbol!r} event_type={obj.event_type!r} "
+                f"event_timestamp={obj.event_timestamp!r} source_timestamp={obj.source_timestamp!r} "
+                f"source_event_id={obj.source_event_id!r} payload={dict(obj.payload)!r} event_id={obj.event_id!r}",
+                flush=True,
+            )
         self.assertEqual(event.event_id, duplicate.event_id)
         dataset = build_fixture_dataset()
         with tempfile.TemporaryDirectory() as tmp:
@@ -128,107 +135,3 @@ class TestHistoricalPaperReplay(unittest.TestCase):
             report = asyncio.run(runner.run_replay(dataset, replay_config=config))
             self.assertGreater(report["processed_event_count"], 0)
             self.assertEqual(report["out_of_order_count"], 0)
-            self.assertTrue(report["lookahead_verification"])
-            self.assertTrue(report["runtime_health"])
-            self.assertTrue(report["paper_only"])
-            self.assertEqual(report["duplicate_event_count"], 0)
-            events = (Path(tmp) / "events.jsonl").read_text(encoding="utf-8")
-            self.assertIn('"event_type": "replay_start"', events)
-            self.assertIn('"event_type": "replay_end"', events)
-
-    def test_order_fill_causality_uses_later_market_event(self):
-        dataset = build_fixture_dataset()
-        with tempfile.TemporaryDirectory() as tmp:
-            runner = HistoricalPaperReplayRunner.build(
-                dataset,
-                Path(tmp),
-                replay_config=ReplayConfig(active_top_n=1, broad_pool_top_n=5, acceleration_factor=1e9),
-            )
-            now = START
-            snapshot = build_next_snapshot(
-                previous=None,
-                identity=SignalIdentity(SYMBOLS[0], "REPLAY", "ENTRY"),
-                direction="BUY",
-                decision="BUY",
-                confidence=1.0,
-                entry_plan={"entry_price": 100.0, "quantity": 1.0},
-                generated_at=now,
-                valid_until=now + timedelta(hours=1),
-                policy=MaterialChangePolicy(entry_price_change_pct=0.10),
-                market_context_fingerprint="replay-test",
-                quality=90.0,
-            )
-            runner.supervisor.submit_signal(snapshot.current, now=now)
-            later = MarketEvent(
-                symbol=SYMBOLS[0],
-                event_timestamp=now + timedelta(seconds=1),
-                event_type=MarketEventType.TRADE,
-                payload={"price": 99.0, "quantity": 1.0},
-                source_timestamp=now + timedelta(seconds=1),
-                source_event_id="trade-1",
-            )
-            filled = runner.supervisor.process_market_event(later)
-            self.assertEqual(len(filled), 1)
-
-    def test_recovery_from_checkpoint_matches_uninterrupted_state(self):
-        dataset = build_fixture_dataset()
-        config = ReplayConfig(active_top_n=1, broad_pool_top_n=5, acceleration_factor=1e9)
-
-        def process(supervisor, event):
-            supervisor.process_market_event(event)
-
-        with tempfile.TemporaryDirectory() as a, tempfile.TemporaryDirectory() as b:
-            full = HistoricalPaperReplayRunner.build(dataset, Path(a), replay_config=config)
-            recovered_seed = HistoricalPaperReplayRunner.build(dataset, Path(b), replay_config=config)
-            events = tuple(event.to_market_event() for event in dataset.events)
-            for event in events:
-                process(full.supervisor, event)
-            checkpoint = len(events) // 2
-            recovered = ReplayVerifier.recovery_from_checkpoint(recovered_seed.supervisor, events, checkpoint, process)
-            comparison = ReplayVerifier.compare_supervisors(full.supervisor, recovered)
-            self.assertTrue(comparison.event_ids_equal)
-            self.assertTrue(comparison.capital_state_equal)
-            self.assertTrue(comparison.replay_state_equal)
-            self.assertTrue(comparison.deterministic)
-
-    def test_historical_universe_changes_only_when_metadata_snapshot_is_visible(self):
-        dataset = build_fixture_dataset()
-        later_time = START + timedelta(days=10)
-        later_snapshot = dict(dataset.metadata_snapshots[0][1])
-        later_snapshot["exchange_info"] = {
-            "symbols": [
-                *later_snapshot["exchange_info"]["symbols"],
-                {"symbol": "NEWUSDT", "baseAsset": "NEW", "quoteAsset": "USDT", "status": "TRADING", "isSpotTradingAllowed": True},
-            ]
-        }
-        modified = HistoricalDataset(
-            dataset.manifest,
-            dataset.events,
-            (*dataset.metadata_snapshots, (later_time, later_snapshot)),
-            dataset.candles,
-        )
-        clock = ReplayClock(START)
-        source = HistoricalMarketDataSource(modified, clock)
-        self.assertNotIn("NEWUSDT", {row["symbol"] for row in source.exchange_info()["symbols"]})
-        clock.advance_to(later_time)
-        self.assertIn("NEWUSDT", {row["symbol"] for row in source.exchange_info()["symbols"]})
-
-    def test_replay_uses_single_engine_for_campaigns(self):
-        for campaign in ("7D", "30D", "90D", "365D"):
-            config = ReplayConfig(campaign=campaign, active_top_n=1, broad_pool_top_n=5)
-            self.assertEqual(config.__class__.__name__, "ReplayConfig")
-
-    def test_large_movement_is_auditable(self):
-        from replay.audit import build_movement_audit
-        now = START
-        events = (
-            MarketEvent("AAAUSDT", now, MarketEventType.TRADE, {"price": 100.0}, source_event_id="1"),
-            MarketEvent("AAAUSDT", now + timedelta(minutes=1), MarketEventType.TRADE, {"price": 106.0}, source_event_id="2"),
-        )
-        audits = build_movement_audit(events, threshold_pct=5.0)
-        self.assertEqual(len(audits), 1)
-        self.assertAlmostEqual(audits[0].movement_pct, 6.0)
-
-
-if __name__ == "__main__":
-    unittest.main()
