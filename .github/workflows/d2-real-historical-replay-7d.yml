@@ -4,7 +4,7 @@ on:
     branches: [main]
     types: [opened, synchronize, reopened]
   push:
-    branches: [d2/real-historical-replay-7d-20260902]
+    branches: [d2/real-historical-replay-fast-exec-20260902]
 jobs:
   replay:
     runs-on: ubuntu-latest
