@@ -4,6 +4,12 @@ import argparse
 import asyncio
 import json
 from pathlib import Path
+import sys
+
+ROOT = Path(__file__).resolve().parents[1]
+BINANS_SCANNER = ROOT / "binansScanner"
+if str(BINANS_SCANNER) not in sys.path:
+    sys.path.insert(0, str(BINANS_SCANNER))
 
 from replay.dataset import HistoricalDataset
 from replay.runner import HistoricalPaperReplayRunner, ReplayConfig
@@ -29,7 +35,11 @@ def main(argv=None) -> int:
         active_top_n=args.top_n,
         broad_pool_top_n=args.broad_pool_top_n,
     )
-    runner = HistoricalPaperReplayRunner.build(dataset, args.output_dir, replay_config=replay_config)
+    runner = HistoricalPaperReplayRunner.build(
+        dataset,
+        args.output_dir,
+        replay_config=replay_config,
+    )
     report = asyncio.run(runner.run_replay(dataset, replay_config=replay_config))
     print(json.dumps(report, indent=2, sort_keys=True, default=str))
     return 0
