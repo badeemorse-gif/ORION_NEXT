@@ -16,15 +16,20 @@ def _candle_rows(symbol_index: int, timeframe: str, count: int = 40):
     step = {"1d": 86_400_000, "4h": 14_400_000, "1h": 3_600_000, "15m": 900_000}[timeframe]
     rows = []
     base_ms = int((START - timedelta(milliseconds=step * count * 2)).timestamp() * 1000)
+    slopes = (0.75, -0.65, 0.95, -0.55, 0.45)
+    slope = slopes[symbol_index % len(slopes)]
     for index in range(count):
-        close = 100.0 + symbol_index * 0.5 + index * 0.1
+        close = 100.0 + symbol_index * 2.0 + index * slope + ((-1) ** index) * 0.25
+        open_price = close - 0.15
+        high = max(open_price, close) + 0.20
+        low = min(open_price, close) - 0.20
         timestamp = base_ms + index * step
         rows.append(
             (
                 timestamp,
-                f"{close - 0.05:.8f}",
-                f"{close + 0.10:.8f}",
-                f"{close - 0.10:.8f}",
+                f"{open_price:.8f}",
+                f"{high:.8f}",
+                f"{low:.8f}",
                 f"{close:.8f}",
                 "1000",
                 timestamp + step - 1,
@@ -53,13 +58,13 @@ def build_fixture_dataset() -> HistoricalDataset:
                 "quoteVolume": str(10_000_000 + index * 100_000),
                 "lastPrice": str(100 + index),
                 "priceChangePercent": str(1.0 + index * 0.1),
-                "weightedAvgPrice": "100",
+                "weightedAvgPrice": str(100 + index * 2),
             }
             for index, symbol in enumerate(SYMBOLS)
         ],
         "book_ticker": [
-            {"symbol": symbol, "bidPrice": "100", "askPrice": "100.01"}
-            for symbol in SYMBOLS
+            {"symbol": symbol, "bidPrice": str(99.99 + index), "askPrice": str(100.01 + index)}
+            for index, symbol in enumerate(SYMBOLS)
         ],
     }
 
@@ -67,7 +72,7 @@ def build_fixture_dataset() -> HistoricalDataset:
     for day in range(6):
         timestamp = START + timedelta(days=day)
         for symbol_index, symbol in enumerate(SYMBOLS):
-            price = 100.0 + symbol_index + day
+            price = 100.0 + symbol_index * 2.0 + day * (0.75 - symbol_index * 0.05)
             events.append(
                 HistoricalMarketEvent(
                     timestamp=timestamp,
