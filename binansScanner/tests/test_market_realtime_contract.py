@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import unittest
-from datetime import timezone
+from datetime import datetime, timezone
 
 from models.market_event import MarketEvent, MarketEventType
 from providers.market_stream import BinanceWebSocketMarketStream, MarketEventNormalizer, MarketStreamRunner, MarketStreamDisconnected
@@ -48,6 +48,26 @@ class TestMarketEventContract(unittest.TestCase):
         self.assertEqual(event.source_event_id, "1")
         self.assertTrue(event.event_id)
         self.assertEqual(event.event_timestamp.tzinfo, timezone.utc)
+
+    def test_source_event_id_is_stable_identity(self) -> None:
+        source_event_id = "trade-123"
+        left = MarketEvent(
+            symbol="BTCUSDT",
+            event_timestamp=datetime(2025, 1, 1, 0, 0, tzinfo=timezone.utc),
+            source_timestamp=datetime(2025, 1, 1, 0, 1, tzinfo=timezone.utc),
+            event_type=MarketEventType.TRADE,
+            payload={"price": 100.0, "quantity": 1.0},
+            source_event_id=source_event_id,
+        )
+        right = MarketEvent(
+            symbol="BTCUSDT",
+            event_timestamp=datetime(2025, 1, 1, 0, 2, tzinfo=timezone.utc),
+            source_timestamp=None,
+            event_type=MarketEventType.TRADE,
+            payload={"price": 101.0, "quantity": 2.0},
+            source_event_id=source_event_id,
+        )
+        self.assertEqual(left.event_id, right.event_id)
 
     def test_candle_close_preserves_timeframe_semantics(self) -> None:
         event = MarketEventNormalizer().normalize(candle_message(interval="4h"))
