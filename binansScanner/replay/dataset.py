@@ -27,6 +27,10 @@ class HistoricalMarketEvent:
         object.__setattr__(self, "symbol", self.symbol.strip().upper())
         object.__setattr__(self, "payload", dict(self.payload))
 
+    @property
+    def event_id(self) -> str:
+        return self.to_market_event().event_id
+
     def to_market_event(self) -> MarketEvent:
         return MarketEvent(
             symbol=self.symbol,
@@ -94,10 +98,7 @@ class HistoricalDataset:
         root.mkdir(parents=True, exist_ok=True)
         events = self._sort_events(self.events)
         metadata = tuple(sorted(self.metadata_snapshots, key=lambda item: item[0]))
-        candles = {
-            key: tuple(rows)
-            for key, rows in sorted(self.candles.items())
-        }
+        candles = {key: tuple(rows) for key, rows in sorted(self.candles.items())}
         digest = self._digest_events_metadata_candles(events, metadata, candles)
         manifest = HistoricalDatasetManifest(
             period=self.manifest.period,
@@ -243,14 +244,8 @@ class HistoricalDataset:
                 }
                 for e in events
             ],
-            "metadata": [
-                {"timestamp": ts.isoformat(), "snapshot": snapshot}
-                for ts, snapshot in metadata
-            ],
-            "candles": {
-                f"{symbol}|{timeframe}": rows
-                for (symbol, timeframe), rows in sorted(candles.items())
-            },
+            "metadata": [{"timestamp": ts.isoformat(), "snapshot": snapshot} for ts, snapshot in metadata],
+            "candles": {f"{symbol}|{timeframe}": rows for (symbol, timeframe), rows in sorted(candles.items())},
         }
         canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str)
         return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
