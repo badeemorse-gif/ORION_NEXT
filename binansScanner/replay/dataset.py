@@ -67,9 +67,11 @@ class HistoricalDataset:
         events = tuple(cls._read_events(root / "events.jsonl"))
         metadata = tuple(cls._read_metadata(root / "metadata.jsonl"))
         candles = cls._read_candles(root / "candles.jsonl")
+        events = cls._sort_events(events)
+        metadata = tuple(sorted(metadata, key=lambda item: item[0]))
         digest = cls._digest_events_metadata_candles(events, metadata, candles)
         expected = str(manifest_data.get("integrity_sha256", ""))
-        if expected and expected != digest:
+        if expected != digest:
             raise ValueError(f"dataset integrity mismatch: expected {expected}, actual {digest}")
         manifest = HistoricalDatasetManifest(
             period=str(manifest_data["period"]),
@@ -82,9 +84,94 @@ class HistoricalDataset:
             dataset_version=str(manifest_data["dataset_version"]),
             integrity_sha256=digest,
         )
-        dataset = cls(manifest, cls._sort_events(events), metadata, candles)
+        dataset = cls(manifest, events, metadata, candles)
         dataset.validate()
         return dataset
+
+    def write_directory(self, root: Path) -> None:
+        """Persist the immutable dataset files plus an integrity manifest."""
+        root = Path(root)
+        root.mkdir(parents=True, exist_ok=True)
+        events = self._sort_events(self.events)
+        metadata = tuple(sorted(self.metadata_snapshots, key=lambda item: item[0]))
+        candles = {
+            key: tuple(rows)
+            for key, rows in sorted(self.candles.items())
+        }
+        digest = self._digest_events_metadata_candles(events, metadata, candles)
+        manifest = HistoricalDatasetManifest(
+            period=self.manifest.period,
+            source=self.manifest.source,
+            symbols=tuple(sorted(set(self.manifest.symbols))),
+            event_types=tuple(sorted(set(self.manifest.event_types))),
+            timeframes=tuple(sorted(set(self.manifest.timeframes))),
+            timestamp_convention=self.manifest.timestamp_convention,
+            ordering_convention=self.manifest.ordering_convention,
+            dataset_version=self.manifest.dataset_version,
+            integrity_sha256=digest,
+        )
+        (root / "events.jsonl").write_text(
+            "".join(
+                json.dumps(
+                    {
+                        "timestamp": event.timestamp.isoformat(),
+                        "symbol": event.symbol,
+                        "event_type": event.event_type.value,
+                        "payload": event.payload,
+                        "source_event_id": event.source_event_id,
+                    },
+                    sort_keys=True,
+                    separators=(",", ":"),
+                    default=str,
+                ) + "\n"
+                for event in events
+            ),
+            encoding="utf-8",
+        )
+        (root / "metadata.jsonl").write_text(
+            "".join(
+                json.dumps(
+                    {"timestamp": timestamp.isoformat(), "snapshot": snapshot},
+                    sort_keys=True,
+                    separators=(",", ":"),
+                    default=str,
+                ) + "\n"
+                for timestamp, snapshot in metadata
+            ),
+            encoding="utf-8",
+        )
+        (root / "candles.jsonl").write_text(
+            "".join(
+                json.dumps(
+                    {"symbol": symbol, "timeframe": timeframe, "row": row},
+                    sort_keys=True,
+                    separators=(",", ":"),
+                    default=str,
+                ) + "\n"
+                for (symbol, timeframe), rows in candles.items()
+                for row in rows
+            ),
+            encoding="utf-8",
+        )
+        (root / "manifest.json").write_text(
+            json.dumps(
+                {
+                    "period": manifest.period,
+                    "source": manifest.source,
+                    "symbols": list(manifest.symbols),
+                    "event_types": list(manifest.event_types),
+                    "timeframes": list(manifest.timeframes),
+                    "timestamp_convention": manifest.timestamp_convention,
+                    "ordering_convention": manifest.ordering_convention,
+                    "dataset_version": manifest.dataset_version,
+                    "integrity_sha256": manifest.integrity_sha256,
+                },
+                indent=2,
+                sort_keys=True,
+                default=str,
+            ) + "\n",
+            encoding="utf-8",
+        )
 
     @staticmethod
     def _read_events(path: Path) -> Iterable[HistoricalMarketEvent]:
@@ -202,6 +289,9 @@ class HistoricalDataset:
         for index in range(1, len(self.events)):
             if self.events[index].timestamp < self.events[index - 1].timestamp:
                 raise ValueError("events are not deterministically ordered")
+        for index in range(1, len(self.metadata_snapshots)):
+            if self.metadata_snapshots[index][0] < self.metadata_snapshots[index - 1][0]:
+                raise ValueError("metadata snapshots are not deterministically ordered")
         symbols = set(self.manifest.symbols)
         if symbols and any(event.symbol not in symbols for event in self.events):
             raise ValueError("event symbol is outside manifest symbols")
