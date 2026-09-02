@@ -29,7 +29,21 @@ class HistoricalMarketEvent:
 
     @property
     def event_id(self) -> str:
-        return self.to_market_event().event_id
+        """Stable dataset identity; source IDs survive disk serialization exactly."""
+        if self.source_event_id:
+            return str(self.source_event_id)
+        canonical = json.dumps(
+            {
+                "symbol": self.symbol,
+                "event_type": self.event_type.value,
+                "timestamp": self.timestamp.isoformat(),
+                "payload": self.payload,
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+            default=str,
+        )
+        return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
     def to_market_event(self) -> MarketEvent:
         return MarketEvent(
@@ -38,7 +52,7 @@ class HistoricalMarketEvent:
             event_type=self.event_type,
             payload=self.payload,
             source_timestamp=self.timestamp,
-            source_event_id=self.source_event_id,
+            source_event_id=self.event_id,
         )
 
 
@@ -119,7 +133,7 @@ class HistoricalDataset:
                         "symbol": event.symbol,
                         "event_type": event.event_type.value,
                         "payload": event.payload,
-                        "source_event_id": event.source_event_id,
+                        "source_event_id": event.event_id,
                     },
                     sort_keys=True,
                     separators=(",", ":"),
@@ -221,8 +235,7 @@ class HistoricalDataset:
                 event.timestamp,
                 event.symbol,
                 event.event_type.value,
-                event.source_event_id or "",
-                json.dumps(event.payload, sort_keys=True, separators=(",", ":"), default=str),
+                event.event_id,
             )
         )
         return tuple(materialized)
@@ -240,7 +253,7 @@ class HistoricalDataset:
                     "symbol": e.symbol,
                     "event_type": e.event_type.value,
                     "payload": e.payload,
-                    "source_event_id": e.source_event_id,
+                    "source_event_id": e.event_id,
                 }
                 for e in events
             ],
