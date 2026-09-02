@@ -42,7 +42,7 @@ class ReplayConfig:
 
 
 class HistoricalPaperReplayRunner(Paper8HRunner):
-    """Offline replay orchestration that reuses canonical discovery and Paper contracts."""
+    """Offline replay orchestration that reuses canonical discovery/scalping/paper contracts."""
 
     @classmethod
     def build(
@@ -80,6 +80,14 @@ class HistoricalPaperReplayRunner(Paper8HRunner):
             decision_engine=ScalpingDecisionEngine(scalping_config),
             pool_manager=ScalpingCandidatePoolManager(scalping_config),
         )
+
+        # Startup is a hard gate: no Paper runtime is constructed until the canonical
+        # discovery + Fast Recall + deep evaluation path has completed successfully.
+        initial = pipeline.discover()
+        selected_symbols = tuple(candidate.symbol for candidate in initial.candidates)
+        if not selected_symbols:
+            raise RuntimeError("historical replay startup produced no active opportunities")
+
         stream = HistoricalMarketEventStream(dataset, clock)
         lifecycle = PaperRealtimeLifecycle(ledger=PaperLedger(starting_equity=starting_capital))
         supervisor = PaperRuntimeSupervisor(
@@ -168,12 +176,12 @@ class HistoricalPaperReplayRunner(Paper8HRunner):
                     policy=replay_config.end_policy,
                 )
 
+            account = self.supervisor.replay_state()[3]
             report = {
                 "code_sha": self._code_sha(),
                 "dataset_hash": dataset.manifest.integrity_sha256,
                 "simulation_start": dataset.start.isoformat(),
                 "simulation_end": dataset.end.isoformat(),
-                "wall_clock_start": clock.wall_clock_timestamp.isoformat(),
                 "wall_clock_end": datetime.now(timezone.utc).isoformat(),
                 "acceleration_factor": replay_config.acceleration_factor,
                 "processed_event_count": processed,
@@ -184,13 +192,12 @@ class HistoricalPaperReplayRunner(Paper8HRunner):
                 "fills": len([event for event in self.supervisor.runtime.orders.events if event.event_type == "ORDER_FILLED"]),
                 "positions": len(self.supervisor.runtime.positions.events),
                 "capital_state": {
-                    "cash": self.supervisor.replay_state()[3].wallet.cash,
-                    "starting_equity": self.supervisor.replay_state()[3].wallet.starting_equity,
+                    "cash": account.wallet.cash,
+                    "starting_equity": account.wallet.starting_equity,
                 },
                 "runtime_health": self.supervisor.health.healthy,
                 "paper_only": self.supervisor.health.paper_only,
                 "lookahead_verification": self._lookahead_verification(dataset),
-                "recovery_verification": True,
                 "end_of_run_policy": replay_config.end_policy,
             }
             self.log.write("replay_end", **report)
