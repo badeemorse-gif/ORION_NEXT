@@ -36,10 +36,9 @@ class TestHistoricalPaperReplay(unittest.TestCase):
 
     def test_progressive_clock_blocks_future_metadata_and_candles(self):
         dataset = build_fixture_dataset()
-        clock = ReplayClock(dataset.start)
-        source = HistoricalMarketDataSource(dataset, clock)
         before = dataset.start - timedelta(seconds=2)
-        clock.advance_to(before)
+        clock = ReplayClock(before)
+        source = HistoricalMarketDataSource(dataset, clock)
         self.assertEqual(source.exchange_info(), {"symbols": []})
         clock.advance_to(dataset.start)
         self.assertEqual(len(source.exchange_info()["symbols"]), len(SYMBOLS))
@@ -87,14 +86,16 @@ class TestHistoricalPaperReplay(unittest.TestCase):
             source_event_id=event.source_event_id,
         )
         self.assertEqual(event.event_id, duplicate.event_id)
-        supervisor = HistoricalPaperReplayRunner.build(
-            build_fixture_dataset(),
-            Path(tempfile.mkdtemp()),
-            replay_config=ReplayConfig(active_top_n=1, broad_pool_top_n=5),
-        ).supervisor
-        self.assertEqual(supervisor.process_market_event(event), ())
-        self.assertEqual(supervisor.process_market_event(duplicate), ())
-        self.assertEqual(supervisor.health.duplicate_events, 1)
+        dataset = build_fixture_dataset()
+        with tempfile.TemporaryDirectory() as tmp:
+            runner = HistoricalPaperReplayRunner.build(
+                dataset,
+                Path(tmp),
+                replay_config=ReplayConfig(active_top_n=1, broad_pool_top_n=5, acceleration_factor=1e9),
+            )
+            self.assertEqual(runner.supervisor.process_market_event(event), ())
+            self.assertEqual(runner.supervisor.process_market_event(duplicate), ())
+            self.assertEqual(runner.supervisor.health.duplicate_events, 1)
 
     def test_historical_source_never_calls_live_transport(self):
         dataset = build_fixture_dataset()
@@ -113,7 +114,7 @@ class TestHistoricalPaperReplay(unittest.TestCase):
             runner = HistoricalPaperReplayRunner.build(
                 dataset,
                 Path(tmp),
-                replay_config=ReplayConfig(active_top_n=1, broad_pool_top_n=5),
+                replay_config=ReplayConfig(active_top_n=1, broad_pool_top_n=5, acceleration_factor=1e9),
                 starting_capital=200.0,
             )
             self.assertTrue(runner.opportunity.discovery._cached_output is not None)
@@ -122,18 +123,9 @@ class TestHistoricalPaperReplay(unittest.TestCase):
     def test_replay_processes_progressively_and_produces_end_evidence(self):
         dataset = build_fixture_dataset()
         with tempfile.TemporaryDirectory() as tmp:
-            runner = HistoricalPaperReplayRunner.build(
-                dataset,
-                Path(tmp),
-                replay_config=ReplayConfig(active_top_n=1, broad_pool_top_n=5, acceleration_factor=1e9),
-                starting_capital=200.0,
-            )
-            report = asyncio.run(
-                runner.run_replay(
-                    dataset,
-                    replay_config=ReplayConfig(active_top_n=1, broad_pool_top_n=5, acceleration_factor=1e9),
-                )
-            )
+            config = ReplayConfig(active_top_n=1, broad_pool_top_n=5, acceleration_factor=1e9)
+            runner = HistoricalPaperReplayRunner.build(dataset, Path(tmp), replay_config=config, starting_capital=200.0)
+            report = asyncio.run(runner.run_replay(dataset, replay_config=config))
             self.assertGreater(report["processed_event_count"], 0)
             self.assertEqual(report["out_of_order_count"], 0)
             self.assertTrue(report["lookahead_verification"])
@@ -150,7 +142,7 @@ class TestHistoricalPaperReplay(unittest.TestCase):
             runner = HistoricalPaperReplayRunner.build(
                 dataset,
                 Path(tmp),
-                replay_config=ReplayConfig(active_top_n=1, broad_pool_top_n=5),
+                replay_config=ReplayConfig(active_top_n=1, broad_pool_top_n=5, acceleration_factor=1e9),
             )
             now = START
             snapshot = build_next_snapshot(
@@ -180,13 +172,14 @@ class TestHistoricalPaperReplay(unittest.TestCase):
 
     def test_recovery_from_checkpoint_matches_uninterrupted_state(self):
         dataset = build_fixture_dataset()
+        config = ReplayConfig(active_top_n=1, broad_pool_top_n=5, acceleration_factor=1e9)
 
         def process(supervisor, event):
             supervisor.process_market_event(event)
 
         with tempfile.TemporaryDirectory() as a, tempfile.TemporaryDirectory() as b:
-            full = HistoricalPaperReplayRunner.build(dataset, Path(a), replay_config=ReplayConfig(active_top_n=1, broad_pool_top_n=5))
-            recovered_seed = HistoricalPaperReplayRunner.build(dataset, Path(b), replay_config=ReplayConfig(active_top_n=1, broad_pool_top_n=5))
+            full = HistoricalPaperReplayRunner.build(dataset, Path(a), replay_config=config)
+            recovered_seed = HistoricalPaperReplayRunner.build(dataset, Path(b), replay_config=config)
             events = tuple(event.to_market_event() for event in dataset.events)
             for event in events:
                 process(full.supervisor, event)
