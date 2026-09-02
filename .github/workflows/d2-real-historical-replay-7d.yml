@@ -22,16 +22,13 @@ jobs:
           test "$(git rev-parse c6126e0b94781608147f321f737742f87f48bf2f)" = "c6126e0b94781608147f321f737742f87f48bf2f"
           git merge-base --is-ancestor c6126e0b94781608147f321f737742f87f48bf2f HEAD
           test "$(git diff --name-only c6126e0b94781608147f321f737742f87f48bf2f HEAD)" = $'.github/workflows/d2-real-historical-replay-7d.yml\nbinansScanner/real_historical_replay.py'
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-          cache: pip
-      - name: Install dependencies
+      - name: Compile and verify installed runtime dependencies
         working-directory: binansScanner
-        run: python -m pip install -r requirements.txt numpy pandas pandas-ta python-binance
-      - name: Compile
-        working-directory: binansScanner
-        run: python -m compileall -q .
+        env:
+          PYTHONPATH: ${{ github.workspace }}/binansScanner:${{ github.workspace }}
+        run: |
+          python -m compileall -q .
+          python -c 'import numpy, pandas, pandas_ta, fastapi, binance'
       - name: Real dataset and replay
         working-directory: binansScanner
         env:
