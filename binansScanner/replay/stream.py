@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 from datetime import datetime, timezone
-import math
 from typing import Any, AsyncIterator
 
 from models.market_event import MarketEvent, MarketEventType
@@ -12,7 +11,7 @@ from replay.dataset import HistoricalDataset
 
 
 class HistoricalMarketEventStream:
-    """Finite replay stream that exposes only events at the current simulation time."""
+    """Finite replay stream that exposes events progressively in simulation time."""
 
     def __init__(self, dataset: HistoricalDataset, clock: ReplayClock) -> None:
         self.dataset = dataset
@@ -20,6 +19,7 @@ class HistoricalMarketEventStream:
         self._index = 0
         self._connected = False
         self._closed = False
+        self._last_released_timestamp: datetime | None = None
 
     @property
     def position(self) -> int:
@@ -69,7 +69,18 @@ class HistoricalMarketEventStream:
             raise RuntimeError("historical replay stream is not connected")
         while self._index < len(self.dataset.events):
             event = self.dataset.events[self._index].to_market_event()
+            if self._last_released_timestamp is not None and event.event_timestamp < self._last_released_timestamp:
+                raise RuntimeError("historical replay event ordering violation")
+
+            target_wall_delay = 0.0
+            if self._last_released_timestamp is not None:
+                simulation_gap = (event.event_timestamp - self._last_released_timestamp).total_seconds()
+                target_wall_delay = self.clock.wall_delay_for(simulation_gap)
+                if target_wall_delay > 0:
+                    await asyncio.sleep(target_wall_delay)
+
             self.clock.advance_to(event.event_timestamp)
+            self._last_released_timestamp = event.event_timestamp
             self._index += 1
             yield self._raw(event)
             await asyncio.sleep(0)
