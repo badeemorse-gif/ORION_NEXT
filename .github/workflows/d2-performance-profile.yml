@@ -18,7 +18,15 @@ jobs:
           test "$(git rev-parse HEAD)" = "${{ github.sha }}"
           test "$(git rev-parse c6126e0b94781608147f321f737742f87f48bf2f)" = "c6126e0b94781608147f321f737742f87f48bf2f"
           git merge-base --is-ancestor c6126e0b94781608147f321f737742f87f48bf2f HEAD
-          test "$(git diff --name-only c6126e0b94781608147f321f737742f87f48bf2f HEAD)" = $'.github/workflows/d2-performance-profile.yml\n.github/workflows/d2-real-historical-replay-7d.yml\nbinansScanner/real_historical_replay.py\nbinansScanner/replay/source.py\nbinansScanner/replay/performance_profile.py'
+          actual="$(git diff --name-only c6126e0b94781608147f321f737742f87f48bf2f HEAD | sort)"
+          expected="$(printf '%s\n' \
+            '.github/workflows/d2-performance-profile.yml' \
+            '.github/workflows/d2-real-historical-replay-7d.yml' \
+            'binansScanner/real_historical_replay.py' \
+            'binansScanner/replay/performance_profile.py' \
+            'binansScanner/replay/source.py' | sort)"
+          test "$actual" = "$expected"
+          echo "PROFILING_ISOLATION PASS"
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
@@ -93,6 +101,8 @@ jobs:
           assert p['safety']['live_market_data_during_replay'] is False
           assert p['safety']['synthetic_market_data'] is False
           assert p['safety']['decision_cycles_skipped'] is False
+          assert p['safety']['fast_recall_bypassed'] is False
+          assert p['safety']['scoring_bypassed'] is False
           print('PROFILE_EVIDENCE PASS')
           print('ESTIMATED_7D_TOTAL_WALL_MINUTES', p['estimated_full_7d_completion']['total_wall_minutes'])
           print('DOMINANT_COMPONENT', p['bottleneck_diagnosis']['dominant_measured_component'])
