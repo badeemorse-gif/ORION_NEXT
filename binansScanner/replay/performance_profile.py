@@ -10,7 +10,6 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from models.market_event import MarketEventType
-from real_historical_replay import acquire
 from replay.dataset import HistoricalDataset, HistoricalDatasetManifest
 from replay.runner import HistoricalPaperReplayRunner, ReplayConfig
 from tools._orion_paper_8h_runner_legacy import JsonlRunLog
@@ -296,10 +295,10 @@ def run_profile(dataset_root: Path, output_root: Path) -> dict:
 
 
 def main() -> None:
-    root = Path("real_replay_profile")
-    dataset_root = root / "dataset"
-    output_root = root / "profile"
-    acquire(dataset_root)
+    dataset_root = Path("real_replay_profile/dataset")
+    output_root = Path("real_replay_profile/profile")
+    if not (dataset_root / "manifest.json").exists():
+        raise FileNotFoundError(f"Campaign A dataset not found: {dataset_root}")
     result = run_profile(dataset_root, output_root)
     print("PROFILE_COMPLETE", result["exact_commit_sha"])
     print("DATASET_HASH", result["dataset_identity"]["source_integrity_sha256"])
