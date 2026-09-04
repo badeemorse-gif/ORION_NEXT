@@ -21,7 +21,15 @@ jobs:
           test "$(git rev-parse HEAD)" = "${{ github.event.pull_request.head.sha || github.sha }}"
           test "$(git rev-parse c6126e0b94781608147f321f737742f87f48bf2f)" = "c6126e0b94781608147f321f737742f87f48bf2f"
           git merge-base --is-ancestor c6126e0b94781608147f321f737742f87f48bf2f HEAD
-          test "$(git diff --name-only c6126e0b94781608147f321f737742f87f48bf2f HEAD)" = $'.github/workflows/d2-real-historical-replay-7d.yml\nbinansScanner/real_historical_replay.py\nbinansScanner/replay/source.py'
+          actual="$(git diff --name-only c6126e0b94781608147f321f737742f87f48bf2f HEAD | sort)"
+          expected="$(printf '%s\n' \
+            '.github/workflows/d2-performance-profile.yml' \
+            '.github/workflows/d2-real-historical-replay-7d.yml' \
+            'binansScanner/real_historical_replay.py' \
+            'binansScanner/replay/performance_profile.py' \
+            'binansScanner/replay/source.py' | sort)"
+          test "$actual" = "$expected"
+          echo "REPLAY_ISOLATION PASS"
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
@@ -67,7 +75,9 @@ jobs:
           assert manifest['universe_policy'].startswith('fixed 20-symbol historical universe')
           assert manifest['acquisition_method'].startswith('public unauthenticated Binance market-data endpoint')
           assert dataset.manifest.integrity_sha256 == manifest['integrity_sha256']
+          assert manifest['integrity_sha256'] == '9ed783f437152af77c0ac3e6694b6b1b47e3258c2b24f3dfcf0a81027dcd89e7'
           print('DATASET_INTEGRITY PASS')
+          print('DATASET_HASH', dataset.manifest.integrity_sha256)
           print('HISTORICAL_UNIVERSE_SIZE', len(dataset.manifest.symbols))
           print('NO_CURRENT_OR_FUTURE_UNIVERSE_DISCOVERY PASS')
           PY
