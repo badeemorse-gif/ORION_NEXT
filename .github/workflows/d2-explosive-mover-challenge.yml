@@ -1,0 +1,88 @@
+name: D2 Explosive-Mover Challenge Set
+
+on:
+  push:
+    branches: [d2/explosive-mover-challenge-20260905]
+  workflow_dispatch:
+
+jobs:
+  challenge:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+
+      - name: Verify challenge isolation
+        run: |
+          test "$(git rev-parse HEAD)" = "${{ github.sha }}"
+          test "$(git rev-parse c6126e0b94781608147f321f737742f87f48bf2f)" = "c6126e0b94781608147f321f737742f87f48bf2f"
+          git merge-base --is-ancestor c6126e0b94781608147f321f737742f87f48bf2f HEAD
+          actual="$(git diff --name-only c6126e0b94781608147f321f737742f87f48bf2f HEAD | sort)"
+          expected="$(printf '%s\n' 'tools/explosive_mover_challenge.py' '.github/workflows/d2-explosive-mover-challenge.yml' | sort)"
+          test "$actual" = "$expected"
+          echo "CHALLENGE_ISOLATION PASS"
+          echo "PRODUCTION_SEMANTICS_UNTOUCHED PASS"
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        working-directory: binansScanner
+        run: |
+          python -m pip install --upgrade pip setuptools wheel
+          python -m pip install -r requirements.txt
+          python -m pip install numpy pandas pandas-ta python-binance
+          python -m pip check
+
+      - name: Compile
+        run: python -m compileall -q .
+
+      - name: Run evidence-grade challenge set
+        env:
+          PYTHONPATH: ${{ github.workspace }}/binansScanner:${{ github.workspace }}
+        run: python tools/explosive_mover_challenge.py --output explosive_mover_challenge
+
+      - name: Validate machine-readable report
+        working-directory: explosive_mover_challenge
+        run: |
+          test -f dataset/manifest.json
+          test -f detected_movers.json
+          test -f pipeline_observations.jsonl
+          test -f replay/campaign_report.json
+          test -f replay/events.jsonl
+          test -f challenge_report.json
+          test -f causal_traces.json
+          test -f threshold_window_statistics.json
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          report=json.loads(Path('challenge_report.json').read_text())
+          assert report['universe_completeness']=='NOT_ESTABLISHED'
+          assert report['production_semantic_impact']=='NONE'
+          assert report['current_exchange_info_used'] is False
+          assert report['future_universe_information_used'] is False
+          assert report['campaign_B']=='BLOCKED'
+          assert report['broad_market_complete_universe_test']=='BLOCKED'
+          print('REPORT_VALIDATION PASS')
+          print('DATASET_HASH', report['dataset_hash'])
+          print('REPRESENTATIVE_CASE_KEYS', sorted(report['representative_cases']))
+          PY
+
+      - name: Freeze artifact checksums
+        working-directory: explosive_mover_challenge
+        run: |
+          find . -type f -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS
+          sha256sum challenge_report.json
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: d2-explosive-mover-challenge
+          path: explosive_mover_challenge/
+          if-no-files-found: error
