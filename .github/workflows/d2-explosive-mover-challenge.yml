@@ -48,6 +48,65 @@ jobs:
       - name: Compile
         run: python -m compileall -q .
 
+      - name: Null-safety regression tests
+        env:
+          PYTHONPATH: ${{ github.workspace }}/binansScanner:${{ github.workspace }}
+        run: |
+          python - <<'PY'
+          import json
+          import tempfile
+          from pathlib import Path
+          from types import SimpleNamespace
+          from tools.explosive_mover_challenge import _event_time, build_evidence
+
+          assert _event_time(None) is None
+          assert _event_time({}) is None
+          assert _event_time(None, "timestamp") is None
+          assert _event_time({"timestamp": ""}) is None
+          assert _event_time({"timestamp": "not-a-datetime"}) is None
+          assert _event_time([]) is None
+
+          with tempfile.TemporaryDirectory() as tmp:
+              output = Path(tmp)
+              (output / "pipeline_observations.jsonl").write_text("", encoding="utf-8")
+              (output / "events.jsonl").write_text("", encoding="utf-8")
+              candles = {
+                  ("TESTUSDT", "5m"): ((1755475200000, "1", "1", "1", "1", "1", 1755475499999, "0", "0", "0", "0", "0"),)
+              }
+              dataset = SimpleNamespace(
+                  manifest=SimpleNamespace(symbols=("TESTUSDT",)),
+                  candles=candles,
+              )
+              validation = {
+                  "TESTUSDT": {
+                      "historical_existence": True,
+                      "historical_period_trade": True,
+                      "usdt_identity": True,
+                  }
+              }
+              detections = [{
+                  "symbol": "TESTUSDT",
+                  "window": "5m",
+                  "threshold_pct": 10,
+                  "base_timestamp": "2026-08-18T00:00:00+00:00",
+                  "threshold_cross_timestamp": "2026-08-18T00:05:00+00:00",
+                  "base_price": 1.0,
+                  "price_at_threshold": 1.1,
+                  "movement_pct": 10.0,
+              }]
+              base_report = {}
+              result = build_evidence(output, dataset, validation, detections, base_report)
+              trace = result["causal_traces"][0]
+              assert trace["order_timestamp"] is None
+              assert trace["fill_timestamp"] is None
+              assert trace["exit_timestamp"] is None
+              assert trace["entry_latency_seconds"] is None
+              assert trace["entry_status"] == "NOT_ENTERED"
+              assert (output / "challenge_report.json") .exists() is False
+          print("REGRESSION_EVENT_TIME_NONE PASS")
+          print("REGRESSION_BUILD_EVIDENCE_NO_EVENTS PASS")
+          PY
+
       - name: Run evidence-grade challenge set
         env:
           PYTHONPATH: ${{ github.workspace }}/binansScanner:${{ github.workspace }}
@@ -64,6 +123,8 @@ jobs:
           test -f challenge_report.json
           test -f causal_traces.json
           test -f threshold_window_statistics.json
+          test -f historical_validation.json
+          test -f challenge_manifest.json
           python - <<'PY'
           import json
           from pathlib import Path
