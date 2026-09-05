@@ -1,0 +1,33 @@
+name: D2 Runner Recovery Probe
+
+on:
+  push:
+    branches:
+      - d2/runner-recovery-20260906
+  workflow_dispatch:
+
+jobs:
+  runner-probe:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Runner identity
+        run: |
+          echo "RUNNER_NAME=$RUNNER_NAME"
+          echo "RUNNER_OS=$RUNNER_OS"
+          echo "RUNNER_ARCH=$RUNNER_ARCH"
+          echo "RUNNER_TEMP=$RUNNER_TEMP"
+          test -n "$RUNNER_NAME"
+          test "$RUNNER_OS" = "Linux"
+          echo "REAL_RUNNER_IDENTITY ASSIGNED"
+
+      - name: First shell step
+        run: |
+          set -euo pipefail
+          echo "FIRST_SHELL_STEP EXECUTED"
+          uname -a
+          echo "FIRST_SHELL_STEP PASS"
+
+      - name: Probe verdict
+        run: |
+          echo "D2_RUNNER_RECOVERY_PROBE PASS"
