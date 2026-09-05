@@ -1,6 +1,9 @@
 name: D2 Explosive-Mover Challenge Set
 
 on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened]
   push:
     branches: [d2/explosive-mover-challenge-20260905]
   workflow_dispatch:
@@ -14,12 +17,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.sha }}
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           fetch-depth: 0
 
       - name: Verify challenge isolation
         run: |
-          test "$(git rev-parse HEAD)" = "${{ github.sha }}"
+          test "$(git rev-parse HEAD)" = "${{ github.event.pull_request.head.sha || github.sha }}"
           test "$(git rev-parse c6126e0b94781608147f321f737742f87f48bf2f)" = "c6126e0b94781608147f321f737742f87f48bf2f"
           git merge-base --is-ancestor c6126e0b94781608147f321f737742f87f48bf2f HEAD
           actual="$(git diff --name-only c6126e0b94781608147f321f737742f87f48bf2f HEAD | sort)"
