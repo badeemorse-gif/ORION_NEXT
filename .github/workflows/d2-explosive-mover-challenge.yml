@@ -77,7 +77,7 @@ jobs:
                   ("TESTUSDT", "5m"): ((1755475200000, "1", "1", "1", "1", "1", 1755475499999, "0", "0", "0", "0", "0"),)
               }
               dataset = SimpleNamespace(
-                  manifest=SimpleNamespace(symbols=("TESTUSDT",)),
+                  manifest=SimpleNamespace(symbols=("TESTUSDT",), integrity_sha256="fixture-sha256"),
                   candles=candles,
               )
               validation = {
