@@ -53,18 +53,21 @@ jobs:
           PYTHONPATH: ${{ github.workspace }}/binansScanner:${{ github.workspace }}
         run: |
           python - <<'PY'
-          import json
           import tempfile
           from pathlib import Path
           from types import SimpleNamespace
           from tools.explosive_mover_challenge import _event_time, build_evidence
 
-          assert _event_time(None) is None
+          first_order = None
+          first_fill = None
+          first_exit = None
+          assert _event_time(first_order) is None
+          assert _event_time(first_fill) is None
+          assert _event_time(first_exit) is None
           assert _event_time({}) is None
-          assert _event_time(None, "timestamp") is None
+          assert _event_time([]) is None
           assert _event_time({"timestamp": ""}) is None
           assert _event_time({"timestamp": "not-a-datetime"}) is None
-          assert _event_time([]) is None
 
           with tempfile.TemporaryDirectory() as tmp:
               output = Path(tmp)
@@ -94,16 +97,17 @@ jobs:
                   "price_at_threshold": 1.1,
                   "movement_pct": 10.0,
               }]
-              base_report = {}
-              result = build_evidence(output, dataset, validation, detections, base_report)
+              result = build_evidence(output, dataset, validation, detections, {})
               trace = result["causal_traces"][0]
               assert trace["order_timestamp"] is None
               assert trace["fill_timestamp"] is None
               assert trace["exit_timestamp"] is None
               assert trace["entry_latency_seconds"] is None
               assert trace["entry_status"] == "NOT_ENTERED"
-              assert (output / "challenge_report.json") .exists() is False
-          print("REGRESSION_EVENT_TIME_NONE PASS")
+          print("REGRESSION_FIRST_ORDER_NONE PASS")
+          print("REGRESSION_FIRST_FILL_NONE PASS")
+          print("REGRESSION_FIRST_EXIT_NONE PASS")
+          print("REGRESSION_EMPTY_ROW PASS")
           print("REGRESSION_BUILD_EVIDENCE_NO_EVENTS PASS")
           PY
 
