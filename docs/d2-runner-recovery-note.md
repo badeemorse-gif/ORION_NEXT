@@ -1,0 +1,1 @@
+D2 recovery probe branch only. This branch must never be treated as production strategy work. Recovery gate: ubuntu-24.04 runner identity, first shell step, probe PASS. No Fast Recall, threshold, universe, or strategy changes.
