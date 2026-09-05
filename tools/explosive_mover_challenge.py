@@ -243,10 +243,14 @@ def parse_jsonl(path: Path) -> list[dict]:
     return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
 
 
-def _event_time(row: dict, fallback_key: str = "timestamp") -> datetime | None:
+def _event_time(row: dict | None, fallback_key: str = "timestamp") -> datetime | None:
+    if not isinstance(row, dict):
+        return None
     raw = row.get(fallback_key) or row.get("refresh_timestamp")
+    if not raw:
+        return None
     try:
-        return datetime.fromisoformat(raw) if raw else None
+        return datetime.fromisoformat(str(raw))
     except (TypeError, ValueError):
         return None
 
